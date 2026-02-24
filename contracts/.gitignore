@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+artifacts/
+cache/
+typechain-types/
+
+# Environment variables (SECRETS — never commit)
+.env
+
+# Coverage reports
+coverage/
+coverage.json
+
+# Hardhat Ignition deployment artifacts
+ignition/deployments/
+
+# OS files
+.DS_Store
+Thumbs.db

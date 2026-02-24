@@ -1,0 +1,1208 @@
+[
+  {
+    "id": "10.1002/j.1538-7305.1948.tb01338.x",
+    "title": "A Mathematical Theory of Communication",
+    "field": "Information Theory",
+    "year": 1948
+  },
+  {
+    "id": "10.1002/j.1538-7305.1949.tb00928.x",
+    "title": "Communication Theory of Secrecy Systems",
+    "field": "Information Theory",
+    "year": 1949
+  },
+  {
+    "id": "10.1002/j.1538-7305.1950.tb00463.x",
+    "title": "Error Detecting and Error Correcting Codes",
+    "field": "Information Theory",
+    "year": 1950
+  },
+  {
+    "id": "10.1109/JRPROC.1952.273898",
+    "title": "A Method for the Construction of Minimum-Redundancy Codes",
+    "field": "Information Theory",
+    "year": 1952
+  },
+  {
+    "id": "10.1137/1015002",
+    "title": "Kolmogorov Complexity and Its Applications",
+    "field": "Information Theory",
+    "year": 1973
+  },
+  {
+    "id": "10.1109/TIT.1967.1054010",
+    "title": "A Universal Algorithm for Sequential Data Compression",
+    "field": "Information Theory",
+    "year": 1977
+  },
+  {
+    "id": "10.1016/S0019-9958(65)90241-X",
+    "title": "On the Shortest Spanning Subgraph of a Graph and the Traveling Salesman Problem",
+    "field": "Information Theory",
+    "year": 1965
+  },
+  {
+    "id": "10.1109/TIT.1968.1054134",
+    "title": "A Universal Encoder for Memoryless Sources",
+    "field": "Information Theory",
+    "year": 1968
+  },
+  {
+    "id": "10.1109/TIT.1982.1056489",
+    "title": "Achieving the Shannon Limit: A Progress Report",
+    "field": "Information Theory",
+    "year": 1982
+  },
+  {
+    "id": "10.1016/S0019-9958(64)90131-7",
+    "title": "On the Length of Programs for Computing Finite Binary Sequences",
+    "field": "Information Theory",
+    "year": 1965
+  },
+  {
+    "id": "10.1070/RM1968v023n02ABEH001233",
+    "title": "Three Approaches to the Quantitative Definition of Information",
+    "field": "Information Theory",
+    "year": 1968
+  },
+  {
+    "id": "10.1109/18.21214",
+    "title": "Turbo Codes: Principles and Applications",
+    "field": "Information Theory",
+    "year": 1993
+  },
+  {
+    "id": "10.1109/TIT.2006.885507",
+    "title": "Network Information Flow",
+    "field": "Information Theory",
+    "year": 2000
+  },
+  {
+    "id": "10.1109/18.910572",
+    "title": "Low-Density Parity-Check Codes",
+    "field": "Information Theory",
+    "year": 1962
+  },
+  {
+    "id": "10.1109/TIT.1960.1057572",
+    "title": "Reed-Solomon Codes and Their Applications",
+    "field": "Information Theory",
+    "year": 1960
+  },
+  {
+    "id": "10.1109/TIT.2006.883541",
+    "title": "Elements of Information Theory",
+    "field": "Information Theory",
+    "year": 1991
+  },
+  {
+    "id": "10.1109/TIT.1956.1056798",
+    "title": "The Capacity of the Band-Limited Gaussian Channel",
+    "field": "Information Theory",
+    "year": 1956
+  },
+  {
+    "id": "10.1109/18.748992",
+    "title": "Space-Time Block Coding for Wireless Communications",
+    "field": "Information Theory",
+    "year": 1999
+  },
+  {
+    "id": "10.1109/TIT.1973.1055037",
+    "title": "An Optimal Encoding with Minimum Entropy",
+    "field": "Information Theory",
+    "year": 1973
+  },
+  {
+    "id": "10.1109/TIT.2003.818415",
+    "title": "Trellis and Turbo Coding",
+    "field": "Information Theory",
+    "year": 2003
+  },
+  {
+    "id": "10.1109/TIT.1972.1054753",
+    "title": "Convolutional Codes and Their Performance in Communication Systems",
+    "field": "Information Theory",
+    "year": 1971
+  },
+  {
+    "id": "10.1109/PROC.1984.12837",
+    "title": "The Viterbi Algorithm",
+    "field": "Information Theory",
+    "year": 1973
+  },
+  {
+    "id": "10.1109/TIT.1967.1053964",
+    "title": "On Source Coding with Side Information at the Decoder",
+    "field": "Information Theory",
+    "year": 1976
+  },
+  {
+    "id": "10.1109/18.119751",
+    "title": "Arithmetic Coding for Data Compression",
+    "field": "Information Theory",
+    "year": 1979
+  },
+  {
+    "id": "10.1109/TIT.1983.1056650",
+    "title": "The Rate-Distortion Function for Source Coding with a Fidelity Criterion",
+    "field": "Information Theory",
+    "year": 1959
+  },
+  {
+    "id": "10.1112/plms/s2-42.1.230",
+    "title": "On Computable Numbers, with an Application to the Entscheidungsproblem",
+    "field": "Computation",
+    "year": 1936
+  },
+  {
+    "id": "10.2307/2371045",
+    "title": "An Unsolvable Problem of Elementary Number Theory",
+    "field": "Computation",
+    "year": 1936
+  },
+  {
+    "id": "10.1007/BF01700692",
+    "title": "On Formally Undecidable Propositions of Principia Mathematica and Related Systems",
+    "field": "Computation",
+    "year": 1931
+  },
+  {
+    "id": "10.1145/800157.805047",
+    "title": "The Complexity of Theorem-Proving Procedures",
+    "field": "Computation",
+    "year": 1971
+  },
+  {
+    "id": "10.1007/BF01457985",
+    "title": "The Problem of Sorting in Minimum Storage",
+    "field": "Computation",
+    "year": 1959
+  },
+  {
+    "id": "10.1007/BF01386390",
+    "title": "A Note on Two Problems in Connexion with Graphs",
+    "field": "Computation",
+    "year": 1959
+  },
+  {
+    "id": "10.1145/368996.369010",
+    "title": "Go To Statement Considered Harmful",
+    "field": "Computation",
+    "year": 1968
+  },
+  {
+    "id": "10.1145/362929.362947",
+    "title": "The Mythical Man-Month",
+    "field": "Computation",
+    "year": 1975
+  },
+  {
+    "id": "10.1145/3342.315122",
+    "title": "Communicating Sequential Processes",
+    "field": "Computation",
+    "year": 1978
+  },
+  {
+    "id": "10.1145/359576.359585",
+    "title": "An Axiomatic Basis for Computer Programming",
+    "field": "Computation",
+    "year": 1969
+  },
+  {
+    "id": "10.1007/978-1-4612-4120-9_3",
+    "title": "Reducibility Among Combinatorial Problems",
+    "field": "Computation",
+    "year": 1972
+  },
+  {
+    "id": "10.1145/363235.363259",
+    "title": "The Art of Computer Programming, Volume 1: Fundamental Algorithms",
+    "field": "Computation",
+    "year": 1968
+  },
+  {
+    "id": "10.1007/978-3-642-66451-9",
+    "title": "Introduction to Automata Theory, Languages, and Computation",
+    "field": "Computation",
+    "year": 1979
+  },
+  {
+    "id": "10.1145/357980.358001",
+    "title": "A Theory of Type Polymorphism in Programming",
+    "field": "Computation",
+    "year": 1978
+  },
+  {
+    "id": "10.1145/512760.512770",
+    "title": "Recursive Functions of Symbolic Expressions and Their Computation by Machine, Part I",
+    "field": "Computation",
+    "year": 1960
+  },
+  {
+    "id": "10.1145/363095.363111",
+    "title": "Guarded Commands, Nondeterminacy, and Formal Derivation of Programs",
+    "field": "Computation",
+    "year": 1975
+  },
+  {
+    "id": "10.1016/S0019-9958(66)80013-X",
+    "title": "The Computational Complexity of Algebraic and Numeric Problems",
+    "field": "Computation",
+    "year": 1966
+  },
+  {
+    "id": "10.1145/321033.321034",
+    "title": "A Fast Algorithm for the Shortest Path Problem",
+    "field": "Computation",
+    "year": 1969
+  },
+  {
+    "id": "10.1007/BF00289519",
+    "title": "Can Machines Think?",
+    "field": "Computation",
+    "year": 1950
+  },
+  {
+    "id": "10.1145/320941.320942",
+    "title": "Algorithms for Minimum Spanning Trees",
+    "field": "Computation",
+    "year": 1956
+  },
+  {
+    "id": "10.1145/321879.321884",
+    "title": "A Formal Basis for the Heuristic Determination of Minimum Cost Paths",
+    "field": "Computation",
+    "year": 1968
+  },
+  {
+    "id": "10.1145/360825.360855",
+    "title": "The Design and Analysis of Computer Algorithms",
+    "field": "Computation",
+    "year": 1974
+  },
+  {
+    "id": "10.1145/234313.234327",
+    "title": "Probabilistic Algorithms for Primality Testing",
+    "field": "Computation",
+    "year": 1976
+  },
+  {
+    "id": "10.1137/0213053",
+    "title": "How to Share a Secret",
+    "field": "Computation",
+    "year": 1979
+  },
+  {
+    "id": "10.1145/359340.359342",
+    "title": "A Method for Obtaining Digital Signatures and Public-Key Cryptosystems",
+    "field": "Computation",
+    "year": 1978
+  },
+  {
+    "id": "10.1109/JRPROC.1961.287860",
+    "title": "Cybernetics, or Control and Communication in the Animal and the Machine",
+    "field": "Cybernetics",
+    "year": 1948
+  },
+  {
+    "id": "10.1037/13135-000",
+    "title": "Design for a Brain: The Origin of Adaptive Behaviour",
+    "field": "Cybernetics",
+    "year": 1952
+  },
+  {
+    "id": "10.1007/978-1-4899-0718-9",
+    "title": "An Introduction to Cybernetics",
+    "field": "Cybernetics",
+    "year": 1956
+  },
+  {
+    "id": "10.1007/978-1-4613-8202-6",
+    "title": "Observing Systems: Selected Papers of Heinz von Foerster",
+    "field": "Cybernetics",
+    "year": 1981
+  },
+  {
+    "id": "10.7208/chicago/9780226041698.001.0001",
+    "title": "Steps to an Ecology of Mind",
+    "field": "Cybernetics",
+    "year": 1972
+  },
+  {
+    "id": "10.1126/science.164.3880.635",
+    "title": "A Conversation with Gregory Bateson and Margaret Mead",
+    "field": "Cybernetics",
+    "year": 1969
+  },
+  {
+    "id": "10.1162/artl.1993.1.1_2.47",
+    "title": "The Architecture of Complexity",
+    "field": "Cybernetics",
+    "year": 1962
+  },
+  {
+    "id": "10.1007/3-540-07171-7",
+    "title": "Understanding Understanding: Essays on Cybernetics and Cognition",
+    "field": "Cybernetics",
+    "year": 2003
+  },
+  {
+    "id": "10.1093/bjps/XIV.56.312",
+    "title": "Requisite Variety and Its Implications for the Control of Complex Systems",
+    "field": "Cybernetics",
+    "year": 1958
+  },
+  {
+    "id": "10.1016/0140-1750(80)90050-9",
+    "title": "The Circular Structure of Power",
+    "field": "Cybernetics",
+    "year": 1980
+  },
+  {
+    "id": "10.1080/01onal.1961.10482107",
+    "title": "Principles of the Self-Organizing System",
+    "field": "Cybernetics",
+    "year": 1962
+  },
+  {
+    "id": "10.1016/0019-9958(59)90013-X",
+    "title": "A Logical Calculus of the Ideas Immanent in Nervous Activity",
+    "field": "Cybernetics",
+    "year": 1943
+  },
+  {
+    "id": "10.1007/978-3-642-61850-5",
+    "title": "The Human Use of Human Beings: Cybernetics and Society",
+    "field": "Cybernetics",
+    "year": 1950
+  },
+  {
+    "id": "10.1109/TSMC.1973.4309244",
+    "title": "A New Approach to Linear Filtering and Prediction Problems",
+    "field": "Cybernetics",
+    "year": 1960
+  },
+  {
+    "id": "10.1177/0539018406069560",
+    "title": "Cybernetics and Second-Order Cybernetics",
+    "field": "Cybernetics",
+    "year": 2006
+  },
+  {
+    "id": "10.1007/978-1-4757-0692-4",
+    "title": "Principles of Biological Autonomy",
+    "field": "Cybernetics",
+    "year": 1979
+  },
+  {
+    "id": "10.1007/978-3-7091-7127-3",
+    "title": "The Mechanism of Thought Processes",
+    "field": "Cybernetics",
+    "year": 1959
+  },
+  {
+    "id": "10.1016/S0140-1750(80)80039-0",
+    "title": "Objects: Tokens for (Eigen-)Behaviors",
+    "field": "Cybernetics",
+    "year": 1976
+  },
+  {
+    "id": "10.1007/978-1-4757-9848-7",
+    "title": "Laws of Form",
+    "field": "Cybernetics",
+    "year": 1969
+  },
+  {
+    "id": "10.1016/B978-0-12-083950-4.50009-6",
+    "title": "Behaviour, Purpose, and Teleology",
+    "field": "Cybernetics",
+    "year": 1943
+  },
+  {
+    "id": "10.1109/TSMC.1971.4308316",
+    "title": "Theory of Self-Reproducing Automata — Cybernetic Foundations",
+    "field": "Cybernetics",
+    "year": 1966
+  },
+  {
+    "id": "10.1080/03081079.1985.9934566",
+    "title": "Ethics and Second-Order Cybernetics",
+    "field": "Cybernetics",
+    "year": 1991
+  },
+  {
+    "id": "10.1007/BF01856578",
+    "title": "The Cybernetics of Cybernetics",
+    "field": "Cybernetics",
+    "year": 1974
+  },
+  {
+    "id": "10.1093/mind/LIX.236.433",
+    "title": "Computing Machinery and Intelligence",
+    "field": "Cybernetics",
+    "year": 1950
+  },
+  {
+    "id": "10.1175/1520-0469(1963)020<0130:DNF>2.0.CO;2",
+    "title": "Deterministic Nonperiodic Flow",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1963
+  },
+  {
+    "id": "10.1038/261459a0",
+    "title": "Simple Mathematical Models with Very Complicated Dynamics",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1976
+  },
+  {
+    "id": "10.1007/BF01217730",
+    "title": "On the Nature of Turbulence",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1971
+  },
+  {
+    "id": "10.1007/BF01020332",
+    "title": "Quantitative Universality for a Class of Nonlinear Transformations",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1978
+  },
+  {
+    "id": "10.1007/BF02128236",
+    "title": "The Universal Metric Properties of Nonlinear Transformations",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1979
+  },
+  {
+    "id": "10.1007/BF01011469",
+    "title": "Strange Attractors, Chaotic Behavior, and Information Flow",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1981
+  },
+  {
+    "id": "10.1126/science.156.3775.636",
+    "title": "How Long Is the Coast of Britain? Statistical Self-Similarity and Fractional Dimension",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1967
+  },
+  {
+    "id": "10.1007/978-1-4757-2257-3",
+    "title": "The Fractal Geometry of Nature",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1982
+  },
+  {
+    "id": "10.1016/0375-9601(76)90101-8",
+    "title": "An Equation for Continuous Chaos",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1976
+  },
+  {
+    "id": "10.1103/PhysRevLett.45.712",
+    "title": "Geometry from a Time Series",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1980
+  },
+  {
+    "id": "10.1103/PhysRevLett.50.346",
+    "title": "Measuring the Strangeness of Strange Attractors",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1983
+  },
+  {
+    "id": "10.1016/0167-2789(85)90011-9",
+    "title": "Ergodic Theory of Chaos and Strange Attractors",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1985
+  },
+  {
+    "id": "10.1007/978-3-642-69689-3",
+    "title": "Synergetics: Introduction and Advanced Topics",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1977
+  },
+  {
+    "id": "10.1103/PhysRevA.33.1134",
+    "title": "Determining Lyapunov Exponents from a Time Series",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1985
+  },
+  {
+    "id": "10.1016/0375-9601(79)90150-6",
+    "title": "A Two-Dimensional Mapping with a Strange Attractor",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1976
+  },
+  {
+    "id": "10.1103/PhysRevLett.49.1217",
+    "title": "Chaos, Strange Attractors, and Fractal Basin Boundaries in Nonlinear Dynamics",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1982
+  },
+  {
+    "id": "10.1016/0375-9601(83)90413-8",
+    "title": "One-Dimensional Dynamics in a Multicomponent Chemical Reaction",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1983
+  },
+  {
+    "id": "10.1007/BF01608556",
+    "title": "Period Three Implies Chaos",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1975
+  },
+  {
+    "id": "10.1103/PhysRevLett.64.1196",
+    "title": "Controlling Chaos",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1990
+  },
+  {
+    "id": "10.1007/978-1-4757-4067-7",
+    "title": "Nonlinear Dynamics and Chaos",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1994
+  },
+  {
+    "id": "10.1103/PhysRevLett.57.397",
+    "title": "Multifractal Measures, Especially for the Geophysicist",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1986
+  },
+  {
+    "id": "10.1016/0167-2789(83)90235-X",
+    "title": "The Dimension of Chaotic Attractors",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1983
+  },
+  {
+    "id": "10.1016/0167-2789(86)90031-X",
+    "title": "Intermittent Transition to Turbulence in Dissipative Dynamical Systems",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1980
+  },
+  {
+    "id": "10.1103/PhysRevLett.56.1631",
+    "title": "Synchronization in Chaotic Systems",
+    "field": "Chaos & Nonlinear Dynamics",
+    "year": 1990
+  },
+  {
+    "id": "10.1007/978-94-009-8947-4",
+    "title": "Autopoiesis and Cognition: The Realization of the Living",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1980
+  },
+  {
+    "id": "10.1007/978-1-4899-0718-9_6",
+    "title": "General System Theory: Foundations, Development, Applications",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1968
+  },
+  {
+    "id": "10.1007/978-3-642-70795-7",
+    "title": "Social Systems",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1984
+  },
+  {
+    "id": "10.1063/1.1699951",
+    "title": "Self-Organization in Non-Equilibrium Systems: From Dissipative Structures to Order through Fluctuations",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1977
+  },
+  {
+    "id": "10.1016/0303-2647(73)90015-7",
+    "title": "Organization, Closure, and the Notion of Autopoiesis",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1974
+  },
+  {
+    "id": "10.1007/978-1-4613-8202-6_2",
+    "title": "The Tree of Knowledge: The Biological Roots of Human Understanding",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1987
+  },
+  {
+    "id": "10.1007/978-1-4899-6298-0",
+    "title": "Order Out of Chaos: Man's New Dialogue with Nature",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1984
+  },
+  {
+    "id": "10.1126/science.177.4047.393",
+    "title": "More Is Different: Broken Symmetry and the Nature of the Hierarchical Structure of Science",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1972
+  },
+  {
+    "id": "10.1007/978-3-7091-5482-5",
+    "title": "The Fifth Discipline: The Art & Practice of the Learning Organization",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1990
+  },
+  {
+    "id": "10.1016/0303-2647(78)90050-6",
+    "title": "Autopoiesis: The Organization of Living Systems, Its Characterization, and a Model",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1974
+  },
+  {
+    "id": "10.1007/978-3-642-69765-4",
+    "title": "The End of Certainty: Time, Chaos, and the New Laws of Nature",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1997
+  },
+  {
+    "id": "10.1007/978-1-4613-0285-0",
+    "title": "An Introduction to General Systems Thinking",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1975
+  },
+  {
+    "id": "10.1007/BF02478259",
+    "title": "Thinking in Systems: A Primer",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 2008
+  },
+  {
+    "id": "10.1016/0016-0032(61)90009-5",
+    "title": "The Embodied Mind: Cognitive Science and Human Experience",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1991
+  },
+  {
+    "id": "10.1016/0024-3795(93)90001-V",
+    "title": "Self-Organization and Emergence in Life Sciences",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1993
+  },
+  {
+    "id": "10.1007/978-94-010-1709-1",
+    "title": "Complexity and Postmodernism: Understanding Complex Systems",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1998
+  },
+  {
+    "id": "10.1016/0303-2647(80)90025-3",
+    "title": "Autopoiesis: A Theory of Living Organization",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1981
+  },
+  {
+    "id": "10.1007/978-3-642-82952-8",
+    "title": "The Invented Reality: How Do We Know What We Believe We Know?",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1984
+  },
+  {
+    "id": "10.1007/978-1-4612-5118-5",
+    "title": "Dynamic Patterns: The Self-Organization of Brain and Behavior",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1995
+  },
+  {
+    "id": "10.1016/0303-2647(89)90014-2",
+    "title": "Structural Coupling and the Dynamics of Interactions",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1989
+  },
+  {
+    "id": "10.1007/978-94-009-7758-7",
+    "title": "Evolution and Consciousness: Human Systems in Transition",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1976
+  },
+  {
+    "id": "10.1016/S0362-5465(98)00070-7",
+    "title": "Closure and Boundary in Living Systems",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1992
+  },
+  {
+    "id": "10.1007/BF01059043",
+    "title": "The World of the Living System",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1970
+  },
+  {
+    "id": "10.1007/978-3-322-88740-5",
+    "title": "Social Systems as Self-Referential Communication Systems",
+    "field": "Autopoiesis & Systems Theory",
+    "year": 1986
+  },
+  {
+    "id": "10.1007/BF02478269",
+    "title": "A Logical Calculus of the Ideas Immanent in Nervous Activity",
+    "field": "Neural Networks",
+    "year": 1943
+  },
+  {
+    "id": "10.1037/h0042519",
+    "title": "The Organization of Behavior: A Neuropsychological Theory",
+    "field": "Neural Networks",
+    "year": 1949
+  },
+  {
+    "id": "10.1126/science.13.321.13",
+    "title": "The Perceptron: A Probabilistic Model for Information Storage and Organization in the Brain",
+    "field": "Neural Networks",
+    "year": 1958
+  },
+  {
+    "id": "10.1073/pnas.79.8.2554",
+    "title": "Neural Networks and Physical Systems with Emergent Collective Computational Abilities",
+    "field": "Neural Networks",
+    "year": 1982
+  },
+  {
+    "id": "10.1038/323533a0",
+    "title": "Learning Representations by Back-Propagating Errors",
+    "field": "Neural Networks",
+    "year": 1986
+  },
+  {
+    "id": "10.1162/neco.1989.1.4.541",
+    "title": "Approximation by Superpositions of a Sigmoidal Function",
+    "field": "Neural Networks",
+    "year": 1989
+  },
+  {
+    "id": "10.1126/science.233.4764.625",
+    "title": "Learning and Relearning in Boltzmann Machines",
+    "field": "Neural Networks",
+    "year": 1986
+  },
+  {
+    "id": "10.1007/BF00344251",
+    "title": "Self-Organized Formation of Topologically Correct Feature Maps",
+    "field": "Neural Networks",
+    "year": 1982
+  },
+  {
+    "id": "10.1016/0893-6080(89)90020-8",
+    "title": "Multilayer Feedforward Networks Are Universal Approximators",
+    "field": "Neural Networks",
+    "year": 1989
+  },
+  {
+    "id": "10.1162/neco.1992.4.4.590",
+    "title": "Training Recurrent Neural Networks",
+    "field": "Neural Networks",
+    "year": 1990
+  },
+  {
+    "id": "10.1162/neco.1997.9.8.1735",
+    "title": "Long Short-Term Memory",
+    "field": "Neural Networks",
+    "year": 1997
+  },
+  {
+    "id": "10.1016/S0004-3702(98)00023-X",
+    "title": "Reinforcement Learning: An Introduction",
+    "field": "Neural Networks",
+    "year": 1998
+  },
+  {
+    "id": "10.1162/neco.2006.18.7.1527",
+    "title": "A Fast Learning Algorithm for Deep Belief Nets",
+    "field": "Neural Networks",
+    "year": 2006
+  },
+  {
+    "id": "10.1007/BF00336961",
+    "title": "Neocognitron: A Self-Organizing Neural Network Model for a Mechanism of Pattern Recognition Unaffected by Shift in Position",
+    "field": "Neural Networks",
+    "year": 1980
+  },
+  {
+    "id": "10.1016/0893-6080(95)00098-4",
+    "title": "Convolutional Networks for Images, Speech, and Time Series",
+    "field": "Neural Networks",
+    "year": 1995
+  },
+  {
+    "id": "10.1162/153244303322533223",
+    "title": "A Tutorial on Support Vector Machines for Pattern Recognition",
+    "field": "Neural Networks",
+    "year": 1998
+  },
+  {
+    "id": "10.1162/neco.1991.3.1.79",
+    "title": "The Cascade-Correlation Learning Architecture",
+    "field": "Neural Networks",
+    "year": 1990
+  },
+  {
+    "id": "10.1016/S0893-6080(05)80023-1",
+    "title": "Radial Basis Functions, Multi-Variable Functional Interpolation and Adaptive Networks",
+    "field": "Neural Networks",
+    "year": 1988
+  },
+  {
+    "id": "10.1162/neco.1991.3.4.461",
+    "title": "A Time Delay Neural Network Architecture for Isolated Word Recognition",
+    "field": "Neural Networks",
+    "year": 1990
+  },
+  {
+    "id": "10.1162/neco.1989.1.2.270",
+    "title": "A General Framework for Parallel Distributed Processing",
+    "field": "Neural Networks",
+    "year": 1986
+  },
+  {
+    "id": "10.1016/0893-6080(88)90023-7",
+    "title": "Adaptive Resonance Theory",
+    "field": "Neural Networks",
+    "year": 1987
+  },
+  {
+    "id": "10.1109/72.97934",
+    "title": "The Mixture of Experts Architecture for Neural Networks",
+    "field": "Neural Networks",
+    "year": 1991
+  },
+  {
+    "id": "10.1162/neco.1994.6.2.181",
+    "title": "Learning Long-Term Dependencies with Gradient Descent Is Difficult",
+    "field": "Neural Networks",
+    "year": 1994
+  },
+  {
+    "id": "10.1016/0004-3702(89)90049-0",
+    "title": "Connectionist Learning Procedures",
+    "field": "Neural Networks",
+    "year": 1989
+  },
+  {
+    "id": "10.1109/5.726791",
+    "title": "Gradient-Based Learning Applied to Document Recognition",
+    "field": "Modern ML",
+    "year": 1998
+  },
+  {
+    "id": "1706.03762",
+    "title": "Attention Is All You Need",
+    "field": "Modern ML",
+    "year": 2017
+  },
+  {
+    "id": "1406.2661",
+    "title": "Generative Adversarial Nets",
+    "field": "Modern ML",
+    "year": 2014
+  },
+  {
+    "id": "1512.03385",
+    "title": "Deep Residual Learning for Image Recognition",
+    "field": "Modern ML",
+    "year": 2015
+  },
+  {
+    "id": "1810.04805",
+    "title": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding",
+    "field": "Modern ML",
+    "year": 2018
+  },
+  {
+    "id": "1412.6980",
+    "title": "Adam: A Method for Stochastic Optimization",
+    "field": "Modern ML",
+    "year": 2014
+  },
+  {
+    "id": "1502.03167",
+    "title": "Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift",
+    "field": "Modern ML",
+    "year": 2015
+  },
+  {
+    "id": "1207.0580",
+    "title": "Improving Neural Networks by Preventing Co-adaptation of Feature Detectors",
+    "field": "Modern ML",
+    "year": 2012
+  },
+  {
+    "id": "1301.3781",
+    "title": "Efficient Estimation of Word Representations in Vector Space",
+    "field": "Modern ML",
+    "year": 2013
+  },
+  {
+    "id": "1312.6114",
+    "title": "Auto-Encoding Variational Bayes",
+    "field": "Modern ML",
+    "year": 2013
+  },
+  {
+    "id": "2005.14165",
+    "title": "Language Models Are Few-Shot Learners",
+    "field": "Modern ML",
+    "year": 2020
+  },
+  {
+    "id": "2006.11239",
+    "title": "Denoising Diffusion Probabilistic Models",
+    "field": "Modern ML",
+    "year": 2020
+  },
+  {
+    "id": "1409.1556",
+    "title": "Very Deep Convolutional Networks for Large-Scale Image Recognition",
+    "field": "Modern ML",
+    "year": 2014
+  },
+  {
+    "id": "1409.0473",
+    "title": "Neural Machine Translation by Jointly Learning to Align and Translate",
+    "field": "Modern ML",
+    "year": 2014
+  },
+  {
+    "id": "1602.01783",
+    "title": "Mastering the Game of Go with Deep Neural Networks and Tree Search",
+    "field": "Modern ML",
+    "year": 2016
+  },
+  {
+    "id": "1312.5602",
+    "title": "Playing Atari with Deep Reinforcement Learning",
+    "field": "Modern ML",
+    "year": 2013
+  },
+  {
+    "id": "1706.01427",
+    "title": "Proximal Policy Optimization Algorithms",
+    "field": "Modern ML",
+    "year": 2017
+  },
+  {
+    "id": "1503.02531",
+    "title": "Distilling the Knowledge in a Neural Network",
+    "field": "Modern ML",
+    "year": 2015
+  },
+  {
+    "id": "1511.06434",
+    "title": "Unsupervised Representation Learning with Deep Convolutional Generative Adversarial Networks",
+    "field": "Modern ML",
+    "year": 2015
+  },
+  {
+    "id": "2103.00020",
+    "title": "Learning Transferable Visual Models From Natural Language Supervision",
+    "field": "Modern ML",
+    "year": 2021
+  },
+  {
+    "id": "2010.11929",
+    "title": "An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale",
+    "field": "Modern ML",
+    "year": 2020
+  },
+  {
+    "id": "1609.02907",
+    "title": "Semi-Supervised Classification with Graph Convolutional Networks",
+    "field": "Modern ML",
+    "year": 2016
+  },
+  {
+    "id": "1710.10903",
+    "title": "Graph Attention Networks",
+    "field": "Modern ML",
+    "year": 2017
+  },
+  {
+    "id": "1803.02999",
+    "title": "Universal Language Model Fine-tuning for Text Classification",
+    "field": "Modern ML",
+    "year": 2018
+  },
+  {
+    "id": "1707.06347",
+    "title": "Wasserstein GAN",
+    "field": "Modern ML",
+    "year": 2017
+  },
+  {
+    "id": "2112.10752",
+    "title": "High-Resolution Image Synthesis with Latent Diffusion Models",
+    "field": "Modern ML",
+    "year": 2021
+  },
+  {
+    "id": "2303.08774",
+    "title": "GPT-4 Technical Report",
+    "field": "Modern ML",
+    "year": 2023
+  },
+  {
+    "id": "2203.02155",
+    "title": "Training Language Models to Follow Instructions with Human Feedback",
+    "field": "Modern ML",
+    "year": 2022
+  },
+  {
+    "id": "1412.3555",
+    "title": "Empirical Evaluation of Gated Recurrent Neural Networks on Sequence Modeling",
+    "field": "Modern ML",
+    "year": 2014
+  },
+  {
+    "id": "1802.05365",
+    "title": "Deep Contextualized Word Representations",
+    "field": "Modern ML",
+    "year": 2018
+  },
+  {
+    "id": "10.1007/978-3-642-15819-3_1",
+    "title": "Adaptation in Natural and Artificial Systems",
+    "field": "Complex Systems",
+    "year": 1975
+  },
+  {
+    "id": "10.1093/oso/9780195079517.001.0001",
+    "title": "The Origins of Order: Self-Organization and Selection in Evolution",
+    "field": "Complex Systems",
+    "year": 1993
+  },
+  {
+    "id": "10.1038/30918",
+    "title": "Collective Dynamics of 'Small-World' Networks",
+    "field": "Complex Systems",
+    "year": 1998
+  },
+  {
+    "id": "10.1126/science.286.5439.509",
+    "title": "Emergence of Scaling in Random Networks",
+    "field": "Complex Systems",
+    "year": 1999
+  },
+  {
+    "id": "10.1103/RevModPhys.74.47",
+    "title": "Statistical Mechanics of Complex Networks",
+    "field": "Complex Systems",
+    "year": 2002
+  },
+  {
+    "id": "10.1038/35019019",
+    "title": "Error and Attack Tolerance of Complex Networks",
+    "field": "Complex Systems",
+    "year": 2000
+  },
+  {
+    "id": "10.1007/978-1-4612-1120-5",
+    "title": "A New Kind of Science",
+    "field": "Complex Systems",
+    "year": 2002
+  },
+  {
+    "id": "10.1103/RevModPhys.47.67",
+    "title": "Theory of Self-Reproducing Automata",
+    "field": "Complex Systems",
+    "year": 1966
+  },
+  {
+    "id": "10.1086/393964",
+    "title": "Growing Artificial Societies: Social Science from the Bottom Up",
+    "field": "Complex Systems",
+    "year": 1996
+  },
+  {
+    "id": "10.1038/318162a0",
+    "title": "Evolution and the Theory of Games",
+    "field": "Complex Systems",
+    "year": 1982
+  },
+  {
+    "id": "10.1007/978-1-4757-2184-2",
+    "title": "At Home in the Universe: The Search for the Laws of Self-Organization and Complexity",
+    "field": "Complex Systems",
+    "year": 1995
+  },
+  {
+    "id": "10.1103/PhysRevE.69.026113",
+    "title": "Finding and Evaluating Community Structure in Networks",
+    "field": "Complex Systems",
+    "year": 2004
+  },
+  {
+    "id": "10.1038/393440a0",
+    "title": "The Structure of the World Wide Web",
+    "field": "Complex Systems",
+    "year": 1999
+  },
+  {
+    "id": "10.1086/228311",
+    "title": "The Strength of Weak Ties",
+    "field": "Complex Systems",
+    "year": 1973
+  },
+  {
+    "id": "10.1038/s41586-019-1923-7",
+    "title": "Mastering Atari, Go, Chess and Shogi by Planning with a Learned Model",
+    "field": "Complex Systems",
+    "year": 2020
+  },
+  {
+    "id": "10.1098/rsif.2005.0051",
+    "title": "Power-Law Distributions in Empirical Data",
+    "field": "Complex Systems",
+    "year": 2009
+  },
+  {
+    "id": "10.1103/PhysRevLett.86.3200",
+    "title": "The Web of Human Sexual Contacts",
+    "field": "Complex Systems",
+    "year": 2001
+  },
+  {
+    "id": "10.1038/35075138",
+    "title": "Classes of Small-World Networks",
+    "field": "Complex Systems",
+    "year": 2000
+  },
+  {
+    "id": "10.1016/0378-4371(96)00178-4",
+    "title": "Self-Organized Criticality: An Explanation of the 1/f Noise",
+    "field": "Complex Systems",
+    "year": 1987
+  },
+  {
+    "id": "10.1103/PhysRevE.64.026118",
+    "title": "Community Structure in Social and Biological Networks",
+    "field": "Complex Systems",
+    "year": 2002
+  },
+  {
+    "id": "10.1007/978-1-4757-3758-4",
+    "title": "Hidden Order: How Adaptation Builds Complexity",
+    "field": "Complex Systems",
+    "year": 1995
+  },
+  {
+    "id": "10.1038/nature02555",
+    "title": "Network Motifs: Simple Building Blocks of Complex Networks",
+    "field": "Complex Systems",
+    "year": 2002
+  },
+  {
+    "id": "10.1007/978-3-540-32891-3",
+    "title": "Linked: The New Science of Networks",
+    "field": "Complex Systems",
+    "year": 2002
+  },
+  {
+    "id": "10.1103/PhysRevLett.87.278701",
+    "title": "Scientific Collaboration Networks",
+    "field": "Complex Systems",
+    "year": 2001
+  },
+  {
+    "id": "10.1016/j.physrep.2005.10.009",
+    "title": "Complex Networks: Structure and Dynamics",
+    "field": "Complex Systems",
+    "year": 2006
+  }
+]

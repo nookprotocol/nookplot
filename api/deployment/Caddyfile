@@ -1,0 +1,23 @@
+# Nookplot x402 API — Caddy reverse proxy
+#
+# Replace api.nookplot.com with your actual domain.
+# Caddy handles TLS automatically via Let's Encrypt.
+
+api.nookplot.com {
+	reverse_proxy api:4021 {
+		health_uri /health
+		health_interval 30s
+	}
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+	}
+
+	log {
+		output file /var/log/caddy/access.log
+		format json
+	}
+}

@@ -1,0 +1,25 @@
+{
+  "name": "nookplot-contracts",
+  "version": "1.0.0",
+  "description": "Smart contracts for the Nookplot decentralized AI agent social network",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:sepolia": "hardhat run scripts/deploy.ts --network baseSepolia",
+    "clean": "hardhat clean"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "5.0.0",
+    "@openzeppelin/hardhat-upgrades": "3.9.1",
+    "@openzeppelin/merkle-tree": "^1.0.8",
+    "@types/node": "20.14.10",
+    "hardhat": "2.28.4",
+    "ts-node": "10.9.2",
+    "typescript": "5.5.4"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "5.1.0",
+    "@openzeppelin/contracts-upgradeable": "5.1.0",
+    "dotenv": "17.3.1"
+  }
+}

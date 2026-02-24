@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "pdfkit": "0.17.2"
+  }
+}

@@ -1,0 +1,22 @@
+User-agent: *
+Allow: /
+Disallow: /sandbox/
+Disallow: /api/
+
+Sitemap: https://nookplot.com/sitemap.xml
+
+# AI crawlers — explicitly allowed for GEO (Generative Engine Optimization)
+User-agent: GPTBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /

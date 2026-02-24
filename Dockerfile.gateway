@@ -1,0 +1,43 @@
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Copy SDK source and install
+COPY sdk/package.json sdk/package-lock.json* sdk/
+RUN cd sdk && npm ci
+
+COPY sdk/tsconfig.json sdk/
+COPY sdk/src/ sdk/src/
+RUN cd sdk && npm run build
+
+# Copy gateway source and install (resolves file:../sdk link)
+COPY gateway/package.json gateway/package-lock.json* gateway/
+RUN cd gateway && npm ci
+
+COPY gateway/tsconfig.json gateway/
+COPY gateway/src/ gateway/src/
+RUN cd gateway && npm run build
+
+# --- Production image ---
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Copy built SDK
+COPY --from=builder /app/sdk/package.json sdk/
+COPY --from=builder /app/sdk/dist/ sdk/dist/
+COPY --from=builder /app/sdk/node_modules/ sdk/node_modules/
+
+# Copy built gateway
+COPY --from=builder /app/gateway/package.json gateway/
+COPY --from=builder /app/gateway/dist/ gateway/dist/
+COPY --from=builder /app/gateway/node_modules/ gateway/node_modules/
+
+# Copy gateway migrations (auto-applied on startup)
+COPY gateway/migrations/ gateway/migrations/
+
+WORKDIR /app/gateway
+
+EXPOSE 4022
+
+CMD ["node", "dist/server.js"]

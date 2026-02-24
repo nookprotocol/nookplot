@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+/* ═══ BRAND TOKENS — DARK MODE (default) ═══ */
+@theme {
+  /* Core palette */
+  --color-background: #0E0F0E;
+  --color-foreground: #E8E6E1;
+  --color-card: #151716;
+  --color-card-hover: #1A1C1A;
+  --color-border: rgba(96, 113, 97, 0.12);
+  --color-border-hover: rgba(96, 113, 97, 0.25);
+  --color-muted: #6B6960;
+  --color-muted-foreground: #9A9890;
+
+  /* Accent — Emerald in dark, Moss in light */
+  --color-accent: #6DB874;
+  --color-accent-hover: #82C888;
+  --color-accent-soft: rgba(109, 184, 116, 0.10);
+  --color-accent-glow: rgba(109, 184, 116, 0.04);
+
+  /* Status */
+  --color-success: #6DB874;
+  --color-danger: #B85450;
+  --color-warning: #C4883A;
+
+  /* Brand colors (accessible as Tailwind utilities) */
+  --color-feldgrau: #607161;
+  --color-moss: #4A5D4B;
+  --color-sage: #8FA98F;
+  --color-emerald: #6DB874;
+  --color-jasmine: #EFEAD8;
+  --color-wheat: #E8DCC8;
+  --color-parchment: #F5F1E6;
+  --color-linen: #FAF8F2;
+  --color-bark: #1A1A18;
+  --color-charcoal: #2D2D2A;
+  --color-stone: #3D3D38;
+  --color-dusk: #5C5C55;
+  --color-signal-warm: #C4883A;
+  --color-signal-cool: #5B8FA8;
+  --color-signal-hot: #B85450;
+
+  /* Surfaces */
+  --color-bg-raised: #151716;
+  --color-bg-surface: #1A1C1A;
+  --color-bg-overlay: rgba(14, 15, 14, 0.85);
+
+  /* Foreground shades */
+  --color-fg-dim: #9A9890;
+  --color-fg-muted: #6B6960;
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.4);
+
+  /* Typography */
+  --font-display: 'Libre Baskerville', Georgia, serif;
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', ui-monospace, monospace;
+}
+
+/* ═══ BRAND TOKENS — LIGHT MODE ═══ */
+[data-theme="light"] {
+  --color-background: #FAF8F2;
+  --color-foreground: #1A1A18;
+  --color-card: #FFFFFF;
+  --color-card-hover: #F5F1E6;
+  --color-border: rgba(74, 93, 75, 0.12);
+  --color-border-hover: rgba(74, 93, 75, 0.25);
+  --color-muted: #8A8A82;
+  --color-muted-foreground: #5C5C55;
+
+  --color-accent: #4A5D4B;
+  --color-accent-hover: #607161;
+  --color-accent-soft: rgba(74, 93, 75, 0.08);
+  --color-accent-glow: rgba(74, 93, 75, 0.03);
+
+  --color-bg-raised: #FFFFFF;
+  --color-bg-surface: #F5F1E6;
+  --color-bg-overlay: rgba(250, 248, 242, 0.85);
+
+  --color-fg-dim: #5C5C55;
+  --color-fg-muted: #8A8A82;
+
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.06);
+  --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.08);
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 404 lost agent float */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+/* Graph detail panel slide-in */
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+.animate-slide-in-right {
+  animation: slide-in-right 0.2s ease-out;
+}
+
+/* Sidebar scrollbar styling */
+.sidebar-scroll::-webkit-scrollbar { width: 4px; }
+.sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+.sidebar-scroll::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }
+
+/* Section label accent line */
+.section-label::before {
+  content: '';
+  width: 16px;
+  height: 1px;
+  background: var(--color-accent);
+  opacity: 0.4;
+}
+
+/* RainbowKit theme overrides — match brand accent in both modes */
+[data-rk] {
+  --rk-colors-accentColor: var(--color-accent) !important;
+  --rk-colors-accentColorForeground: #FAF8F2 !important;
+}

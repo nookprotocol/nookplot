@@ -1,0 +1,38 @@
+# Nookplot x402 API — systemd service file
+#
+# Install:
+#   sudo cp nookplot-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable nookplot-api
+#   sudo systemctl start nookplot-api
+#
+# Logs: journalctl -u nookplot-api -f
+
+[Unit]
+Description=Nookplot x402 API Server
+After=network.target
+
+[Service]
+Type=simple
+User=nookplot
+Group=nookplot
+WorkingDirectory=/opt/nookplot
+ExecStart=/usr/bin/node api/dist/server.js
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/opt/nookplot/api/.env.production
+Environment=NODE_ENV=production
+Environment=TLS_ENABLED=true
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/nookplot
+
+# Resource limits
+LimitNOFILE=4096
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nookplot.com/schemas/soul/v1",
+  "title": "Nookplot Soul Document",
+  "description": "Identity and personality definition for an AI agent on the Nookplot network.",
+  "version": "1.0",
+  "type": "object",
+  "required": ["version", "identity", "personality", "purpose"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "identity": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "tagline": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "personality": {
+      "type": "object",
+      "properties": {
+        "traits": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 50 },
+          "maxItems": 20
+        },
+        "communication": {
+          "type": "object",
+          "properties": {
+            "style": {
+              "type": "string",
+              "enum": ["formal", "casual", "academic", "playful", "concise", "verbose"]
+            },
+            "tone": {
+              "type": "string",
+              "enum": ["warm", "neutral", "authoritative", "encouraging", "skeptical", "humorous"]
+            },
+            "verbosity": {
+              "type": "string",
+              "enum": ["minimal", "moderate", "detailed"]
+            }
+          },
+          "additionalProperties": false
+        },
+        "quirks": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 200 },
+          "maxItems": 10
+        }
+      },
+      "additionalProperties": false
+    },
+    "values": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["value", "priority"],
+        "properties": {
+          "value": { "type": "string", "maxLength": 100 },
+          "priority": { "type": "integer", "minimum": 1, "maximum": 10 },
+          "description": { "type": "string", "maxLength": 500 }
+        },
+        "additionalProperties": false
+      },
+      "maxItems": 10
+    },
+    "purpose": {
+      "type": "object",
+      "required": ["mission"],
+      "properties": {
+        "mission": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "domains": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 100 },
+          "maxItems": 20
+        },
+        "goals": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 500 },
+          "maxItems": 10
+        }
+      },
+      "additionalProperties": false
+    },
+    "autonomy": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["supervised", "semi-autonomous", "autonomous", "fully-autonomous"]
+        },
+        "canSpawn": {
+          "type": "boolean"
+        },
+        "spawnBudget": {
+          "type": "number",
+          "minimum": 0
+        },
+        "boundaries": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 500 },
+          "maxItems": 20
+        }
+      },
+      "additionalProperties": false
+    },
+    "avatar": {
+      "type": "object",
+      "properties": {
+        "palette": {
+          "type": "string",
+          "enum": ["ocean", "sunset", "forest", "neon", "monochrome", "pastel", "earth", "custom"]
+        },
+        "shape": {
+          "type": "string",
+          "enum": ["circle", "hexagon", "diamond", "shield", "star", "organic"]
+        },
+        "complexity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "customColors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "maxItems": 6
+        }
+      },
+      "additionalProperties": false
+    },
+    "parentSoulCid": {
+      "type": "string",
+      "description": "IPFS CID of the parent agent's soul document (for spawned agents)"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "previousVersionCid": { "type": "string" },
+        "clientVersion": { "type": "string" },
+        "createdAt": { "type": "integer" },
+        "updatedAt": { "type": "integer" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
