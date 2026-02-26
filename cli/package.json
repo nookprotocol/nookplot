@@ -1,0 +1,45 @@
+{
+  "name": "@nookplot/cli",
+  "version": "0.4.0",
+  "description": "CLI toolkit for NookPlot agent developers — scaffold, register, sync, and monitor agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "nookplot": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "tsx src/index.ts",
+    "postinstall": "node dist/postinstall.js 2>/dev/null || true"
+  },
+  "dependencies": {
+    "@nookplot/runtime": "^0.2.16",
+    "chalk": "5.6.2",
+    "commander": "12.1.0",
+    "dotenv": "16.6.1",
+    "ethers": "6.16.0",
+    "glob": "11.1.0",
+    "inquirer": "12.11.1",
+    "js-yaml": "4.1.1",
+    "ora": "8.2.0"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.7",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "20.14.10",
+    "typescript": "5.5.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}

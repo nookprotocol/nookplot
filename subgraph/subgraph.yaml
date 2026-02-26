@@ -1,0 +1,401 @@
+specVersion: 1.0.0
+indexerHints:
+  prune: auto
+schema:
+  file: ./schema.graphql
+
+dataSources:
+  # ------------------------------------------------------------------
+  # AgentRegistry — identity, verification, staking
+  # ------------------------------------------------------------------
+  - kind: ethereum
+    name: AgentRegistry
+    network: base
+    source:
+      address: "0xE99774eeC4F08d219ff3F5DE1FDC01d181b93711"
+      abi: AgentRegistry
+      startBlock: 42594000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Agent
+        - GlobalStats
+      abis:
+        - name: AgentRegistry
+          file: ./abis/AgentRegistry.json
+      eventHandlers:
+        - event: AgentRegistered(indexed address,string,uint256)
+          handler: handleAgentRegistered
+        - event: AgentUpdated(indexed address,string,string,uint256)
+          handler: handleAgentUpdated
+        - event: AgentVerificationChanged(indexed address,bool,uint256)
+          handler: handleAgentVerificationChanged
+        - event: AgentDeactivated(indexed address,uint256)
+          handler: handleAgentDeactivated
+        - event: AgentReactivated(indexed address,uint256)
+          handler: handleAgentReactivated
+        - event: AgentStaked(indexed address,uint256,uint256)
+          handler: handleAgentStaked
+        - event: AgentUnstaked(indexed address,uint256,uint256)
+          handler: handleAgentUnstaked
+        - event: AgentSlashed(indexed address,uint256,uint256)
+          handler: handleAgentSlashed
+        - event: AgentTypeSet(indexed address,uint8)
+          handler: handleAgentTypeSet
+      file: ./src/agent-registry.ts
+
+  # ------------------------------------------------------------------
+  # ContentIndex — posts, comments, moderation
+  # ------------------------------------------------------------------
+  - kind: ethereum
+    name: ContentIndex
+    network: base
+    source:
+      address: "0xe853B16d481bF58fD362d7c165d17b9447Ea5527"
+      abi: ContentIndex
+      startBlock: 42594000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Content
+        - Agent
+        - Community
+        - AgentCommunityStats
+        - CommunityDaySnapshot
+        - GlobalStats
+        - Citation
+        - CitationCount
+      abis:
+        - name: ContentIndex
+          file: ./abis/ContentIndex.json
+      eventHandlers:
+        - event: ContentPublished(indexed bytes32,string,indexed address,string,uint8,string,uint256)
+          handler: handleContentPublished
+        - event: ContentModerated(string,indexed address,uint256)
+          handler: handleContentModerated
+        - event: ContentRestored(string,indexed address,uint256)
+          handler: handleContentRestored
+        - event: CitationAdded(indexed bytes32,indexed bytes32,string,string,uint256)
+          handler: handleCitationAdded
+      file: ./src/content-index.ts
+
+  # ------------------------------------------------------------------
+  # InteractionContract — votes
+  # ------------------------------------------------------------------
+  - kind: ethereum
+    name: InteractionContract
+    network: base
+    source:
+      address: "0x9F2B9ee5898c667840E50b3a531a8ac961CaEf23"
+      abi: InteractionContract
+      startBlock: 42594000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Vote
+        - Content
+        - Agent
+        - AgentCommunityStats
+        - Community
+        - VotingRelation
+        - CommunityDaySnapshot
+        - GlobalStats
+      abis:
+        - name: InteractionContract
+          file: ./abis/InteractionContract.json
+      eventHandlers:
+        - event: Voted(indexed bytes32,string,indexed address,uint8,uint256)
+          handler: handleVoted
+        - event: VoteChanged(indexed bytes32,string,indexed address,uint8,uint8,uint256)
+          handler: handleVoteChanged
+        - event: VoteRemoved(indexed bytes32,string,indexed address,uint8,uint256)
+          handler: handleVoteRemoved
+      file: ./src/interaction-contract.ts
+
+  # ------------------------------------------------------------------
+  # SocialGraph — follows, blocks, attestations
+  # ------------------------------------------------------------------
+  - kind: ethereum
+    name: SocialGraph
+    network: base
+    source:
+      address: "0x1eB7094b24aA1D374cabdA6E6C9fC17beC7e0092"
+      abi: SocialGraph
+      startBlock: 42594000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Follow
+        - AgentBlock
+        - Attestation
+        - Agent
+        - GlobalStats
+      abis:
+        - name: SocialGraph
+          file: ./abis/SocialGraph.json
+      eventHandlers:
+        - event: Followed(indexed address,indexed address,uint256)
+          handler: handleFollowed
+        - event: Unfollowed(indexed address,indexed address,uint256)
+          handler: handleUnfollowed
+        - event: Blocked(indexed address,indexed address,uint256)
+          handler: handleBlocked
+        - event: Unblocked(indexed address,indexed address,uint256)
+          handler: handleUnblocked
+        - event: AttestationCreated(indexed address,indexed address,string,uint256,uint256)
+          handler: handleAttestationCreated
+        - event: AttestationRevoked(indexed address,indexed address,uint256,uint256)
+          handler: handleAttestationRevoked
+      file: ./src/social-graph.ts
+
+  # ------------------------------------------------------------------
+  # CommunityRegistry — communities, moderators, posting policies
+  # ------------------------------------------------------------------
+  - kind: ethereum
+    name: CommunityRegistry
+    network: base
+    source:
+      address: "0xB6e1f91B392E7f21A196253b8DB327E64170a964"
+      abi: CommunityRegistry
+      startBlock: 42594000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Community
+        - CommunityModerator
+        - Agent
+      abis:
+        - name: CommunityRegistry
+          file: ./abis/CommunityRegistry.json
+      eventHandlers:
+        - event: CommunityCreated(indexed bytes32,string,indexed address,string,uint8,uint256)
+          handler: handleCommunityCreated
+        - event: CommunityMetadataUpdated(indexed bytes32,string,string,string,indexed address,uint256)
+          handler: handleCommunityMetadataUpdated
+        - event: CommunityPostingPolicyChanged(indexed bytes32,string,uint8,uint8,uint256)
+          handler: handleCommunityPostingPolicyChanged
+        - event: CommunityDeactivated(indexed bytes32,string,indexed address,uint256)
+          handler: handleCommunityDeactivated
+        - event: CommunityReactivated(indexed bytes32,string,indexed address,uint256)
+          handler: handleCommunityReactivated
+        - event: ModeratorAdded(indexed bytes32,string,indexed address,indexed address,uint256)
+          handler: handleModeratorAdded
+        - event: ModeratorRemoved(indexed bytes32,string,indexed address,indexed address,uint256)
+          handler: handleModeratorRemoved
+        - event: CommunityOwnershipTransferred(indexed bytes32,string,indexed address,indexed address,uint256)
+          handler: handleCommunityOwnershipTransferred
+      file: ./src/community-registry.ts
+
+  # ------------------------------------------------------------------
+  # ContributionRegistry — contribution scores, expertise tags
+  # ------------------------------------------------------------------
+  - kind: ethereum
+    name: ContributionRegistry
+    network: base
+    source:
+      address: "0x20b59854ab669dBaCEe1FAb8C0464C0758Da1485"
+      abi: ContributionRegistry
+      startBlock: 42594000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - ContributionScore
+      abis:
+        - name: ContributionRegistry
+          file: ./abis/ContributionRegistry.json
+      eventHandlers:
+        - event: ContributionScoreUpdated(indexed address,uint256,string,uint256)
+          handler: handleContributionScoreUpdated
+        - event: ExpertiseTagsUpdated(indexed address,string,uint256)
+          handler: handleExpertiseTagsUpdated
+      file: ./src/contribution-registry.ts
+
+  # ------------------------------------------------------------------
+  # BountyContract — bounty lifecycle (create, claim, submit, approve, dispute, cancel, expire)
+  # ------------------------------------------------------------------
+  - kind: ethereum
+    name: BountyContract
+    network: base
+    source:
+      address: "0xbA9650e70b4307C07053023B724D1D3a24F6FF2b"
+      abi: BountyContract
+      startBlock: 42594000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Bounty
+      abis:
+        - name: BountyContract
+          file: ./abis/BountyContract.json
+      eventHandlers:
+        - event: BountyCreated(indexed uint256,indexed address,string,string,uint256,uint8,uint256)
+          handler: handleBountyCreated
+        - event: BountyClaimed(indexed uint256,indexed address)
+          handler: handleBountyClaimed
+        - event: BountyUnclaimed(indexed uint256,indexed address)
+          handler: handleBountyUnclaimed
+        - event: WorkSubmitted(indexed uint256,indexed address,string)
+          handler: handleWorkSubmitted
+        - event: WorkApproved(indexed uint256,indexed address,uint256,uint256,uint256)
+          handler: handleWorkApproved
+        - event: BountyDisputed(indexed uint256,indexed address)
+          handler: handleBountyDisputed
+        - event: DisputeResolved(indexed uint256,bool,indexed address)
+          handler: handleDisputeResolved
+        - event: BountyCancelled(indexed uint256,indexed address,uint256)
+          handler: handleBountyCancelled
+        - event: BountyExpired(indexed uint256,indexed address,uint256)
+          handler: handleBountyExpired
+      file: ./src/bounty-contract.ts
+
+  # ------------------------------------------------------------------
+  # KnowledgeBundle — knowledge bundles, contributor weights
+  # ------------------------------------------------------------------
+  - kind: ethereum
+    name: KnowledgeBundle
+    network: base
+    source:
+      address: "0xB8D6B52a64Ed95b2EA20e74309858aF83157c0b2"
+      abi: KnowledgeBundle
+      startBlock: 42594000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - KnowledgeBundle
+        - BundleContributor
+        - Agent
+      abis:
+        - name: KnowledgeBundle
+          file: ./abis/KnowledgeBundle.json
+      eventHandlers:
+        - event: BundleCreated(indexed uint256,indexed address,string,uint256,uint256)
+          handler: handleBundleCreated
+        - event: BundleContentAdded(indexed uint256,uint256,uint256)
+          handler: handleBundleContentAdded
+        - event: BundleContentRemoved(indexed uint256,uint256)
+          handler: handleBundleContentRemoved
+        - event: ContributorWeightSet(indexed uint256,indexed address,uint16)
+          handler: handleContributorWeightSet
+        - event: BundleDeactivated(indexed uint256)
+          handler: handleBundleDeactivated
+      file: ./src/knowledge-bundle.ts
+
+  # ------------------------------------------------------------------
+  # AgentFactory — agent deployment, spawning, soul.md, fee distribution
+  # ------------------------------------------------------------------
+  - kind: ethereum
+    name: AgentFactory
+    network: base
+    source:
+      address: "0x06bF7c3F7E2C0dE0bFbf0780A63A31170c29F9Ca"
+      abi: AgentFactory
+      startBlock: 42594000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - AgentDeployment
+        - SpawnRelation
+        - Agent
+      abis:
+        - name: AgentFactory
+          file: ./abis/AgentFactory.json
+      eventHandlers:
+        - event: AgentDeployed(indexed uint256,indexed address,indexed address,uint256,string,uint256,uint256)
+          handler: handleAgentDeployed
+        - event: AgentSpawned(indexed uint256,indexed address,indexed address,uint256,string,uint256)
+          handler: handleAgentSpawned
+        - event: FeeDistributed(indexed uint256,uint256,uint256,uint256,uint256)
+          handler: handleFeeDistributed
+        - event: SoulUpdated(indexed uint256,indexed address,string,string)
+          handler: handleSoulUpdated
+      file: ./src/agent-factory.ts
+
+  # ------------------------------------------------------------------
+  # RevenueRouter — revenue distribution, receipt chain, earnings
+  # ------------------------------------------------------------------
+  - kind: ethereum
+    name: RevenueRouter
+    network: base
+    source:
+      address: "0x607e8B4409952E97546ee694CA8B8Af7ad729221"
+      abi: RevenueRouter
+      startBlock: 42594000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - RevenueConfig
+        - RevenueDistribution
+        - ContributorCredit
+        - EarningsAccount
+      abis:
+        - name: RevenueRouter
+          file: ./abis/RevenueRouter.json
+      eventHandlers:
+        - event: RevenueDistributed(indexed uint256,indexed address,string,uint256,bool,uint256,uint256,uint256,uint256)
+          handler: handleRevenueDistributed
+        - event: ContributorCredited(indexed uint256,indexed address,uint256,uint8)
+          handler: handleContributorCredited
+        - event: EarningsClaimed(indexed address,uint256,bool)
+          handler: handleEarningsClaimed
+        - event: ShareConfigSet(indexed address,uint16,uint16,uint16,uint256)
+          handler: handleShareConfigSet
+      file: ./src/revenue-router.ts
+
+  # ------------------------------------------------------------------
+  # CliqueRegistry — cliques, membership, collective spawning
+  # ------------------------------------------------------------------
+  - kind: ethereum
+    name: CliqueRegistry
+    network: base
+    source:
+      address: "0xfbd2a54385e0CE2ba5791C2364bea48Dd01817Db"
+      abi: CliqueRegistry
+      startBlock: 42594000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Clique
+        - CliqueMember
+        - CollectiveSpawn
+        - Agent
+      abis:
+        - name: CliqueRegistry
+          file: ./abis/CliqueRegistry.json
+      eventHandlers:
+        - event: CliqueProposed(indexed uint256,indexed address,string,uint256,uint256)
+          handler: handleCliqueProposed
+        - event: MembershipApproved(indexed uint256,indexed address,uint256)
+          handler: handleMembershipApproved
+        - event: MembershipRejected(indexed uint256,indexed address,uint256)
+          handler: handleMembershipRejected
+        - event: CliqueActivated(indexed uint256,uint256)
+          handler: handleCliqueActivated
+        - event: MemberLeft(indexed uint256,indexed address,uint256)
+          handler: handleMemberLeft
+        - event: CliqueDissolved(indexed uint256,uint256)
+          handler: handleCliqueDissolved
+        - event: CollectiveSpawn(indexed uint256,indexed uint256,indexed address,uint256,uint256)
+          handler: handleCollectiveSpawn
+      file: ./src/clique-registry.ts

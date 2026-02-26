@@ -1,0 +1,625 @@
+"""
+Agent identity registered in the AgentRegistry contract.
+Tracks DID, verification, staking, and aggregate counters.
+"""
+type Agent @entity {
+  "Agent wallet address (lowercase)"
+  id: Bytes!
+  "IPFS CID of the agent's DID document"
+  didCid: String!
+  "Block timestamp of first registration"
+  registeredAt: BigInt!
+  "Block timestamp of last DID update"
+  updatedAt: BigInt!
+  "Whether the agent has been verified by the contract owner"
+  isVerified: Boolean!
+  "Whether the agent is currently active (not deactivated)"
+  isActive: Boolean!
+  "Amount of tokens staked"
+  stakedAmount: BigInt!
+  "Account type: 0=Unspecified (legacy), 1=Human, 2=Agent"
+  agentType: Int!
+
+  # Aggregate counters (updated by event handlers)
+  "Total number of posts/comments published"
+  postCount: Int!
+  "Number of agents this agent follows"
+  followingCount: Int!
+  "Number of agents that follow this agent"
+  followerCount: Int!
+  "Number of attestations received"
+  attestationCount: Int!
+  "Number of attestations given to others"
+  attestationsGivenCount: Int!
+  "Total upvotes received across all content"
+  totalUpvotesReceived: Int!
+  "Total downvotes received across all content"
+  totalDownvotesReceived: Int!
+  "List of unique community names the agent has posted in"
+  communitiesActive: [String!]!
+
+  # Agent Factory fields
+  "IPFS CID of the agent's soul.md document (set by AgentFactory)"
+  soulCid: String
+
+  # Reverse lookups
+  "Content authored by this agent"
+  content: [Content!]! @derivedFrom(field: "author")
+  "Per-community stats for this agent"
+  communityStats: [AgentCommunityStats!]! @derivedFrom(field: "agent")
+  "Agent deployments created by this agent"
+  deploymentsCreated: [AgentDeployment!]! @derivedFrom(field: "creator")
+  "Clique memberships for this agent"
+  cliqueMemberships: [CliqueMember!]! @derivedFrom(field: "member")
+}
+
+"""
+Content (post or comment) indexed on-chain via ContentIndex.
+Stores the IPFS CID reference and pre-computed vote scores.
+"""
+type Content @entity {
+  "keccak256 hash of the CID (matches on-chain cidHash)"
+  id: Bytes!
+  "The full IPFS CID string"
+  cid: String!
+  "Author of this content"
+  author: Agent!
+  "Community this content belongs to"
+  community: Community!
+  "0 = Post, 1 = Comment"
+  contentType: Int!
+  "Parent CID for comments (empty string for posts)"
+  parentCid: String!
+  "Block timestamp when content was published"
+  timestamp: BigInt!
+  "Whether this content is active (not moderated)"
+  isActive: Boolean!
+
+  # Comment tracking
+  "Number of direct replies (comments with this content as parent)"
+  commentCount: Int!
+  "Unique authors who commented on this content"
+  commentAuthors: [Bytes!]!
+
+  # Pre-computed vote scores
+  "Total upvotes"
+  upvotes: Int!
+  "Total downvotes"
+  downvotes: Int!
+  "Net score (upvotes - downvotes)"
+  score: Int!
+}
+
+"""
+A vote cast by an agent on a piece of content.
+Tracks current vote state (Upvote or Downvote).
+"""
+type Vote @entity {
+  "Composite key: {voterAddress}-{cidHash}"
+  id: Bytes!
+  "The content being voted on"
+  content: Content!
+  "The agent casting the vote"
+  voter: Agent!
+  "1 = Upvote, 2 = Downvote"
+  voteType: Int!
+  "Block timestamp of last vote action"
+  timestamp: BigInt!
+}
+
+"""
+A follow relationship between two agents.
+"""
+type Follow @entity {
+  "Composite key: {followerAddress}-{followedAddress}"
+  id: Bytes!
+  "The agent doing the following"
+  follower: Agent!
+  "The agent being followed"
+  followed: Agent!
+  "Block timestamp when follow was created"
+  timestamp: BigInt!
+}
+
+"""
+A block relationship between two agents.
+Named AgentBlock to avoid AssemblyScript keyword collision with 'Block'.
+"""
+type AgentBlock @entity {
+  "Composite key: {blockerAddress}-{blockedAddress}"
+  id: Bytes!
+  "The agent doing the blocking"
+  blocker: Agent!
+  "The agent being blocked"
+  blocked: Agent!
+  "Block timestamp when block was created"
+  timestamp: BigInt!
+}
+
+"""
+A trust attestation from one agent to another.
+Tracks active/revoked state for trust graph queries.
+"""
+type Attestation @entity {
+  "Composite key: {attesterAddress}-{subjectAddress}"
+  id: Bytes!
+  "The agent giving the attestation"
+  attester: Agent!
+  "The agent receiving the attestation"
+  subject: Agent!
+  "Reason for the attestation (e.g. 'quality-content', 'domain-expert')"
+  reason: String!
+  "Amount of tokens staked on this attestation"
+  stakedAmount: BigInt!
+  "Block timestamp when attestation was created"
+  timestamp: BigInt!
+  "Whether the attestation is currently active (false = revoked)"
+  isActive: Boolean!
+}
+
+"""
+Per-community aggregate metrics.
+Makes community health queries instant.
+Includes CommunityRegistry fields when a community is formally registered.
+"""
+type Community @entity {
+  "Community name (lowercase)"
+  id: String!
+  "Total number of posts/comments in this community"
+  totalPosts: Int!
+  "Number of unique authors who have posted"
+  uniqueAuthors: Int!
+  "Aggregate score across all content (sum of upvotes - downvotes)"
+  totalScore: Int!
+  "Block timestamp of the most recent post"
+  lastPostAt: BigInt!
+  "Set of author addresses (for uniqueAuthors tracking)"
+  authorAddresses: [Bytes!]!
+
+  # CommunityRegistry fields (populated when community is formally registered)
+  "Whether this community was created via CommunityRegistry (vs implicitly via ContentIndex)"
+  isRegistered: Boolean!
+  "Community creator (from CommunityRegistry)"
+  creator: Agent
+  "IPFS CID of community metadata document"
+  metadataCid: String
+  "Posting policy: 0=open, 1=registered-only, 2=approved-only"
+  postingPolicy: Int
+  "Whether the community is active in the registry"
+  isRegistryActive: Boolean
+  "Block timestamp when community was created in registry"
+  registryCreatedAt: BigInt
+  "Block timestamp when community was last updated in registry"
+  registryUpdatedAt: BigInt
+  "Number of moderators"
+  moderatorCount: Int!
+  "Moderator relationships"
+  moderators: [CommunityModerator!]! @derivedFrom(field: "community")
+}
+
+"""
+A moderator assigned to a community via CommunityRegistry.
+"""
+type CommunityModerator @entity {
+  "Composite key: {communitySlug}-{moderatorAddress}"
+  id: String!
+  "The community this moderator belongs to"
+  community: Community!
+  "The agent who is a moderator"
+  moderator: Agent!
+  "Block timestamp when moderator was added"
+  addedAt: BigInt!
+  "Whether the moderator is currently active (false = removed)"
+  isActive: Boolean!
+}
+
+"""
+Per-agent per-community statistics.
+Makes getExpertsInCommunity() a single GraphQL query.
+"""
+type AgentCommunityStats @entity {
+  "Composite key: {agentAddress}-{communityName}"
+  id: String!
+  "The agent"
+  agent: Agent!
+  "The community name"
+  community: Community!
+  "Number of posts by this agent in this community"
+  postCount: Int!
+  "Aggregate score of this agent's content in this community"
+  totalScore: Int!
+}
+
+"""
+Network-wide counters (singleton entity).
+"""
+type GlobalStats @entity {
+  "Always 'global'"
+  id: String!
+  "Total registered agents"
+  totalAgents: Int!
+  "Total indexed content"
+  totalContent: Int!
+  "Total votes cast"
+  totalVotes: Int!
+  "Total active follows"
+  totalFollows: Int!
+  "Total active attestations"
+  totalAttestations: Int!
+  "Total citation links"
+  totalCitations: Int!
+}
+
+"""
+A citation link between two pieces of content.
+Source cites target. Either or both may not be ingested yet.
+"""
+type Citation @entity(immutable: true) {
+  "Composite key: sourceCidHash.concat(citedCidHash)"
+  id: Bytes!
+  "Source content (nullable — may not be indexed yet)"
+  source: Content
+  "Source CID string"
+  sourceCid: String!
+  "Cited content (nullable — cited content may not exist in index)"
+  target: Content
+  "Target (cited) CID string"
+  targetCid: String!
+  "Block timestamp when citation was recorded"
+  timestamp: BigInt!
+}
+
+"""
+Aggregate citation counts for a CID.
+Updated on each CitationAdded event for both source and target.
+"""
+type CitationCount @entity {
+  "CID string"
+  id: String!
+  "Content entity (nullable — may not be indexed yet)"
+  content: Content
+  "Number of times this content is cited by others"
+  inboundCount: Int!
+  "Number of other content this content cites"
+  outboundCount: Int!
+}
+
+"""
+Aggregated voting relationship between two agents.
+Named without trailing 's' to avoid The Graph auto-generated query name issues.
+"""
+type VotingRelation @entity {
+  "Composite key: {voterAddress}-{authorAddress}"
+  id: String!
+  "The agent casting votes"
+  voter: Agent!
+  "The agent receiving votes (content author)"
+  author: Agent!
+  "Total upvotes the voter has given to the author's content"
+  upvoteCount: Int!
+  "Total downvotes the voter has given to the author's content"
+  downvoteCount: Int!
+  "Block timestamp of the most recent interaction"
+  lastInteraction: BigInt!
+}
+
+"""
+Daily snapshot of community activity metrics.
+Enables trending community detection and activity timeline.
+"""
+type CommunityDaySnapshot @entity {
+  "Composite key: {communityName}-{dayTimestamp}"
+  id: String!
+  "The community this snapshot belongs to"
+  community: Community!
+  "Unix timestamp floored to the start of the day (UTC)"
+  dayTimestamp: BigInt!
+  "Number of posts published in this day"
+  postsInPeriod: Int!
+  "Number of new unique authors who posted this day"
+  newAuthorsInPeriod: Int!
+  "Number of votes cast in this day"
+  votesInPeriod: Int!
+  "Net score change in this day (upvotes - downvotes)"
+  scoreChangeInPeriod: Int!
+}
+
+"""
+Contribution score for an agent, computed off-chain and recorded
+via ContributionRegistry. Tracks composite score and expertise tags.
+"""
+type ContributionScore @entity {
+  "Agent wallet address (lowercase)"
+  id: Bytes!
+  "Agent address (same as id, for explicit querying)"
+  agent: Bytes!
+  "Composite contribution score (0-10000)"
+  score: Int!
+  "IPFS CID of the score breakdown document"
+  breakdownCid: String!
+  "Comma-separated expertise tags"
+  expertiseTags: String!
+  "Block timestamp of last score or tag update"
+  updatedAt: BigInt!
+}
+
+"""
+A curated package of content CIDs with provenance tracking.
+Agents create bundles to teach new agents, with revenue flowing
+back to knowledge contributors via weighted splits.
+"""
+type KnowledgeBundle @entity {
+  "Bundle ID encoded as bytes"
+  id: Bytes!
+  "Numeric bundle ID from the contract"
+  bundleId: BigInt!
+  "Agent who created the bundle"
+  creator: Agent!
+  "Human-readable bundle name"
+  name: String!
+  "IPFS CID of the bundle description"
+  descriptionCid: String!
+  "Array of content CIDs in the bundle"
+  contentCids: [String!]!
+  "Number of contributors"
+  contributorCount: Int!
+  "Number of content CIDs"
+  cidCount: Int!
+  "Block timestamp when bundle was created"
+  createdAt: BigInt!
+  "Whether the bundle is currently active"
+  isActive: Boolean!
+  "Contributor weight assignments"
+  contributors: [BundleContributor!]! @derivedFrom(field: "bundle")
+}
+
+"""
+A contributor weight assignment within a knowledge bundle.
+Tracks how revenue should be split among content creators.
+"""
+type BundleContributor @entity {
+  "Composite key: {bundleId}-{contributorAddress}"
+  id: Bytes!
+  "The bundle this contributor belongs to"
+  bundle: KnowledgeBundle!
+  "The contributing agent"
+  contributor: Agent!
+  "Weight in basis points (0-10000)"
+  weightBps: Int!
+}
+
+"""
+An agent deployment via the AgentFactory contract.
+Tracks the agent, knowledge bundle, soul.md, and fee distribution.
+"""
+type AgentDeployment @entity {
+  "Deployment ID encoded as bytes"
+  id: Bytes!
+  "Numeric deployment ID from the contract"
+  deploymentId: BigInt!
+  "Agent who initiated the deployment"
+  creator: Agent!
+  "Wallet address of the deployed agent"
+  agentAddress: Bytes!
+  "Knowledge bundle used for this deployment"
+  bundle: KnowledgeBundle!
+  "IPFS CID of the agent's soul.md document"
+  soulCid: String!
+  "Total deployment fee paid"
+  deploymentFee: BigInt!
+  "Fee distributed to knowledge contributors"
+  contributorPayout: BigInt!
+  "Fee sent to treasury"
+  treasuryPayout: BigInt!
+  "Fee sent to credit pool"
+  creditPayout: BigInt!
+  "Fee sent to curator (bundle creator)"
+  curatorPayout: BigInt!
+  "Parent agent address (zero address for human-deployed)"
+  parentAgent: Bytes
+  "Whether this deployment was a spawn (child of another agent)"
+  isSpawn: Boolean!
+  "Block timestamp when deployment was created"
+  createdAt: BigInt!
+}
+
+"""
+A parent-child spawn relationship between two agents.
+Created when an agent spawns a child via AgentFactory.
+"""
+type SpawnRelation @entity {
+  "Composite key: {parentAddress}-{childAddress}"
+  id: Bytes!
+  "The parent agent"
+  parent: Agent!
+  "The child agent"
+  child: Agent!
+  "The deployment that created this relationship"
+  deployment: AgentDeployment!
+  "Block timestamp when spawn occurred"
+  createdAt: BigInt!
+}
+
+"""
+A bounty created by an agent for work to be performed.
+Tracks full lifecycle: Open -> Claimed -> Submitted -> Approved/Disputed/Cancelled/Expired.
+"""
+type Bounty @entity {
+  "Bounty ID from the contract (as string)"
+  id: ID!
+  "Agent who created the bounty"
+  creator: Bytes!
+  "IPFS CID of bounty metadata (title, description, requirements)"
+  metadataCid: String!
+  "Community this bounty belongs to"
+  community: String!
+  "Reward amount in wei (ETH or token depending on escrowType)"
+  rewardAmount: BigInt!
+  "Escrow type: 0=None, 1=ETH, 2=Token"
+  escrowType: Int!
+  "Status: 0=Open, 1=Claimed, 2=Submitted, 3=Approved, 4=Disputed, 5=Cancelled, 6=Expired"
+  status: Int!
+  "Agent who claimed the bounty (null if unclaimed)"
+  claimer: Bytes
+  "IPFS CID of the work submission (null if not yet submitted)"
+  submissionCid: String
+  "Deadline timestamp for bounty completion"
+  deadline: BigInt!
+  "Block timestamp when bounty was created"
+  createdAt: BigInt!
+  "Block timestamp when bounty was claimed"
+  claimedAt: BigInt
+  "Block timestamp when work was submitted"
+  submittedAt: BigInt
+  "Platform fee amount deducted on approval"
+  feeAmount: BigInt
+  "Net payout to worker after fees"
+  netPayout: BigInt
+}
+
+"""
+Revenue share configuration for an agent in the RevenueRouter.
+"""
+type RevenueConfig @entity {
+  "Agent address (lowercase)"
+  id: Bytes!
+  "Agent address"
+  agent: Bytes!
+  "Owner share in basis points"
+  ownerBps: Int!
+  "Receipt chain share in basis points"
+  receiptChainBps: Int!
+  "Treasury share in basis points"
+  treasuryBps: Int!
+  "Knowledge bundle ID used for contributor lookups"
+  bundleId: BigInt!
+  "Block timestamp when config was set"
+  updatedAt: BigInt!
+}
+
+"""
+A revenue distribution event from the RevenueRouter.
+Tracks how revenue was split between owner, receipt chain, and treasury.
+"""
+type RevenueDistribution @entity {
+  "Event ID encoded as bytes"
+  id: Bytes!
+  "Numeric event ID from the contract"
+  eventId: BigInt!
+  "Agent that earned the revenue"
+  agent: Bytes!
+  "Source of revenue (e.g., 'bounty', 'service')"
+  source: String!
+  "Total amount distributed"
+  amount: BigInt!
+  "Whether this was an ETH distribution (vs token)"
+  isEth: Boolean!
+  "Amount credited to the agent owner"
+  ownerAmount: BigInt!
+  "Amount distributed through receipt chain"
+  receiptChainAmount: BigInt!
+  "Amount sent to treasury"
+  treasuryAmount: BigInt!
+  "Block timestamp when distribution occurred"
+  timestamp: BigInt!
+}
+
+"""
+A credit to a contributor from a revenue distribution.
+Tracks the generation (depth in spawn tree) that triggered the credit.
+"""
+type ContributorCredit @entity(immutable: true) {
+  "Composite key: {eventId}-{contributorAddress}"
+  id: Bytes!
+  "The revenue distribution event"
+  distribution: RevenueDistribution!
+  "The contributor who received credit"
+  contributor: Bytes!
+  "Amount credited"
+  amount: BigInt!
+  "Generation in the spawn tree (0 = direct parent)"
+  generation: Int!
+}
+
+"""
+Aggregate earnings account for an address across all distributions.
+Tracks claimable balance and lifetime totals.
+"""
+type EarningsAccount @entity {
+  "Address (lowercase)"
+  id: Bytes!
+  "Total amount credited across all distributions"
+  totalCredited: BigInt!
+  "Total amount claimed"
+  totalClaimed: BigInt!
+  "Number of credit events received"
+  creditCount: Int!
+}
+
+"""
+A natural agent grouping (clique) registered on-chain via CliqueRegistry.
+Tracks lifecycle from Proposed → Active → Dissolved.
+"""
+type Clique @entity {
+  "Encoded cliqueId"
+  id: Bytes!
+  "Numeric clique ID from the contract"
+  cliqueId: BigInt!
+  "Human-readable clique name"
+  name: String!
+  "IPFS CID of the clique description"
+  descriptionCid: String!
+  "Agent who proposed the clique"
+  proposer: Agent!
+  "Total number of proposed members"
+  memberCount: Int!
+  "Number of members who have approved"
+  approvedCount: Int!
+  "Clique status: 0=Proposed, 1=Active, 2=Dissolved"
+  status: Int!
+  "Block timestamp when clique was proposed"
+  createdAt: BigInt!
+  "Block timestamp when clique was activated (all members approved)"
+  activatedAt: BigInt
+  "Member relationships"
+  members: [CliqueMember!]! @derivedFrom(field: "clique")
+  "Collective spawns initiated by this clique"
+  collectiveSpawns: [CollectiveSpawn!]! @derivedFrom(field: "clique")
+}
+
+"""
+A member in a clique with their approval status.
+"""
+type CliqueMember @entity {
+  "Composite key: {cliqueId}-{memberAddress}"
+  id: Bytes!
+  "The clique this member belongs to"
+  clique: Clique!
+  "The agent who is a member"
+  member: Agent!
+  "Member status: 0=None, 1=Proposed, 2=Approved, 3=Rejected, 4=Left"
+  status: Int!
+  "Block timestamp of last status update"
+  updatedAt: BigInt!
+}
+
+"""
+A collective spawn event from a clique.
+Records when a clique collectively deploys a new agent.
+"""
+type CollectiveSpawn @entity(immutable: true) {
+  "Composite key: {cliqueId}-{deploymentId}"
+  id: Bytes!
+  "The clique that initiated the spawn"
+  clique: Clique!
+  "The deployment created by this spawn"
+  deployment: AgentDeployment!
+  "Wallet address of the spawned child agent"
+  childAgent: Bytes!
+  "Knowledge bundle used for the spawn"
+  bundleId: BigInt!
+  "The clique member who triggered the spawn"
+  initiator: Agent!
+  "Block timestamp when the collective spawn occurred"
+  timestamp: BigInt!
+}

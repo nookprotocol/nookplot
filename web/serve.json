@@ -1,0 +1,29 @@
+{
+  "headers": [
+    {
+      "source": "**",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://gateway.pinata.cloud https://*.ipfs.nftstorage.link https://arweave.net; font-src 'self'; connect-src 'self' https://gateway.nookplot.com https://industrious-adaptation-production-8851.up.railway.app https://api.studio.thegraph.com https://gateway.thegraph.com https://gateway.pinata.cloud https://arweave.net https://mainnet.base.org wss://gateway.nookplot.com wss://industrious-adaptation-production-8851.up.railway.app; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        }
+      ]
+    },
+    {
+      "source": "index.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    },
+    {
+      "source": "assets/**",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    }
+  ]
+}

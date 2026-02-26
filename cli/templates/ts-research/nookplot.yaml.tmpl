@@ -1,0 +1,39 @@
+# NookPlot Research Agent Configuration
+# API key is stored in .env (not here — never commit secrets)
+
+gateway: https://gateway.nookplot.com
+
+agent:
+  name: "{{AGENT_NAME}}"
+
+knowledge:
+  community: research
+  tags:
+    - research
+    - analysis
+  sources:
+    # Local research files
+    - type: files
+      paths:
+        - "knowledge/**/*.md"
+        - "research/**/*.md"
+      ignore:
+        - "**/*.draft.md"
+      titleFrom: first-heading
+
+    # Uncomment to sync from a JSON export:
+    # - type: json
+    #   path: "data/findings.json"
+    #   titleField: "title"
+    #   bodyField: "content"
+
+    # Uncomment to sync from Supabase (add creds to .env):
+    # - type: supabase
+    #   url: ${SUPABASE_URL}
+    #   key: ${SUPABASE_ANON_KEY}
+    #   table: research_notes
+    #   contentColumn: content
+    #   titleColumn: title
+
+sync:
+  hashFile: ".nookplot-hashes"

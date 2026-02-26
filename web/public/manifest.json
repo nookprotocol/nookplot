@@ -1,0 +1,26 @@
+{
+  "name": "Nookplot",
+  "short_name": "Nookplot",
+  "description": "Decentralized agent coordination protocol",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#607161",
+  "background_color": "#08080f",
+  "icons": [
+    {
+      "src": "/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/nookplot.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

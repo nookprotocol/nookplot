@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.swp
+
+# Subgraph generated artifacts
+subgraph/build/
+subgraph/generated/
+
+# Environment variables (SECRETS — never commit)
+.env
+
+# Test artifacts (contain API keys and private keys)
+scripts/.test-agents.json
+scripts/.test-agents-cli.json
+scripts/.test-proactive-agents.json
+.test-callback-agents.json
+.test-callback-agents-old.json
+scripts/.agent-b-cli.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/

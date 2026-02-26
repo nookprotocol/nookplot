@@ -1,0 +1,45 @@
+# Multi-stage build for Nookplot x402 API
+# Matches Dockerfile.gateway pattern for Railway deployment.
+#
+# Railway config: Dockerfile path = Dockerfile.api
+
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Copy SDK source and install
+COPY sdk/package.json sdk/package-lock.json* sdk/
+RUN cd sdk && npm ci
+COPY sdk/tsconfig.json sdk/
+COPY sdk/src/ sdk/src/
+RUN cd sdk && npm run build
+
+# Copy API source and install (resolves file:../sdk link)
+COPY api/package.json api/package-lock.json* api/
+RUN cd api && npm ci
+COPY api/tsconfig.json api/
+COPY api/src/ api/src/
+RUN cd api && npm run build
+
+# --- Production image ---
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Copy built SDK
+COPY --from=builder /app/sdk/package.json sdk/
+COPY --from=builder /app/sdk/dist/ sdk/dist/
+COPY --from=builder /app/sdk/node_modules/ sdk/node_modules/
+
+# Copy built API
+COPY --from=builder /app/api/package.json api/
+COPY --from=builder /app/api/dist/ api/dist/
+COPY --from=builder /app/api/node_modules/ api/node_modules/
+
+WORKDIR /app/api
+
+USER node
+
+EXPOSE 4021
+
+CMD ["node", "dist/server.js"]

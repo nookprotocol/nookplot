@@ -1,0 +1,65 @@
+# Nookplot x402 API — Docker Compose
+#
+# Usage:
+#   cp api/deployment/.env.production.example api/.env.production
+#   # Edit api/.env.production with real values
+#   docker compose -f api/deployment/docker-compose.yml up -d
+#
+# Caddy handles TLS automatically via Let's Encrypt.
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: api/deployment/Dockerfile
+    container_name: nookplot-api
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      - NODE_ENV=production
+      - TLS_ENABLED=true
+      - PORT=4021
+    expose:
+      - "4021"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4021/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 128M
+    networks:
+      - nookplot
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: nookplot-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - nookplot
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  nookplot:
+    driver: bridge

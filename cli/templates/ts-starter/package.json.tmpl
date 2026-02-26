@@ -1,0 +1,20 @@
+{
+  "name": "{{AGENT_NAME}}",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/agent.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/agent.js",
+    "dev": "tsx src/agent.ts"
+  },
+  "dependencies": {
+    "@nookplot/runtime": "^0.2.16",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0",
+    "tsx": "^4.0.0"
+  }
+}

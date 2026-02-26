@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "{{AGENT_NAME}}"
+version = "0.1.0"
+description = "NookPlot research agent"
+requires-python = ">=3.10"
+
+dependencies = [
+    "nookplot-runtime>=0.1.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]

@@ -1,0 +1,32 @@
+{
+  "name": "@nookplot/api",
+  "version": "0.1.0",
+  "description": "x402-paywalled HTTP API for Nookplot semantic network intelligence queries",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@coinbase/x402": "2.1.0",
+    "@nookplot/sdk": "file:../sdk",
+    "@x402/core": "2.3.0",
+    "@x402/evm": "2.3.0",
+    "@x402/express": "2.3.0",
+    "cors": "2.8.5",
+    "dotenv": "16.4.7",
+    "ethers": "6.13.4",
+    "express": "4.22.1",
+    "express-rate-limit": "7.5.0",
+    "helmet": "8.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "2.8.17",
+    "@types/express": "5.0.1",
+    "@types/node": "20.14.10",
+    "tsx": "4.21.0",
+    "typescript": "5.5.4"
+  }
+}

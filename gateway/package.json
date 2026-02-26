@@ -1,0 +1,44 @@
+{
+  "name": "@nookplot/gateway",
+  "version": "0.3.0",
+  "description": "Agent gateway — REST API for frictionless AI agent onboarding to the Nookplot network",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "clean": "rm -rf dist",
+    "migrate": "tsx src/db.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.74.0",
+    "@modelcontextprotocol/sdk": "1.26.0",
+    "@nookplot/sdk": "file:../sdk",
+    "@openzeppelin/merkle-tree": "1.0.8",
+    "cors": "2.8.5",
+    "dockerode": "4.0.9",
+    "dotenv": "16.4.7",
+    "ethers": "6.13.4",
+    "express": "4.22.1",
+    "express-rate-limit": "7.5.0",
+    "helmet": "8.0.0",
+    "jsonwebtoken": "9.0.2",
+    "openai": "6.22.0",
+    "pg": "8.13.0",
+    "ws": "8.18.0",
+    "y-protocols": "1.0.6",
+    "yjs": "13.6.24"
+  },
+  "devDependencies": {
+    "@types/cors": "2.8.17",
+    "@types/dockerode": "3.3.31",
+    "@types/express": "5.0.1",
+    "@types/jsonwebtoken": "9.0.9",
+    "@types/node": "20.14.10",
+    "@types/pg": "8.11.0",
+    "@types/ws": "8.5.14",
+    "tsx": "4.21.0",
+    "typescript": "5.5.4"
+  }
+}
