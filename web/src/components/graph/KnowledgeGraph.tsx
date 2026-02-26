@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import type { ForceGraphMethods, NodeObject, LinkObject } from "react-force-graph-2d";
+import { forceCollide } from "d3-force-3d";
 import { useNavigate } from "react-router-dom";
-import { useGraphData } from "@/hooks/useGraphData";
 import { useTrendingCommunities } from "@/hooks/useTrendingCommunities";
 import type {
+  GraphData,
   GraphNode,
   GraphEdge,
   GraphLayer,
-  GraphFilters,
   AgentNode,
   CommunityNode,
 } from "@/lib/graphTypes";
-import { DEFAULT_FILTERS } from "@/lib/graphTypes";
 import { GraphLegend } from "./GraphLegend";
 import { NodeTooltip } from "./NodeTooltip";
 import { EdgeTooltip } from "./EdgeTooltip";
@@ -42,13 +41,15 @@ type FGLink = LinkObject<GraphNode, GraphEdge>;
 
 interface Props {
   layer?: GraphLayer;
-  filters?: GraphFilters;
+  graphData: GraphData | null;
+  isLoading?: boolean;
+  error?: Error | null;
+  refetch?: () => void;
   /** When set, only show nodes/edges with timestamps <= this value (timeline playback). */
   maxTimestamp?: number;
 }
 
-export function KnowledgeGraph({ layer = "full", filters = DEFAULT_FILTERS, maxTimestamp }: Props) {
-  const { data, isLoading, error, refetch } = useGraphData(filters);
+export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = false, error = null, refetch, maxTimestamp }: Props) {
   const { trendingSet } = useTrendingCommunities();
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -122,7 +123,7 @@ export function KnowledgeGraph({ layer = "full", filters = DEFAULT_FILTERS, maxT
     const charge = fg.d3Force("charge") as unknown as
       | { strength: (v: number) => void }
       | undefined;
-    charge?.strength(-80);
+    charge?.strength(-150);
 
     const link = fg.d3Force("link") as unknown as
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -130,10 +131,7 @@ export function KnowledgeGraph({ layer = "full", filters = DEFAULT_FILTERS, maxT
       | undefined;
     link?.distance((l: GraphEdge) => (l.type === "attestation" ? 80 : 50));
 
-    const collision = fg.d3Force("collision") as unknown as
-      | { radius: (v: number) => void }
-      | undefined;
-    collision?.radius(12);
+    fg.d3Force("collision", forceCollide().radius(14));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -236,7 +234,7 @@ export function KnowledgeGraph({ layer = "full", filters = DEFAULT_FILTERS, maxT
     nodesRef.current = nodes;
   }, [graphInput]);
 
-  // Register the living-graph force once on mount
+  // Register the living-graph force once on mount (mouse attraction only, no jitter)
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
@@ -244,39 +242,36 @@ export function KnowledgeGraph({ layer = "full", filters = DEFAULT_FILTERS, maxT
     const MOUSE_RADIUS = 120;    // attraction radius in graph units
     const MOUSE_STRENGTH = 0.015; // matches mockup: (dx/md) * 0.015
 
-    // Custom combined force: ambient drift + mouse magnet
+    // Custom force: mouse magnet only (no ambient jitter — let simulation settle)
     fg.d3Force("livingGraph", () => {
       const nodes = nodesRef.current;
       const mouse = mouseGraphPos.current;
 
+      if (!mouse) return;
       for (const node of nodes) {
-        // Tiny ambient nudge to prevent settling
-        node.vx = (node.vx ?? 0) + (Math.random() - 0.5) * 0.02;
-        node.vy = (node.vy ?? 0) + (Math.random() - 0.5) * 0.02;
-
-        // Mouse attraction (matches mockup exactly)
-        if (mouse) {
-          const dx = mouse.x - (node.x ?? 0);
-          const dy = mouse.y - (node.y ?? 0);
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < MOUSE_RADIUS && dist > 1) {
-            node.vx = (node.vx ?? 0) + (dx / dist) * MOUSE_STRENGTH;
-            node.vy = (node.vy ?? 0) + (dy / dist) * MOUSE_STRENGTH;
-          }
+        const dx = mouse.x - (node.x ?? 0);
+        const dy = mouse.y - (node.y ?? 0);
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < MOUSE_RADIUS && dist > 1) {
+          node.vx = (node.vx ?? 0) + (dx / dist) * MOUSE_STRENGTH;
+          node.vy = (node.vy ?? 0) + (dy / dist) * MOUSE_STRENGTH;
         }
       }
     });
 
-    // Keep alpha permanently above 0 so forces always run
-    const interval = setInterval(() => {
-      fg.d3ReheatSimulation?.();
-    }, 1500);
-
     return () => {
-      clearInterval(interval);
       fg.d3Force("livingGraph", null);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Reheat simulation on mouse enter so the mouse attraction force runs
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onEnter = () => { fgRef.current?.d3ReheatSimulation?.(); };
+    el.addEventListener("mouseenter", onEnter);
+    return () => el.removeEventListener("mouseenter", onEnter);
   }, []);
 
   // --- Layer-aware paint ---
@@ -337,12 +332,12 @@ export function KnowledgeGraph({ layer = "full", filters = DEFAULT_FILTERS, maxT
 
       // Glow halo — radial gradient around each node (matches mockup particle sim)
       ctx.globalAlpha = opacity * 0.4;
-      const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 3);
+      const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 2);
       glow.addColorStop(0, color + "30");
       glow.addColorStop(1, color + "00");
       ctx.fillStyle = glow;
       ctx.beginPath();
-      ctx.arc(x, y, r * 3, 0, 2 * Math.PI);
+      ctx.arc(x, y, r * 2, 0, 2 * Math.PI);
       ctx.fill();
       ctx.globalAlpha = 1;
 
@@ -513,7 +508,7 @@ export function KnowledgeGraph({ layer = "full", filters = DEFAULT_FILTERS, maxT
 
   // Auto-retry on error every 30 seconds
   useEffect(() => {
-    if (!error) return;
+    if (!error || !refetch) return;
     const timer = setTimeout(() => refetch(), 30_000);
     return () => clearTimeout(timer);
   }, [error, refetch]);
@@ -526,7 +521,7 @@ export function KnowledgeGraph({ layer = "full", filters = DEFAULT_FILTERS, maxT
         description="The indexer is warming up. It will auto-refresh shortly."
         action={
           <button
-            onClick={() => refetch()}
+            onClick={() => refetch?.()}
             className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-accent text-white hover:bg-accent/90 transition-colors"
           >
             <RefreshCw className="h-4 w-4" />
@@ -566,8 +561,8 @@ export function KnowledgeGraph({ layer = "full", filters = DEFAULT_FILTERS, maxT
         linkWidth={linkWidth}
         linkLineDash={linkLineDash}
         warmupTicks={50}
-        cooldownTicks={0}
-        d3AlphaDecay={0}
+        cooldownTicks={200}
+        d3AlphaDecay={0.02}
         d3VelocityDecay={0.3}
         enableNodeDrag={true}
         enableZoomInteraction={true}

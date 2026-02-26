@@ -3,6 +3,7 @@ import { keepPreviousData } from "@tanstack/react-query";
 import { useSubgraphQuery } from "./useSubgraphQuery";
 import type { SubgraphAgent } from "./useAgentProfile";
 import type { SubgraphCommunity } from "./useCommunityList";
+import { HIDDEN_COMMUNITIES } from "./useCommunityList";
 import {
   type GraphData,
   type GraphNode,
@@ -122,6 +123,7 @@ function buildGraphData(
   // Community nodes (add first so IDs are available for participation edges)
   for (const c of communities) {
     const id = c.id.toLowerCase();
+    if (HIDDEN_COMMUNITIES.has(id)) continue;
     if (!communityFilter.has(id)) continue;
     nodeIds.add(id);
     nodes.push({

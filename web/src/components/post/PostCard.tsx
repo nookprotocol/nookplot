@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Link } from "react-router-dom";
 import { MessageSquare, Share2, Check } from "lucide-react";
 import type { SubgraphContent } from "@/hooks/useCommunityFeed";
@@ -14,7 +14,7 @@ interface Props {
   nameMap?: Map<string, string | null>;
 }
 
-export function PostCard({ content, nameMap }: Props) {
+export const PostCard = memo(function PostCard({ content, nameMap }: Props) {
   const { data: doc } = useIpfsContent<PostDocument>(content.cid);
   const [copied, setCopied] = useState(false);
 
@@ -119,4 +119,4 @@ export function PostCard({ content, nameMap }: Props) {
       </div>
     </div>
   );
-}
+});

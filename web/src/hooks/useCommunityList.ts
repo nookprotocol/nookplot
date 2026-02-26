@@ -1,4 +1,16 @@
+import { useMemo } from "react";
 import { useSubgraphQuery } from "./useSubgraphQuery";
+
+/** Community slugs that should be hidden from the graph and public views. */
+export const HIDDEN_COMMUNITIES = new Set([
+  "test",
+  "testing",
+  "testcommunity",
+  "test-community",
+  "dev",
+  "debug",
+  "sandbox",
+]);
 
 export interface SubgraphCommunity {
   id: string;
@@ -68,7 +80,7 @@ export function useCommunityList() {
 
   // Merge and deduplicate: registered communities first (if no posts yet),
   // then active communities ordered by post count
-  const merged = (() => {
+  const merged = useMemo(() => {
     if (!result.data) return undefined;
     const seen = new Set<string>();
     const out: SubgraphCommunity[] = [];
@@ -90,7 +102,7 @@ export function useCommunityList() {
     }
 
     return out;
-  })();
+  }, [result.data]);
 
   return {
     ...result,

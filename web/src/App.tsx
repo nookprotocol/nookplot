@@ -4,14 +4,37 @@ import { useAuthStore } from "@/store/authStore";
 import { PageLayout } from "@/components/layout/PageLayout";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { WaveGate } from "@/components/shared/WaveGate";
-import { HomePage } from "@/pages/HomePage";
-import { CommunityPage } from "@/pages/CommunityPage";
-import { SubmitPage } from "@/pages/SubmitPage";
-import { PostPage } from "@/pages/PostPage";
-import { AgentPage } from "@/pages/AgentPage";
-import { RegisterPage } from "@/pages/RegisterPage";
-import { AuthCallbackPage } from "@/pages/AuthCallbackPage";
-import { NotFoundPage } from "@/pages/NotFoundPage";
+const HomePage = lazy(() =>
+  import("@/pages/HomePage").then((m) => ({ default: m.HomePage })),
+);
+
+const CommunityPage = lazy(() =>
+  import("@/pages/CommunityPage").then((m) => ({ default: m.CommunityPage })),
+);
+
+const SubmitPage = lazy(() =>
+  import("@/pages/SubmitPage").then((m) => ({ default: m.SubmitPage })),
+);
+
+const PostPage = lazy(() =>
+  import("@/pages/PostPage").then((m) => ({ default: m.PostPage })),
+);
+
+const AgentPage = lazy(() =>
+  import("@/pages/AgentPage").then((m) => ({ default: m.AgentPage })),
+);
+
+const RegisterPage = lazy(() =>
+  import("@/pages/RegisterPage").then((m) => ({ default: m.RegisterPage })),
+);
+
+const AuthCallbackPage = lazy(() =>
+  import("@/pages/AuthCallbackPage").then((m) => ({ default: m.AuthCallbackPage })),
+);
+
+const NotFoundPage = lazy(() =>
+  import("@/pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })),
+);
 
 const AboutPage = lazy(() =>
   import("@/pages/AboutPage").then((m) => ({ default: m.AboutPage })),
@@ -206,13 +229,13 @@ export default function App() {
             element={
               <PageLayout>
                 <Routes>
-                  <Route path="/" element={<HomePage />} />
-                  <Route path="/c/:community" element={<CommunityPage />} />
-                  <Route path="/c/:community/submit" element={<SubmitPage />} />
-                  <Route path="/post/:cid" element={<PostPage />} />
-                  <Route path="/agent/:address" element={<AgentPage />} />
-                  <Route path="/register" element={<RegisterPage />} />
-                  <Route path="/auth/callback" element={<AuthCallbackPage />} />
+                  <Route path="/" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><HomePage /></Suspense>} />
+                  <Route path="/c/:community" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><CommunityPage /></Suspense>} />
+                  <Route path="/c/:community/submit" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><SubmitPage /></Suspense>} />
+                  <Route path="/post/:cid" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><PostPage /></Suspense>} />
+                  <Route path="/agent/:address" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><AgentPage /></Suspense>} />
+                  <Route path="/register" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><RegisterPage /></Suspense>} />
+                  <Route path="/auth/callback" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><AuthCallbackPage /></Suspense>} />
                   <Route
                     path="/projects"
                     element={
@@ -503,7 +526,7 @@ export default function App() {
                       </Suspense>
                     }
                   />
-                  <Route path="*" element={<NotFoundPage />} />
+                  <Route path="*" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><NotFoundPage /></Suspense>} />
                 </Routes>
               </PageLayout>
             }

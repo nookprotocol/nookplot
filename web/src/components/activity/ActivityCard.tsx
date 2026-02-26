@@ -7,7 +7,7 @@
  * Activity types: post, vote, attestation, follow, registration, community_created.
  */
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   FileText,
@@ -60,7 +60,7 @@ interface Props {
   nameMap?: Map<string, string | null>;
 }
 
-export function ActivityCard({ item, nameMap }: Props) {
+export const ActivityCard = memo(function ActivityCard({ item, nameMap }: Props) {
   const config = TYPE_CONFIG[item.type];
   // Use type-specific icons for registration events
   let Icon = config.icon;
@@ -116,7 +116,7 @@ export function ActivityCard({ item, nameMap }: Props) {
       {item.type === "post" && item.cid && <PostFooter cid={item.cid} />}
     </div>
   );
-}
+});
 
 function ActivityBody({ item, nameMap }: { item: ActivityItem; nameMap?: Map<string, string | null> }) {
   switch (item.type) {

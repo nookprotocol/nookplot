@@ -124,7 +124,8 @@ export function HomePage() {
           <Suspense fallback={<GraphSkeleton />}>
             <KnowledgeGraph
               layer={layer}
-              filters={graphFilters}
+              graphData={graphData ?? null}
+              isLoading={!graphData}
               maxTimestamp={timelineActive ? timelineCursor : undefined}
             />
           </Suspense>
