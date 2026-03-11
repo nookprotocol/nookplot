@@ -36,6 +36,7 @@ import { SettlementStore, createWalletRateLimiter } from "./middleware/walletRat
 import { createSettlementVerifier } from "./services/settlementVerifier.js";
 import { auditLog, setLogLevel, logSecurityEvent } from "./middleware/auditLog.js";
 import { createIntelligenceRouter } from "./routes/intelligence.js";
+import { createCloudflareMiddleware } from "./middleware/cloudflare.js";
 import type { LogLevel } from "./middleware/auditLog.js";
 
 // ============================================================
@@ -43,8 +44,8 @@ import type { LogLevel } from "./middleware/auditLog.js";
 // ============================================================
 
 const EVM_ADDRESS = process.env.EVM_ADDRESS as `0x${string}` | undefined;
-const FACILITATOR_URL = process.env.FACILITATOR_URL || "https://x402.org/facilitator";
-const X402_NETWORK = (process.env.X402_NETWORK || "eip155:84532") as `${string}:${string}`;
+const FACILITATOR_URL = process.env.FACILITATOR_URL;
+const X402_NETWORK = (process.env.X402_NETWORK || "eip155:8453") as `${string}:${string}`;
 const RPC_URL = process.env.RPC_URL;
 const PORT = parseInt(process.env.PORT ?? "4021", 10);
 const LOG_LEVEL = (process.env.LOG_LEVEL ?? "info") as LogLevel;
@@ -123,6 +124,26 @@ const reputation = new ReputationEngine(contracts, provider, {
 
 const app = express();
 
+// --- Cloudflare origin protection ---
+const CLOUDFLARE_ENABLED = process.env.CLOUDFLARE_ENABLED === "true";
+const CLOUDFLARE_SECRET = process.env.CLOUDFLARE_SECRET;
+
+if (CLOUDFLARE_ENABLED) {
+  if (!CLOUDFLARE_SECRET) {
+    console.error("FATAL: CLOUDFLARE_ENABLED=true but CLOUDFLARE_SECRET is not set.");
+    process.exit(1);
+  }
+  // Hosting platform → Cloudflare → client = 2 proxies
+  app.set("trust proxy", 2);
+  app.use(createCloudflareMiddleware(CLOUDFLARE_SECRET));
+  console.log("Cloudflare origin protection: ENABLED");
+} else {
+  app.set("trust proxy", 1);
+  if (process.env.NODE_ENV === "production") {
+    console.warn("WARNING: CLOUDFLARE_ENABLED is not set. Origin is directly accessible.");
+  }
+}
+
 // --- Security headers (helmet) ---
 app.use(helmet());
 
@@ -158,9 +179,12 @@ async function startServer() {
     const { paymentMiddleware, x402ResourceServer } = await import("@x402/express");
     const { ExactEvmScheme } = await import("@x402/evm/exact/server");
     const { HTTPFacilitatorClient } = await import("@x402/core/server");
+    // @coinbase/x402 provides CDP-authenticated facilitator config
+    // (reads CDP_API_KEY_ID + CDP_API_KEY_SECRET from env vars)
+    const { facilitator: cdpFacilitatorConfig } = await import("@coinbase/x402");
 
-    // Configure x402
-    const facilitatorClient = new HTTPFacilitatorClient({ url: FACILITATOR_URL });
+    // Configure x402 with CDP facilitator for Base Mainnet support
+    const facilitatorClient = new HTTPFacilitatorClient(cdpFacilitatorConfig);
     const resourceServer = new x402ResourceServer(facilitatorClient)
       .register(X402_NETWORK, new ExactEvmScheme());
 
@@ -216,13 +240,15 @@ async function startServer() {
     const message = error instanceof Error ? error.message : String(error);
     logSecurityEvent("error", "x402-init-failed", { error: message });
 
-    if (process.env.NODE_ENV === "production") {
-      console.error("FATAL: x402 payment middleware failed to initialize in production.");
+    const env = process.env.NODE_ENV;
+    if (env !== "development" && env !== "test") {
+      console.error("FATAL: x402 payment middleware failed to initialize.");
       console.error(`Error: ${message}`);
+      console.error("Set NODE_ENV=development or NODE_ENV=test to start without payment protection.");
       process.exit(1);
     }
 
-    // Non-production: start without payment protection for development/testing.
+    // Development/test only: start without payment protection.
     console.warn("=".repeat(60));
     console.warn("WARNING: x402 payment middleware failed to initialize.");
     console.warn("The API server will run WITHOUT payment protection.");

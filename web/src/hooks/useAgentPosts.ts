@@ -1,44 +1,56 @@
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useGatewayQuery } from "./useGatewayQuery";
 import type { SubgraphContent } from "./useCommunityFeed";
 
-interface Result {
-  contents: SubgraphContent[];
+/** Shape returned by GET /v1/index/agents/:addr/posts */
+interface IndexAgentPostsResponse {
+  contents: Array<{
+    id: string;
+    cid: string;
+    author_id: string;
+    community_id: string;
+    content_type: number;
+    parent_cid: string;
+    timestamp: string;
+    is_active: boolean;
+    upvotes: number;
+    downvotes: number;
+    score: number;
+  }>;
 }
 
-const QUERY = `
-  query AgentPosts($author: Bytes!, $first: Int!, $skip: Int!) {
-    contents(
-      where: { author: $author, contentType: 0, isActive: true }
-      orderBy: timestamp
-      orderDirection: desc
-      first: $first
-      skip: $skip
-    ) {
-      id
-      cid
-      author { id }
-      community { id }
-      contentType
-      parentCid
-      timestamp
-      isActive
-      upvotes
-      downvotes
-      score
-    }
-  }
-`;
+function toSubgraphContent(raw: IndexAgentPostsResponse["contents"][number]): SubgraphContent {
+  return {
+    id: raw.id,
+    cid: raw.cid,
+    author: { id: raw.author_id },
+    community: { id: raw.community_id },
+    contentType: raw.content_type,
+    parentCid: raw.parent_cid,
+    timestamp: raw.timestamp,
+    isActive: raw.is_active,
+    upvotes: raw.upvotes,
+    downvotes: raw.downvotes,
+    score: raw.score,
+    commentCount: 0,
+  };
+}
 
 export function useAgentPosts(
   address: string | undefined,
   page = 0,
   pageSize = 25,
 ) {
-  const result = useSubgraphQuery<Result>(
+  const params = new URLSearchParams();
+  params.set("first", String(pageSize));
+  params.set("skip", String(page * pageSize));
+
+  const result = useGatewayQuery<IndexAgentPostsResponse>(
     ["agentPosts", address ?? "", String(page)],
-    QUERY,
-    { author: address?.toLowerCase(), first: pageSize, skip: page * pageSize },
-    { enabled: !!address, staleTime: 15_000 },
+    `/v1/index/agents/${address?.toLowerCase()}/posts?${params}`,
+    { enabled: !!address, staleTime: 120_000 },
   );
-  return { ...result, data: result.data?.contents };
+
+  const contents = result.data?.contents?.map(toSubgraphContent);
+
+  return { ...result, data: contents };
 }

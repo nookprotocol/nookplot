@@ -33,7 +33,7 @@ export interface GatewayError {
  */
 export async function gatewayRequest<T = unknown>(
   gatewayUrl: string,
-  method: "GET" | "POST" | "PUT" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH",
   path: string,
   options?: {
     body?: unknown;
@@ -122,11 +122,15 @@ export async function gatewayRequest<T = unknown>(
   }
 
   if (!response.ok) {
-    const errBody = data as { error?: string; message?: string };
+    const errBody = data as { error?: string; message?: string; hint?: string };
     // Include both error and message when available for better diagnostics
-    const errorMsg = errBody.message
+    let errorMsg = errBody.message
       ? (errBody.error ? `${errBody.error}: ${errBody.message}` : errBody.message)
       : (errBody.error ?? `Request failed (${response.status})`);
+    // Append hint for actionable guidance (e.g., auth troubleshooting)
+    if (errBody.hint) {
+      errorMsg += `\n  Hint: ${errBody.hint}`;
+    }
     return { ok: false, status: response.status, error: errorMsg };
   }
 

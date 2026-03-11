@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
@@ -48,6 +49,7 @@ contract RevenueRouter is
     error TokenTransferFailed();
     error AgentNotDeployed();
     error UseDistributeRevenueToken();
+    error ZeroAmountWithdraw();
 
     // ============================================================
     //                          STRUCTS
@@ -101,6 +103,7 @@ contract RevenueRouter is
 
     uint16 public decayFactorBps;
     uint8 public maxChainDepth;
+    uint16 public initialShareBps;
 
     /// @dev Storage gap for future upgrades (UUPS pattern)
     uint256[30] private __gap;
@@ -144,6 +147,7 @@ contract RevenueRouter is
 
     event DecayFactorUpdated(uint16 oldDecayBps, uint16 newDecayBps);
     event MaxChainDepthUpdated(uint8 oldDepth, uint8 newDepth);
+    event InitialShareUpdated(uint16 oldShareBps, uint16 newShareBps);
 
     // ============================================================
     //                        INITIALIZER
@@ -177,14 +181,23 @@ contract RevenueRouter is
         _agentRegistry = agentRegistry_;
         treasury = treasury_;
 
-        // Defaults: 50% owner, 40% receipt chain, 10% treasury
+        // Distributes revenue among participants according to configurable splits and decay parameters
         defaultOwnerBps = 5000;
         defaultReceiptChainBps = 4000;
         defaultTreasuryBps = 1000;
 
-        // Receipt chain defaults: 50% decay per generation, max 5 generations
         decayFactorBps = 5000;
         maxChainDepth = 5;
+    }
+
+    /**
+     * @notice V2 initializer — sets the initial share for generation 0,
+     *         decoupling it from the decay factor applied to subsequent gens.
+     * @param initialShareBps_ Basis points for gen 0's share of chain amount
+     */
+    function initializeV2(uint16 initialShareBps_) external reinitializer(2) {
+        if (initialShareBps_ > 10000) revert InvalidShares();
+        initialShareBps = initialShareBps_;
     }
 
     // ============================================================
@@ -414,10 +427,21 @@ contract RevenueRouter is
         emit MaxChainDepthUpdated(oldDepth, newDepth);
     }
 
-    function rescueETH(address to, uint256 amount) external onlyOwner {
+    function setInitialShareBps(uint16 newShareBps) external onlyOwner {
+        if (newShareBps > 10000) revert InvalidShares();
+        uint16 oldShareBps = initialShareBps;
+        initialShareBps = newShareBps;
+        emit InitialShareUpdated(oldShareBps, newShareBps);
+    }
+
+    event EmergencyETHWithdraw(address indexed to, uint256 amount);
+
+    function rescueETH(address to, uint256 amount) external onlyOwner nonReentrant {
         if (to == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmountWithdraw();
         (bool success, ) = to.call{value: amount}("");
         if (!success) revert EthTransferFailed();
+        emit EmergencyETHWithdraw(to, amount);
     }
 
     function setTreasury(address newTreasury) external onlyOwner {
@@ -440,6 +464,16 @@ contract RevenueRouter is
 
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    /// @notice Withdraw stuck ERC-20 tokens sent to this contract by mistake.
+    event EmergencyWithdraw(address indexed token, address indexed to, uint256 amount);
+
+    function emergencyWithdraw(address token, address to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmountWithdraw();
+        IERC20(token).safeTransfer(to, amount);
+        emit EmergencyWithdraw(token, to, amount);
     }
 
     // ============================================================
@@ -506,12 +540,13 @@ contract RevenueRouter is
             address parent = _getSpawnParent(current);
             if (parent == address(0)) break;
 
-            // This generation's share = genShare * decayFactor^gen
-            // Gen 0 gets (totalChainAmount * decayFactorBps / 10000)
-            // Gen 1 gets that * decayFactorBps / 10000, etc.
+            // V2 flat decay: gen 0 uses initialShareBps (if set), subsequent
+            // gens decay by decayFactorBps from the previous gen's amount.
+            // When initialShareBps == 0 (V1 default), gen 0 falls back to decayFactorBps.
             uint256 thisGenAmount;
             if (gen == 0) {
-                thisGenAmount = (totalChainAmount * decayFactorBps) / 10000;
+                uint16 gen0Factor = initialShareBps > 0 ? initialShareBps : decayFactorBps;
+                thisGenAmount = (totalChainAmount * gen0Factor) / 10000;
             } else {
                 thisGenAmount = (genShare * decayFactorBps) / 10000;
             }

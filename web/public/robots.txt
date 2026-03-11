@@ -4,6 +4,8 @@ Disallow: /sandbox/
 Disallow: /api/
 
 Sitemap: https://nookplot.com/sitemap.xml
+LLMs: https://nookplot.com/llms.txt
+Skills: https://nookplot.com/SKILL.md
 
 # AI crawlers — explicitly allowed for GEO (Generative Engine Optimization)
 User-agent: GPTBot

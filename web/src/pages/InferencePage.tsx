@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Bot, Send, Key, Trash2, Zap } from "lucide-react";
 import { GATEWAY_URL } from "@/config/constants";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 
 interface Message {
   role: "user" | "assistant" | "system";
@@ -23,7 +24,9 @@ interface ByokEntry {
 
 export function InferencePage() {
   const [apiKey, setApiKey] = useState("");
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(isAuthenticated());
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState("");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedProvider, setSelectedProvider] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
@@ -36,6 +39,7 @@ export function InferencePage() {
   const [byokProvider, setByokProvider] = useState("");
   const [byokKey, setByokKey] = useState("");
   const [byokStatus, setByokStatus] = useState("");
+  const [fetchError, setFetchError] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -44,6 +48,7 @@ export function InferencePage() {
 
   const fetchModels = async () => {
     try {
+      setFetchError("");
       const res = await fetch(`${GATEWAY_URL}/v1/inference/models`);
       const data = await res.json() as { models: ModelInfo[] };
       setModels(data.models);
@@ -51,29 +56,55 @@ export function InferencePage() {
         setSelectedProvider(data.models[0].provider);
         setSelectedModel(data.models[0].model);
       }
-    } catch {
-      // silently fail
+    } catch (err) {
+      console.warn("Failed to load inference models:", err);
+      setFetchError("Failed to load models. Check your connection and try again.");
     }
   };
 
   const fetchByok = async () => {
     try {
       const res = await fetch(`${GATEWAY_URL}/v1/byok`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
+        credentials: "include",
       });
       const data = await res.json() as { providers: ByokEntry[] };
       setByokProviders(data.providers);
-    } catch {
-      // silently fail
+    } catch (err) {
+      console.warn("Failed to load BYOK providers:", err);
+      setFetchError("Failed to load your API keys.");
     }
   };
 
-  const handleConnect = () => {
+  const handleConnect = async () => {
+    if (isAuthenticated()) {
+      setConnected(true);
+      fetchModels();
+      fetchByok();
+      return;
+    }
     if (!apiKey.trim()) return;
-    setConnected(true);
-    fetchModels();
-    fetchByok();
+    setConnecting(true);
+    setConnectError("");
+    try {
+      await startSession(apiKey.trim());
+      setConnected(true);
+      fetchModels();
+      fetchByok();
+    } catch (err) {
+      setConnectError(err instanceof Error ? err.message : "Failed to connect");
+    } finally {
+      setConnecting(false);
+    }
   };
+
+  // Auto-connect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated() && !connected) {
+      setConnected(true);
+      fetchModels();
+      fetchByok();
+    }
+  }, []);
 
   const providerModels = models.filter((m) => m.provider === selectedProvider);
   const providers = [...new Set(models.map((m) => m.provider))];
@@ -91,9 +122,9 @@ export function InferencePage() {
     try {
       const res = await fetch(`${GATEWAY_URL}/v1/inference/stream`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
           provider: selectedProvider,
@@ -164,7 +195,7 @@ export function InferencePage() {
       // Refresh balance
       try {
         const balRes = await fetch(`${GATEWAY_URL}/v1/credits/balance`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
+          credentials: "include",
         });
         const balData = await balRes.json() as { balance: number };
         setBalance(balData.balance);
@@ -180,7 +211,8 @@ export function InferencePage() {
     try {
       const res = await fetch(`${GATEWAY_URL}/v1/byok`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: byokProvider, apiKey: byokKey }),
       });
       if (!res.ok) {
@@ -200,11 +232,12 @@ export function InferencePage() {
     try {
       await fetch(`${GATEWAY_URL}/v1/byok/${provider}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${apiKey}` },
+        credentials: "include",
       });
       fetchByok();
-    } catch {
-      // silently fail
+    } catch (err) {
+      console.warn("Failed to remove BYOK key:", err);
+      setByokStatus("Failed to remove key");
     }
   };
 
@@ -227,11 +260,15 @@ export function InferencePage() {
             className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm"
             onKeyDown={(e) => e.key === "Enter" && handleConnect()}
           />
+          {connectError && (
+            <p className="text-sm text-red-400">{connectError}</p>
+          )}
           <button
             onClick={handleConnect}
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90"
+            disabled={connecting}
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 disabled:opacity-50"
           >
-            Connect
+            {connecting ? "Connecting..." : "Connect"}
           </button>
         </div>
       </div>
@@ -251,6 +288,10 @@ export function InferencePage() {
           </span>
         )}
       </div>
+
+      {fetchError && (
+        <p className="text-sm text-red-400">{fetchError}</p>
+      )}
 
       {/* Model Selector */}
       <div className="flex flex-wrap items-center gap-3">

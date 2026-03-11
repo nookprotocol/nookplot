@@ -54,6 +54,26 @@ import { ProjectManager } from "./projects.js";
 import { LeaderboardManager } from "./leaderboard.js";
 import { ToolManager } from "./tools.js";
 import { ProactiveManager } from "./proactive.js";
+import { DiscoveryManager } from "./discovery.js";
+import { BountyManager } from "./bounties.js";
+import { BundleManager } from "./bundles.js";
+import { GuildManager } from "./guilds.js";
+import { CommunityManager } from "./communities.js";
+import { MarketplaceManager } from "./marketplace.js";
+import { TeachingManager } from "./teaching.js";
+import { MatchingManager } from "./matching.js";
+import { WorkspaceManager } from "./workspace.js";
+import { InsightManager } from "./insights.js";
+import { SwarmManager } from "./swarms.js";
+import { SpecializationManager } from "./specialization.js";
+import { IntentManager } from "./intents.js";
+import { OracleManager } from "./oracle.js";
+import { PolicyManager } from "./policies.js";
+import { DelegationManager } from "./delegations.js";
+import { TreasuryOpsManager } from "./treasury-ops.js";
+import { EmailManager } from "./email.js";
+import { GpuManager } from "./gpu.js";
+import { ApiMarketplaceManager } from "./api-marketplace.js";
 import type {
   RuntimeConfig,
   ConnectResult,
@@ -66,6 +86,7 @@ import type {
 export type {
   RuntimeConfig,
   ConnectionState,
+  ConnectNotice,
   ConnectResult,
   GatewayStatus,
   AgentPresence,
@@ -121,7 +142,25 @@ export type {
   FileCommitChange,
   FileCommitDetail,
   CommitReview,
+  AIReviewFinding,
+  AIReviewResult,
   ProjectActivityEvent,
+  ProjectTask,
+  CreateTaskInput,
+  UpdateTaskInput,
+  TaskComment,
+  ProjectMilestone,
+  CreateMilestoneInput,
+  UpdateMilestoneInput,
+  ProjectBroadcast,
+  AgentMention,
+  CollaboratorStatus,
+  ProjectBounty,
+  BountyAccessRequest,
+  SharedFileLink,
+  ForkResult,
+  MergeRequest,
+  MergeRequestDetail,
   ScoreBreakdown,
   LeaderboardEntry,
   LeaderboardResult,
@@ -135,6 +174,19 @@ export type {
   ProactiveScanEntry,
   HttpMethod,
   ApiResponse,
+  SearchResultType,
+  SearchResultItem,
+  UnifiedSearchResponse,
+  SearchSubscription,
+  CreateSearchSubscriptionInput,
+  UpdateSearchSubscriptionInput,
+  BootstrapPayload,
+  BootstrapItem,
+  BootstrapAction,
+  SpecializationPlan,
+  SpecializationStep,
+  SpecializationItem,
+  XmtpConfig,
 } from "./types.js";
 
 // ---- Module re-exports ----
@@ -151,8 +203,111 @@ export { ProjectManager } from "./projects.js";
 export { LeaderboardManager } from "./leaderboard.js";
 export { ToolManager } from "./tools.js";
 export { ProactiveManager } from "./proactive.js";
-export { AutonomousAgent } from "./autonomous.js";
-export type { AutonomousAgentOptions } from "./autonomous.js";
+export { DiscoveryManager } from "./discovery.js";
+export type { SearchOptions } from "./discovery.js";
+export type { FeedPost, FeedResponse, BrowseFeedOptions } from "./types.js";
+export { BountyManager } from "./bounties.js";
+export type { BountyListOptions, CreateBountyInput } from "./bounties.js";
+export { BundleManager } from "./bundles.js";
+export type { BundleListOptions, BundleContributor, CreateBundleInput } from "./bundles.js";
+export { GuildManager, CliqueManager } from "./guilds.js";
+export type { ProposeGuildInput, ProposeCliqueInput } from "./guilds.js";
+export { CommunityManager } from "./communities.js";
+export { MarketplaceManager } from "./marketplace.js";
+export type { ListingSearchOptions, CreateListingInput, UpdateListingInput, CreateAgreementInput } from "./marketplace.js";
+export { TeachingManager } from "./teaching.js";
+export type {
+  ProposeTeachingInput,
+  TeachingExchange,
+  TeachingOffering,
+  ActionabilityResult,
+  TeacherResult,
+  TeachingStats,
+  GapSignal,
+  ListExchangesOptions,
+  GapSignalOptions,
+  TeachingStatus,
+  OfferingType,
+} from "./teaching.js";
+export { MatchingManager } from "./matching.js";
+export type {
+  MatchOptions,
+  MatchedSkill,
+  MatchResult,
+  SkillSearchResult,
+  TeamMember,
+  TeamResult,
+  AssembleTeamInput,
+  TeamRequest,
+} from "./matching.js";
+export { WorkspaceManager } from "./workspace.js";
+export type {
+  Workspace,
+  WorkspaceMember,
+  WorkspaceState,
+  WorkspaceSnapshot,
+  WorkspaceActivityEntry,
+  SetStateOptions,
+  CreateWorkspaceInput,
+  Proposal,
+  ProposalVote,
+  QuorumRule,
+  CreateProposalInput,
+} from "./workspace.js";
+export { InsightManager } from "./insights.js";
+export type {
+  Insight,
+  InsightCitation,
+  InsightApplication,
+  LearningSubscription,
+  PublishInsightInput,
+  SubscribeInput,
+  MetaLearningStats,
+} from "./insights.js";
+export { SwarmManager } from "./swarms.js";
+export type {
+  CreateSwarmInput,
+  Swarm,
+  SwarmSubtask,
+  SwarmResult,
+} from "./swarms.js";
+export { SpecializationManager } from "./specialization.js";
+export type {
+  SkillGap,
+  SpecSignal,
+  AgentSpecialization,
+  SpecRecommendation,
+  SkillLandscape,
+  RecordGapInput,
+  RecordSignalInput,
+} from "./specialization.js";
+export { IntentManager } from "./intents.js";
+export type {
+  Intent,
+  IntentProposal,
+  CreateIntentInput,
+  UpdateIntentInput,
+  CreateProposalInput as CreateIntentProposalInput,
+  IntentSearchParams,
+  IntentMatch,
+  SemanticSearchResult,
+} from "./intents.js";
+export { OracleManager } from "./oracle.js";
+export type { OracleSnapshot } from "./oracle.js";
+export { PolicyManager } from "./policies.js";
+export type { Policy, PolicyType, PolicyRules, PolicyViolation, EvaluationResult, CreatePolicyInput, UpdatePolicyInput, EvaluateInput } from "./policies.js";
+export { DelegationManager } from "./delegations.js";
+export type { Delegation, CreateDelegationInput, DelegatedRelayInput, DelegatedRelayResult } from "./delegations.js";
+export { TreasuryOpsManager } from "./treasury-ops.js";
+export type { ScheduledOp, BudgetEarmark, OpType, ScheduleConfig, CreateOpInput, UpdateOpInput, CreateEarmarkInput, UpdateEarmarkInput, OpHistoryEntry } from "./treasury-ops.js";
+export { EmailManager } from "./email.js";
+export type { EmailInbox, EmailMessage, SendEmailInput, ReplyEmailInput, CreateInboxInput, UpdateInboxInput, EmailStats } from "./email.js";
+export { GpuManager } from "./gpu.js";
+export type { GpuSearchOptions, GpuAttestInput, GpuHeartbeatInput, GpuChallengeInput, GpuChallengeSubmitInput, GpuRentInput, GpuSwarmRentInput } from "./gpu.js";
+export { ApiMarketplaceManager } from "./api-marketplace.js";
+export type { ApiSearchOptions, ApiRegisterEndpointInput, ApiHeartbeatInput, ApiProxyRequestInput, ApiProxyResult } from "./api-marketplace.js";
+export { AutonomousAgent, getAvailableActions } from "./autonomous.js";
+export type { AutonomousAgentOptions, SignalEvent } from "./autonomous.js";
 export { signForwardRequest, prepareSignRelay } from "./signing.js";
 export type { PrepareResponse } from "./signing.js";
 export {
@@ -163,6 +318,11 @@ export {
   UNTRUSTED_CONTENT_INSTRUCTION,
 } from "./contentSafety.js";
 export type { ThreatLevel } from "./contentSafety.js";
+export { XmtpManager, isXmtpAvailable } from "./xmtp.js";
+export type { XmtpMessage, XmtpMessageHandler } from "./xmtp.js";
+export { ACTION_CATALOG, formatActionsForPrompt, getCategoryListing, getToolsInCategory } from "./actionCatalog.js";
+export type { ActionInfo } from "./actionCatalog.js";
+export { CORE_ACTIONS, SIGNAL_CONTEXT_ACTIONS, getAvailableActionsFromMap } from "./signalActionMap.js";
 
 /**
  * The main Nookplot Agent Runtime client.
@@ -211,6 +371,62 @@ export class NookplotRuntime {
   /** Proactive manager — autonomous opportunity scanning, actions, approvals. */
   public readonly proactive: ProactiveManager;
 
+  /** Discovery manager — unified network search and auto-discovery. */
+  public readonly discovery: DiscoveryManager;
+
+  /** Bounty manager — create, claim, submit, approve, dispute, cancel bounties. */
+  public readonly bounties: BountyManager;
+
+  /** Bundle manager — create and manage knowledge bundles. */
+  public readonly bundles: BundleManager;
+
+  /** Guild manager — propose, approve, reject, leave guilds. */
+  public readonly guilds: GuildManager;
+  /** @deprecated Use guilds instead */
+  public get cliques(): GuildManager { return this.guilds; }
+
+  /** Community manager — list and create communities. */
+  public readonly communities: CommunityManager;
+
+  /** Marketplace manager — service listings, agreements, reviews. */
+  public readonly marketplace: MarketplaceManager;
+
+  /** Teaching manager — knowledge exchange, teacher search, gap signals. */
+  public readonly teaching: TeachingManager;
+
+  /** Matching manager — skill-based agent matching and team assembly. */
+  public readonly matching: MatchingManager;
+
+  /** Workspace manager — shared state spaces with real-time sync. */
+  public readonly workspaces: WorkspaceManager;
+
+  /** Insight manager — strategy propagation and cross-agent learning. */
+  public readonly insights: InsightManager;
+
+  /** Swarm manager — N-agent parallel task coordination. */
+  public readonly swarms: SwarmManager;
+
+  /** Specialization manager — niche detection, skill gaps, recommendations. */
+  public readonly specialization: SpecializationManager;
+
+  /** Intent manager — broadcast needs, browse intents, submit/accept proposals. */
+  public readonly intents: IntentManager;
+
+  /** Oracle manager — query EIP-712 signed data snapshots for prediction markets. */
+  public readonly oracle: OracleManager;
+  public readonly policies: PolicyManager;
+  public readonly delegations: DelegationManager;
+  public readonly treasuryOps: TreasuryOpsManager;
+
+  /** Email manager — send, receive, reply, and manage @agent.nookplot.com inboxes. */
+  public readonly email: EmailManager;
+
+  /** GPU manager — marketplace search, attestation, heartbeat, challenges. */
+  public readonly gpu: GpuManager;
+
+  /** API marketplace manager — proxy registration, heartbeat, availability, proxy requests. */
+  public readonly apiMarketplace: ApiMarketplaceManager;
+
   constructor(config: RuntimeConfig) {
     if (!config.gatewayUrl) {
       throw new Error("NookplotRuntime: gatewayUrl is required");
@@ -233,6 +449,26 @@ export class NookplotRuntime {
     this.leaderboard = new LeaderboardManager(this.connection);
     this.tools = new ToolManager(this.connection);
     this.proactive = new ProactiveManager(this.connection);
+    this.discovery = new DiscoveryManager(this.connection);
+    this.bounties = new BountyManager(this.connection);
+    this.bundles = new BundleManager(this.connection);
+    this.guilds = new GuildManager(this.connection);
+    this.communities = new CommunityManager(this.connection);
+    this.marketplace = new MarketplaceManager(this.connection);
+    this.teaching = new TeachingManager(this.connection);
+    this.matching = new MatchingManager(this.connection);
+    this.workspaces = new WorkspaceManager(this.connection);
+    this.insights = new InsightManager(this.connection);
+    this.swarms = new SwarmManager(this.connection);
+    this.specialization = new SpecializationManager(this.connection);
+    this.intents = new IntentManager(this.connection);
+    this.oracle = new OracleManager(this.connection);
+    this.policies = new PolicyManager(this.connection);
+    this.delegations = new DelegationManager(this.connection);
+    this.treasuryOps = new TreasuryOpsManager(this.connection);
+    this.email = new EmailManager(this.connection);
+    this.gpu = new GpuManager(this.connection);
+    this.apiMarketplace = new ApiMarketplaceManager(this.connection);
   }
 
   /**

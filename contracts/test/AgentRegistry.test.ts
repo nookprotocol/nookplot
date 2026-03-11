@@ -39,6 +39,7 @@ describe("AgentRegistry", function () {
       }
     )) as unknown as AgentRegistry;
     await registry.waitForDeployment();
+
   });
 
   // ============================================================
@@ -46,7 +47,7 @@ describe("AgentRegistry", function () {
   // ============================================================
 
   describe("Initialization", function () {
-    it("should set the owner correctly", async function () {
+    it("should have correct owner", async function () {
       expect(await registry.owner()).to.equal(owner.address);
     });
 
@@ -281,7 +282,9 @@ describe("AgentRegistry", function () {
       it("should revert when called by non-owner", async function () {
         await expect(
           registry.connect(agentA).setVerified(agentA.address, true)
-        ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+        ).to.be.revertedWithCustomError(
+          registry, "OwnableUnauthorizedAccount"
+        ).withArgs(agentA.address);
       });
 
       it("should revert for non-registered agents", async function () {
@@ -302,7 +305,9 @@ describe("AgentRegistry", function () {
       it("should revert when called by non-owner", async function () {
         await expect(
           registry.connect(agentA).deactivateAgent(agentA.address)
-        ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+        ).to.be.revertedWithCustomError(
+          registry, "OwnableUnauthorizedAccount"
+        ).withArgs(agentA.address);
       });
     });
 
@@ -327,7 +332,9 @@ describe("AgentRegistry", function () {
       it("should revert when called by non-owner", async function () {
         await expect(
           registry.connect(agentA).setPaymentToken(ethers.ZeroAddress)
-        ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+        ).to.be.revertedWithCustomError(
+          registry, "OwnableUnauthorizedAccount"
+        ).withArgs(agentA.address);
       });
     });
 
@@ -451,7 +458,7 @@ describe("AgentRegistry", function () {
       ).to.be.revertedWithCustomError(registry, "InsufficientStake");
     });
 
-    it("should allow owner to slash stakes", async function () {
+    it("should allow slasher to slash stakes", async function () {
       await registry.connect(agentA).register(DID_CID_A);
 
       const stakeAmount = ethers.parseEther("100");
@@ -726,13 +733,13 @@ describe("AgentRegistry", function () {
         await registry.connect(agentA).register(DID_CID_A);
       });
 
-      it("should allow owner to set agent type", async function () {
+      it("should allow admin to set agent type", async function () {
         const tx = await registry.connect(owner).setAgentType(agentA.address, 1);
         await expect(tx).to.emit(registry, "AgentTypeSet").withArgs(agentA.address, 1);
         expect(await registry.getAgentType(agentA.address)).to.equal(1);
       });
 
-      it("should allow owner to change agent type", async function () {
+      it("should allow admin to change agent type", async function () {
         await registry.connect(owner).setAgentType(agentA.address, 1);
         await registry.connect(owner).setAgentType(agentA.address, 2);
         expect(await registry.getAgentType(agentA.address)).to.equal(2);
@@ -741,7 +748,9 @@ describe("AgentRegistry", function () {
       it("should revert when called by non-owner", async function () {
         await expect(
           registry.connect(agentA).setAgentType(agentA.address, 1)
-        ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+        ).to.be.revertedWithCustomError(
+          registry, "OwnableUnauthorizedAccount"
+        ).withArgs(agentA.address);
       });
 
       it("should revert for non-registered agents", async function () {
@@ -759,6 +768,244 @@ describe("AgentRegistry", function () {
           registry.connect(owner).setAgentType(agentA.address, 3)
         ).to.be.revertedWithCustomError(registry, "InvalidAgentType");
       });
+    });
+  });
+
+  // ============================================================
+  //                  OWNER-ONLY ACCESS CONTROL
+  // ============================================================
+
+  describe("Owner-only admin functions", function () {
+    beforeEach(async function () {
+      await registry.connect(agentA).register(DID_CID_A);
+    });
+
+    it("owner can call setVerified", async function () {
+      await expect(
+        registry.connect(owner).setVerified(agentA.address, true)
+      ).to.emit(registry, "AgentVerificationChanged");
+    });
+
+    it("owner can call deactivateAgent", async function () {
+      await expect(
+        registry.connect(owner).deactivateAgent(agentA.address)
+      ).to.emit(registry, "AgentDeactivated");
+    });
+
+    it("owner can call reactivateAgent", async function () {
+      await registry.connect(owner).deactivateAgent(agentA.address);
+      await expect(
+        registry.connect(owner).reactivateAgent(agentA.address)
+      ).to.emit(registry, "AgentReactivated");
+    });
+
+    it("owner can call setPaymentToken", async function () {
+      const tokenAddr = "0x0000000000000000000000000000000000000001";
+      await expect(
+        registry.connect(owner).setPaymentToken(tokenAddr)
+      ).to.emit(registry, "PaymentTokenUpdated");
+    });
+
+    it("owner can call setRegistrationStake", async function () {
+      await expect(
+        registry.connect(owner).setRegistrationStake(500)
+      ).to.emit(registry, "RegistrationStakeUpdated");
+    });
+
+    it("owner can call setTreasury", async function () {
+      await registry.connect(owner).setTreasury(agentB.address);
+      expect(await registry.treasury()).to.equal(agentB.address);
+    });
+
+    it("owner can call setAgentType", async function () {
+      await expect(
+        registry.connect(owner).setAgentType(agentA.address, 2)
+      ).to.emit(registry, "AgentTypeSet");
+    });
+
+    it("owner can pause", async function () {
+      await registry.connect(owner).pause();
+      expect(await registry.paused()).to.be.true;
+    });
+
+    it("owner can unpause", async function () {
+      await registry.connect(owner).pause();
+      await registry.connect(owner).unpause();
+      expect(await registry.paused()).to.be.false;
+    });
+
+    it("non-owner reverts on setVerified", async function () {
+      await expect(
+        registry.connect(nonAgent).setVerified(agentA.address, true)
+      ).to.be.revertedWithCustomError(
+        registry, "OwnableUnauthorizedAccount"
+      ).withArgs(nonAgent.address);
+    });
+
+    it("non-owner reverts on deactivateAgent", async function () {
+      await expect(
+        registry.connect(nonAgent).deactivateAgent(agentA.address)
+      ).to.be.revertedWithCustomError(
+        registry, "OwnableUnauthorizedAccount"
+      ).withArgs(nonAgent.address);
+    });
+
+    it("non-owner reverts on reactivateAgent", async function () {
+      await registry.connect(owner).deactivateAgent(agentA.address);
+      await expect(
+        registry.connect(nonAgent).reactivateAgent(agentA.address)
+      ).to.be.revertedWithCustomError(
+        registry, "OwnableUnauthorizedAccount"
+      ).withArgs(nonAgent.address);
+    });
+
+    it("non-owner reverts on setPaymentToken", async function () {
+      await expect(
+        registry.connect(nonAgent).setPaymentToken(ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(
+        registry, "OwnableUnauthorizedAccount"
+      ).withArgs(nonAgent.address);
+    });
+
+    it("non-owner reverts on setRegistrationStake", async function () {
+      await expect(
+        registry.connect(nonAgent).setRegistrationStake(100)
+      ).to.be.revertedWithCustomError(
+        registry, "OwnableUnauthorizedAccount"
+      ).withArgs(nonAgent.address);
+    });
+
+    it("non-owner reverts on setTreasury", async function () {
+      await expect(
+        registry.connect(nonAgent).setTreasury(agentB.address)
+      ).to.be.revertedWithCustomError(
+        registry, "OwnableUnauthorizedAccount"
+      ).withArgs(nonAgent.address);
+    });
+
+    it("non-owner reverts on setAgentType", async function () {
+      await expect(
+        registry.connect(nonAgent).setAgentType(agentA.address, 1)
+      ).to.be.revertedWithCustomError(
+        registry, "OwnableUnauthorizedAccount"
+      ).withArgs(nonAgent.address);
+    });
+
+    it("non-owner reverts on pause", async function () {
+      await expect(
+        registry.connect(nonAgent).pause()
+      ).to.be.revertedWithCustomError(
+        registry, "OwnableUnauthorizedAccount"
+      ).withArgs(nonAgent.address);
+    });
+
+    it("non-owner reverts on unpause", async function () {
+      await registry.connect(owner).pause();
+      await expect(
+        registry.connect(nonAgent).unpause()
+      ).to.be.revertedWithCustomError(
+        registry, "OwnableUnauthorizedAccount"
+      ).withArgs(nonAgent.address);
+    });
+  });
+
+  // ============================================================
+  //                  SLASH (OWNER-ONLY)
+  // ============================================================
+
+  describe("Slash (owner-only)", function () {
+    let tokenAddress: string;
+
+    beforeEach(async function () {
+      // Deploy mock token and set up staking
+      const TokenFactory = await ethers.getContractFactory("MockERC20");
+      token = (await TokenFactory.deploy("Mock NOOKPLOT", "MNOOK")) as unknown as MockERC20;
+      await token.waitForDeployment();
+      tokenAddress = await token.getAddress();
+
+      await token.mint(agentA.address, ethers.parseEther("10000"));
+      await registry.connect(owner).setPaymentToken(tokenAddress);
+
+      // Register agent and stake
+      await registry.connect(agentA).register(DID_CID_A);
+      const stakeAmount = ethers.parseEther("100");
+      await token.connect(agentA).approve(await registry.getAddress(), stakeAmount);
+      await registry.connect(agentA).stake(stakeAmount);
+    });
+
+    it("owner can slash agent stakes", async function () {
+      const slashAmount = ethers.parseEther("30");
+      await expect(
+        registry.connect(owner).slashAgent(agentA.address, slashAmount)
+      ).to.emit(registry, "AgentSlashed");
+
+      expect(await registry.getStake(agentA.address)).to.equal(ethers.parseEther("70"));
+      expect(await token.balanceOf(treasury.address)).to.equal(slashAmount);
+    });
+
+    it("non-owner cannot slash", async function () {
+      await expect(
+        registry.connect(nonAgent).slashAgent(agentA.address, ethers.parseEther("10"))
+      ).to.be.revertedWithCustomError(
+        registry, "OwnableUnauthorizedAccount"
+      ).withArgs(nonAgent.address);
+    });
+  });
+
+  // ============================================================
+  //                  EMERGENCY WITHDRAW
+  // ============================================================
+
+  describe("Emergency withdraw", function () {
+    let tokenAddress: string;
+
+    beforeEach(async function () {
+      // Deploy mock token and send some to the registry (simulating stuck tokens)
+      const TokenFactory = await ethers.getContractFactory("MockERC20");
+      token = (await TokenFactory.deploy("Mock NOOKPLOT", "MNOOK")) as unknown as MockERC20;
+      await token.waitForDeployment();
+      tokenAddress = await token.getAddress();
+
+      // Mint tokens directly to the registry to simulate stuck tokens
+      await token.mint(await registry.getAddress(), ethers.parseEther("500"));
+    });
+
+    it("owner can emergency withdraw tokens", async function () {
+      const withdrawAmount = ethers.parseEther("200");
+      await expect(
+        registry.connect(owner).emergencyWithdraw(tokenAddress, treasury.address, withdrawAmount)
+      ).to.emit(registry, "EmergencyWithdraw")
+        .withArgs(tokenAddress, treasury.address, withdrawAmount);
+
+      expect(await token.balanceOf(treasury.address)).to.equal(withdrawAmount);
+      expect(await token.balanceOf(await registry.getAddress())).to.equal(ethers.parseEther("300"));
+    });
+
+    it("owner can withdraw full balance", async function () {
+      const fullAmount = ethers.parseEther("500");
+      await registry.connect(owner).emergencyWithdraw(tokenAddress, treasury.address, fullAmount);
+      expect(await token.balanceOf(treasury.address)).to.equal(fullAmount);
+      expect(await token.balanceOf(await registry.getAddress())).to.equal(0);
+    });
+
+    it("non-owner cannot emergency withdraw", async function () {
+      await expect(
+        registry.connect(nonAgent).emergencyWithdraw(tokenAddress, treasury.address, ethers.parseEther("100"))
+      ).to.be.revertedWithCustomError(
+        registry, "OwnableUnauthorizedAccount"
+      ).withArgs(nonAgent.address);
+    });
+
+    it("reverts with zero amount", async function () {
+      await expect(
+        registry.connect(owner).emergencyWithdraw(tokenAddress, treasury.address, 0)
+      ).to.be.revertedWithCustomError(registry, "ZeroAmountWithdraw");
+    });
+
+    it("reverts with zero recipient address", async function () {
+      await expect(
+        registry.connect(owner).emergencyWithdraw(tokenAddress, ethers.ZeroAddress, ethers.parseEther("100"))
+      ).to.be.revertedWithCustomError(registry, "ZeroAddress");
     });
   });
 

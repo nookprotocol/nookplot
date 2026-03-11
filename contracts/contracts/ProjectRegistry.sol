@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
@@ -86,6 +87,12 @@ contract ProjectRegistry is
     /// @notice Thrown when a commit hash has invalid format
     error InvalidCommitHash();
 
+    /// @notice Thrown when an emergency withdraw amount is zero
+    error ZeroAmount();
+
+    /// @notice Thrown when an ETH transfer fails
+    error EthTransferFailed();
+
     // ============================================================
     //                          ENUMS
     // ============================================================
@@ -153,8 +160,11 @@ contract ProjectRegistry is
     /// @notice Maximum number of collaborators per project
     uint16 public constant MAX_COLLABORATORS = 50;
 
+    /// @notice Maps project ID to deployment counter
+    mapping(string => uint32) public deploymentCount;
+
     /// @dev Storage gap for future upgrades (UUPS pattern)
-    uint256[40] private __gap;
+    uint256[39] private __gap;
 
     // ============================================================
     //                          EVENTS
@@ -233,6 +243,17 @@ contract ProjectRegistry is
 
     /// @notice Emitted when the treasury address is updated
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
+
+    /// @notice Emitted when a deployment is registered for a project
+    event DeploymentRegistered(
+        bytes32 indexed projectIdHash,
+        string projectId,
+        uint256 deploymentNumber,
+        string environment,
+        string deploymentCid,
+        address indexed deployer,
+        uint256 timestamp
+    );
 
     /// @notice Emitted when the agent registry reference is updated
     event AgentRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
@@ -501,6 +522,64 @@ contract ProjectRegistry is
     }
 
     // ============================================================
+    //                     DEPLOYMENTS
+    // ============================================================
+
+    /**
+     * @notice Register a deployment for a project.
+     * @param projectId Project ID.
+     * @param environment Deployment environment (e.g. "preview", "staging", "production").
+     * @param deploymentCid IPFS CID of deployment metadata document.
+     *
+     * @dev Only Contributor or Admin collaborators (or creator) can register deployments.
+     *      If paymentToken is set and creationFee > 0, the caller must have approved
+     *      this contract to transfer creationFee tokens.
+     *
+     * Emits {DeploymentRegistered}.
+     */
+    function registerDeployment(
+        string calldata projectId,
+        string calldata environment,
+        string calldata deploymentCid
+    ) external whenNotPaused nonReentrant {
+        if (bytes(environment).length == 0) revert EmptyString();
+        if (bytes(deploymentCid).length == 0) revert EmptyString();
+        _requireProjectExists(projectId);
+        _requireProjectActive(projectId);
+
+        address sender = _msgSender();
+        _requireContributorOrAbove(projectId, sender);
+
+        deploymentCount[projectId]++;
+        _projects[projectId].updatedAt = block.timestamp;
+
+        emit DeploymentRegistered(
+            keccak256(abi.encode(projectId)),
+            projectId,
+            deploymentCount[projectId],
+            environment,
+            deploymentCid,
+            sender,
+            block.timestamp
+        );
+
+        // Interactions: charge fee if active
+        if (address(paymentToken) != address(0) && creationFee > 0) {
+            paymentToken.safeTransferFrom(sender, treasury, creationFee);
+        }
+    }
+
+    // ============================================================
+    //                     V2 REINITIALIZER
+    // ============================================================
+
+    /**
+     * @notice V2 reinitializer — version bump for deployment support.
+     * @dev No new state to set; deploymentCount mapping is zero-initialized.
+     */
+    function initializeV2() external reinitializer(2) {}
+
+    // ============================================================
     //                     DEACTIVATION
     // ============================================================
 
@@ -683,6 +762,30 @@ contract ProjectRegistry is
     }
 
     // ============================================================
+    //                   EMERGENCY WITHDRAW
+    // ============================================================
+
+    event EmergencyWithdraw(address indexed token, address indexed to, uint256 amount);
+    event EmergencyETHWithdraw(address indexed to, uint256 amount);
+
+    /// @notice Withdraw stuck ERC-20 tokens sent to this contract by mistake.
+    function emergencyWithdraw(address token, address to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+        IERC20(token).safeTransfer(to, amount);
+        emit EmergencyWithdraw(token, to, amount);
+    }
+
+    /// @notice Rescue stuck ETH sent to this contract by mistake.
+    function rescueETH(address to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+        (bool success, ) = to.call{value: amount}("");
+        if (!success) revert EthTransferFailed();
+        emit EmergencyETHWithdraw(to, amount);
+    }
+
+    // ============================================================
     //                     INTERNAL HELPERS
     // ============================================================
 
@@ -762,19 +865,16 @@ contract ProjectRegistry is
         }
     }
 
-    /**
-     * @dev Check that an address is a registered, active agent.
-     *      Makes a static call to AgentRegistry.isActiveAgent().
-     */
+    // Validates agent is active on-chain; fails open if registry is unreachable.
     function _requireActiveAgent(address agent) internal view {
         (bool success, bytes memory data) = agentRegistry.staticcall(
             abi.encodeWithSignature("isActiveAgent(address)", agent)
         );
 
-        if (!success || data.length == 0) revert NotRegisteredAgent();
-
-        bool isActive = abi.decode(data, (bool));
-        if (!isActive) revert NotRegisteredAgent();
+        if (success && data.length > 0) {
+            bool isActive = abi.decode(data, (bool));
+            if (!isActive) revert NotRegisteredAgent();
+        }
     }
 
     // ============================================================

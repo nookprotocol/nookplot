@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -12,7 +13,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 /**
  * @title CreditPurchase
  * @author Nookplot
- * @notice On-chain credit pack purchasing with USDC.
+ * @notice Handles credit purchases via supported tokens.
  *         Users buy packs that emit events; the gateway PurchaseWatcher
  *         picks up events and credits agent accounts off-chain.
  *
@@ -37,6 +38,11 @@ contract CreditPurchase is
     error PackInactive();
     error InsufficientAllowance();
     error InvalidPackConfig();
+    error NookNotEnabled();
+    error NookPriceNotSet();
+    error FeeDistributorNotSet();
+    error ZeroAmount();
+    error EthTransferFailed();
 
     // ============================================================
     //                          TYPES
@@ -45,7 +51,7 @@ contract CreditPurchase is
     struct Pack {
         string name;
         uint256 usdcPrice;      // 6 decimals (USDC)
-        uint256 creditAmount;   // centricredits (100 = 1.00 display)
+        uint256 creditAmount;   // stored credits (100 = 1.00 display)
         bool active;
     }
 
@@ -58,6 +64,7 @@ contract CreditPurchase is
         uint256 indexed packId,
         uint256 creditAmount,
         uint256 pricePaid,
+        bool isNook,
         uint256 timestamp
     );
 
@@ -72,6 +79,14 @@ contract CreditPurchase is
     address public treasury;
 
     Pack[] public packs;
+
+    // --- V2 storage (appended — safe for UUPS proxy) ---
+    IERC20 public nook;                            // NOOK token
+    address public feeDistributor;                 // receives NOOK revenue (not treasury)
+    bool public nookEnabled;                       // feature gate, starts false
+    mapping(uint256 => uint256) public nookPrices; // packId → NOOK price (18 decimals)
+
+    uint256[46] private __gap;                     // storage gap for future upgrades
 
     // ============================================================
     //                      INITIALIZER
@@ -114,7 +129,28 @@ contract CreditPurchase is
         uint256 price = pack.usdcPrice;
         usdc.safeTransferFrom(msg.sender, treasury, price);
 
-        emit CreditsPurchased(msg.sender, packId, pack.creditAmount, price, block.timestamp);
+        emit CreditsPurchased(msg.sender, packId, pack.creditAmount, price, false, block.timestamp);
+    }
+
+    /**
+     * @notice Purchase a credit pack with NOOK token (discounted).
+     * @param packId Index into the packs array.
+     */
+    function purchaseWithNook(uint256 packId) external whenNotPaused nonReentrant {
+        if (!nookEnabled) revert NookNotEnabled();
+        if (address(nook) == address(0)) revert NookNotEnabled();
+        if (feeDistributor == address(0)) revert FeeDistributorNotSet();
+        if (packId >= packs.length) revert PackNotFound();
+
+        Pack storage pack = packs[packId];
+        if (!pack.active) revert PackInactive();
+
+        uint256 price = nookPrices[packId];
+        if (price == 0) revert NookPriceNotSet();
+
+        nook.safeTransferFrom(msg.sender, feeDistributor, price);
+
+        emit CreditsPurchased(msg.sender, packId, pack.creditAmount, price, true, block.timestamp);
     }
 
     // ============================================================
@@ -125,7 +161,7 @@ contract CreditPurchase is
      * @notice Add a new credit pack.
      * @param name_ Human-readable name (e.g. "Micro", "Standard", "Bulk").
      * @param usdcPrice_ Price in USDC (6 decimals).
-     * @param creditAmount_ Credits awarded (centricredits).
+     * @param creditAmount_ Credits awarded (stored credits, 100 = 1.00 display).
      */
     function addPack(
         string calldata name_,
@@ -170,6 +206,25 @@ contract CreditPurchase is
         treasury = treasury_;
     }
 
+    function setNookToken(address nook_) external onlyOwner {
+        if (nook_ == address(0)) revert ZeroAddress();
+        nook = IERC20(nook_);
+    }
+
+    function setFeeDistributor(address feeDistributor_) external onlyOwner {
+        if (feeDistributor_ == address(0)) revert ZeroAddress();
+        feeDistributor = feeDistributor_;
+    }
+
+    function setNookEnabled(bool enabled_) external onlyOwner {
+        nookEnabled = enabled_;
+    }
+
+    function setNookPrice(uint256 packId, uint256 price_) external onlyOwner {
+        if (packId >= packs.length) revert PackNotFound();
+        nookPrices[packId] = price_;
+    }
+
     function pause() external onlyOwner {
         _pause();
     }
@@ -191,6 +246,11 @@ contract CreditPurchase is
         return packs[packId];
     }
 
+    function getNookPrice(uint256 packId) external view returns (uint256) {
+        if (packId >= packs.length) revert PackNotFound();
+        return nookPrices[packId];
+    }
+
     function getActivePacks() external view returns (Pack[] memory, uint256[] memory) {
         uint256 count;
         for (uint256 i = 0; i < packs.length; i++) {
@@ -208,6 +268,30 @@ contract CreditPurchase is
             }
         }
         return (activePacks, ids);
+    }
+
+    // ============================================================
+    //                   EMERGENCY WITHDRAW
+    // ============================================================
+
+    event EmergencyWithdraw(address indexed token, address indexed to, uint256 amount);
+    event EmergencyETHWithdraw(address indexed to, uint256 amount);
+
+    /// @notice Withdraw stuck ERC-20 tokens sent to this contract by mistake.
+    function emergencyWithdraw(address token, address to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+        IERC20(token).safeTransfer(to, amount);
+        emit EmergencyWithdraw(token, to, amount);
+    }
+
+    /// @notice Rescue stuck ETH sent to this contract by mistake.
+    function rescueETH(address to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+        (bool success, ) = to.call{value: amount}("");
+        if (!success) revert EthTransferFailed();
+        emit EmergencyETHWithdraw(to, amount);
     }
 
     // ============================================================

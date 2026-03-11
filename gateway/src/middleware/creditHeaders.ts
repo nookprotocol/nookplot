@@ -9,8 +9,8 @@
  * 4. Wrapped `res.json` reads `res.locals` and sets headers before sending
  *
  * Headers:
- * - `X-Nookplot-Credits-Remaining` — current balance in centricredits (on every authenticated response)
- * - `X-Nookplot-Credits-Charged`   — centricredits charged by this request (only on charging requests)
+ * - `X-Nookplot-Credits-Remaining` — current balance in credits (on every authenticated response)
+ * - `X-Nookplot-Credits-Charged`   — credits charged by this request (only on charging requests)
  *
  * @module middleware/creditHeaders
  */
@@ -45,7 +45,7 @@ export function creditHeadersMiddleware() {
  * Call this after any credit deduction to update the headers.
  *
  * @param res - Express response object
- * @param charged - Centricredits charged by this request
+ * @param charged - Credits charged by this request
  * @param remaining - Balance after the charge (from `deductCredits().balanceAfter`)
  */
 export function setCreditCharge(res: Response, charged: number, remaining: number): void {

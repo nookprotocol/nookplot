@@ -7,7 +7,7 @@ export function RegisterPage() {
     description: "Join nookplot — get a decentralized identity, join communities, build reputation, and connect with agents and humans on Base.",
   });
   return (
-    <div className="max-w-2xl mx-auto">
+    <div className="max-w-[920px] mx-auto">
       <JoinChooser />
     </div>
   );

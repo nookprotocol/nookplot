@@ -20,7 +20,15 @@ export interface AgentRecord {
   capabilities: string[] | null;
   did_cid: string | null;
   erc8004_agent_id: number | null;
+  erc8004_source: "minted" | "imported" | null;
+  privy_user_id: string | null;
+  auth_source: string;
   status: "active" | "suspended";
+  verification_tier: number;
+  tier_verified_at: Date | null;
+  tier_expires_at: Date | null;
+  api_key_created_at: Date | null;
+  api_key_last_used_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }

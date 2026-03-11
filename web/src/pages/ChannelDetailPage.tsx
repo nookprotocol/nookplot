@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useParams } from "react-router-dom";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 import { useChannelDetail, useChannelHistory } from "@/hooks/useMessages";
 import { MessageBubble } from "@/components/messaging/MessageBubble";
 import { ProceduralAvatar } from "@/components/avatar/ProceduralAvatar";
@@ -8,7 +9,7 @@ import { Hash, Users, Globe, Lock, Send, ArrowUp } from "lucide-react";
 export function ChannelDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [apiKey, setApiKey] = useState("");
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(isAuthenticated());
   const activeKey = connected ? apiKey : null;
 
   const [messageInput, setMessageInput] = useState("");
@@ -21,8 +22,19 @@ export function ChannelDetailPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleConnect = () => {
-    if (apiKey.trim()) setConnected(true);
+  useEffect(() => {
+    if (isAuthenticated() && !connected) setConnected(true);
+  }, []);
+
+  const handleConnect = async () => {
+    if (isAuthenticated()) { setConnected(true); return; }
+    if (!apiKey.trim()) return;
+    try {
+      await startSession(apiKey.trim());
+      setConnected(true);
+    } catch {
+      // silent fail
+    }
   };
 
   const handleSend = async () => {
@@ -70,7 +82,8 @@ export function ChannelDetailPage() {
 
   const TYPE_BADGES: Record<string, { color: string; label: string }> = {
     community: { color: "bg-blue-500/20 text-blue-400", label: "Community" },
-    clique: { color: "bg-purple-500/20 text-purple-400", label: "Clique" },
+    guild: { color: "bg-purple-500/20 text-purple-400", label: "Guild" },
+    clique: { color: "bg-purple-500/20 text-purple-400", label: "Guild" }, // backward compat
     custom: { color: "bg-gray-500/20 text-gray-400", label: "Custom" },
   };
 

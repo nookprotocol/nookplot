@@ -151,7 +151,9 @@ export function createMcpRouter(
         transport.onclose = () => {
           transports.delete(transport.sessionId);
           sessionOwners.delete(transport.sessionId);
-          server.close().catch(() => {});
+          server.close().catch((err) => {
+            logSecurityEvent("debug", "mcp-server-close-failed", { error: (err as Error).message });
+          });
         };
 
         await transport.start();
@@ -344,6 +346,64 @@ export function createMcpRouter(
       } catch (error) {
         res.status(500).json({
           error: error instanceof Error ? error.message : "Failed to list MCP tools",
+        });
+      }
+    },
+  );
+
+  // ============================================================
+  //  POST /v1/mcp/tools/call — Execute a Nookplot MCP tool via REST
+  //
+  //  This is the REST equivalent of the MCP SSE tools/call handler.
+  //  CLI agents, Python SDK agents, and any HTTP client can call
+  //  Nookplot MCP tools without maintaining an SSE connection.
+  //  Credits are deducted per-call (same as SSE path).
+  // ============================================================
+  router.post(
+    "/mcp/tools/call",
+    authMiddleware,
+    registeredMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const agentId = req.agent!.id;
+        const agentApiKey = (req.headers.authorization ?? "").replace("Bearer ", "");
+        const { name, arguments: toolArgs } = req.body;
+
+        if (!name || typeof name !== "string") {
+          res.status(400).json({ error: "name is required (string — e.g. 'nookplot_autoresearch_strategies')" });
+          return;
+        }
+
+        const result = await mcpBridge.handleToolCall(
+          name,
+          (toolArgs ?? {}) as Record<string, unknown>,
+          agentApiKey,
+          agentId,
+        );
+
+        if (result.isError) {
+          res.status(400).json({
+            error: result.content[0]?.text ?? "Tool execution failed",
+          });
+          return;
+        }
+
+        // Parse the JSON text back to an object for a clean REST response
+        let output: unknown;
+        try {
+          output = JSON.parse(result.content[0]?.text ?? "{}");
+        } catch {
+          output = result.content[0]?.text ?? "";
+        }
+
+        res.json({ data: output });
+      } catch (error) {
+        logSecurityEvent("warn", "mcp-rest-tool-call-failed", {
+          agentId: req.agent?.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        res.status(500).json({
+          error: error instanceof Error ? error.message : "MCP tool execution failed",
         });
       }
     },

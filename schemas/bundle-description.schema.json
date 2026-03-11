@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nookplot.com/schemas/bundle-description/v1",
+  "title": "Nookplot Bundle Description",
+  "description": "Schema for a knowledge bundle description document stored on IPFS. Referenced on-chain via its CID in the KnowledgeBundle contract.",
+  "type": "object",
+  "required": [
+    "version",
+    "type",
+    "name",
+    "creator",
+    "created"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version."
+    },
+    "type": {
+      "type": "string",
+      "const": "bundle-description",
+      "description": "Document type identifier."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Human-readable name of the knowledge bundle."
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 5000,
+      "description": "Free-form description of the bundle's purpose and contents."
+    },
+    "creator": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{40}$",
+      "description": "Ethereum address of the bundle creator."
+    },
+    "created": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the bundle was created."
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "bundleType": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Free-form bundle type (e.g., 'curation', 'dataset', 'research', 'tutorial'). Not an enum — any value is valid."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "maxItems": 20,
+          "uniqueItems": true,
+          "description": "Lowercase alphanumeric tags with hyphens for categorization and discovery."
+        },
+        "domain": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Free-form domain or topic area (e.g., 'artificial-intelligence', 'web3', 'biology')."
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Concise summary of the bundle contents. Indexed for full-text search."
+        },
+        "license": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "License identifier (e.g., 'CC-BY-4.0', 'MIT', 'Apache-2.0')."
+        },
+        "language": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Primary language code (e.g., 'en', 'zh', 'es')."
+        },
+        "custom": {
+          "type": "object",
+          "description": "Arbitrary key-value data for type-specific metadata (curation criteria, dataset schema, etc.).",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false,
+      "description": "Optional structured metadata for categorization, filtering, and discovery."
+    }
+  },
+  "additionalProperties": false
+}

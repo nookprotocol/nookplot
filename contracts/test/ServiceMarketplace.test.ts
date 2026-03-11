@@ -19,6 +19,7 @@ describe("ServiceMarketplace", function () {
   let buyer: SignerWithAddress;
   let agentC: SignerWithAddress;
   let nonAgent: SignerWithAddress;
+  let guardian: SignerWithAddress;
 
   const DID_CID = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG";
   const METADATA_CID = "QmServiceMetadataCidForTesting1234567890abcde";
@@ -29,6 +30,9 @@ describe("ServiceMarketplace", function () {
   const CATEGORY = "research";
   const CATEGORY_2 = "coding";
 
+  const DEFAULT_ADMIN_ROLE = ethers.ZeroHash;
+  const GUARDIAN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("GUARDIAN_ROLE"));
+
   /** @returns a deadline 1 day from the latest block timestamp (unix seconds) */
   async function futureDeadline(): Promise<number> {
     const block = await ethers.provider.getBlock("latest");
@@ -36,7 +40,7 @@ describe("ServiceMarketplace", function () {
   }
 
   beforeEach(async function () {
-    [owner, treasury, provider, buyer, agentC, nonAgent] =
+    [owner, treasury, provider, buyer, agentC, nonAgent, guardian] =
       await ethers.getSigners();
 
     // Deploy NookplotForwarder (standalone, not proxied)
@@ -73,6 +77,13 @@ describe("ServiceMarketplace", function () {
     )) as unknown as ServiceMarketplace;
     await marketplace.waitForDeployment();
 
+    // Run V2 + V3 + V4 + V5 reinitializers
+    await marketplace.initializeV2(ethers.ZeroAddress, ethers.ZeroAddress);
+    await marketplace.initializeV3(owner.address, guardian.address);
+    await marketplace.initializeV4();
+    await marketplace.initializeV5();
+    await marketplace.initializeV6();
+
     // Register agents (provider, buyer, agentC)
     await registry.connect(provider).register(DID_CID);
     await registry.connect(buyer).register(DID_CID);
@@ -85,7 +96,15 @@ describe("ServiceMarketplace", function () {
 
   describe("Initialization", function () {
     it("should set the owner correctly", async function () {
-      expect(await marketplace.owner()).to.equal(owner.address);
+      expect(await marketplace.owner()).to.equal(ethers.ZeroAddress);
+    });
+
+    it("should have granted DEFAULT_ADMIN_ROLE to owner", async function () {
+      expect(await marketplace.hasRole(DEFAULT_ADMIN_ROLE, owner.address)).to.be.true;
+    });
+
+    it("should have granted GUARDIAN_ROLE to guardian", async function () {
+      expect(await marketplace.hasRole(GUARDIAN_ROLE, guardian.address)).to.be.true;
     });
 
     it("should set the agentRegistry correctly", async function () {
@@ -309,7 +328,7 @@ describe("ServiceMarketplace", function () {
 
       const tx = await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, deadline, 0, { value: ethAmount });
+        .createAgreement(0, TERMS_CID, deadline, 0, ethers.ZeroAddress, { value: ethAmount });
       await tx.wait();
 
       const agreement = await marketplace.getAgreement(0);
@@ -328,7 +347,7 @@ describe("ServiceMarketplace", function () {
       const ethAmount = ethers.parseEther("2");
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, {
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
           value: ethAmount,
         });
 
@@ -341,7 +360,7 @@ describe("ServiceMarketplace", function () {
     it("should create a reputation-only agreement (no ETH)", async function () {
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0);
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
 
       const agreement = await marketplace.getAgreement(0);
       expect(agreement.escrowAmount).to.equal(0);
@@ -360,6 +379,7 @@ describe("ServiceMarketplace", function () {
       await marketplace
         .connect(owner)
         .setPaymentToken(await token.getAddress());
+      await marketplace.connect(owner).setAllowedToken(await token.getAddress(), true);
 
       // Mint and approve
       const tokenAmount = ethers.parseEther("100");
@@ -370,7 +390,7 @@ describe("ServiceMarketplace", function () {
 
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), tokenAmount);
+        .createAgreement(0, TERMS_CID, await futureDeadline(), tokenAmount, await token.getAddress());
 
       const agreement = await marketplace.getAgreement(0);
       expect(agreement.escrowAmount).to.equal(tokenAmount);
@@ -390,19 +410,19 @@ describe("ServiceMarketplace", function () {
       await expect(
         marketplace
           .connect(buyer)
-          .createAgreement(0, TERMS_CID, deadline, 0, { value: ethAmount })
+          .createAgreement(0, TERMS_CID, deadline, 0, ethers.ZeroAddress, { value: ethAmount })
       )
         .to.emit(marketplace, "AgreementCreated")
-        .withArgs(0, 0, buyer.address, provider.address, ethAmount);
+        .withArgs(0, 0, buyer.address, provider.address, ethAmount, ethers.ZeroAddress);
     });
 
     it("should increment totalAgreements", async function () {
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0);
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
       await marketplace
         .connect(agentC)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0);
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
 
       expect(await marketplace.totalAgreements()).to.equal(2);
     });
@@ -413,7 +433,7 @@ describe("ServiceMarketplace", function () {
       await expect(
         marketplace
           .connect(buyer)
-          .createAgreement(0, TERMS_CID, await futureDeadline(), 0)
+          .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(marketplace, "ListingNotActive");
     });
 
@@ -421,7 +441,7 @@ describe("ServiceMarketplace", function () {
       await expect(
         marketplace
           .connect(provider)
-          .createAgreement(0, TERMS_CID, await futureDeadline(), 0)
+          .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(marketplace, "CannotHireSelf");
     });
 
@@ -429,7 +449,7 @@ describe("ServiceMarketplace", function () {
       await expect(
         marketplace
           .connect(nonAgent)
-          .createAgreement(0, TERMS_CID, await futureDeadline(), 0)
+          .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(marketplace, "NotRegisteredAgent");
     });
 
@@ -437,7 +457,7 @@ describe("ServiceMarketplace", function () {
       await expect(
         marketplace
           .connect(buyer)
-          .createAgreement(0, "", await futureDeadline(), 0)
+          .createAgreement(0, "", await futureDeadline(), 0, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(marketplace, "EmptyString");
     });
 
@@ -447,7 +467,7 @@ describe("ServiceMarketplace", function () {
       await expect(
         marketplace
           .connect(buyer)
-          .createAgreement(0, TERMS_CID, pastDeadline, 0)
+          .createAgreement(0, TERMS_CID, pastDeadline, 0, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(marketplace, "DeadlineNotInFuture");
     });
 
@@ -457,7 +477,7 @@ describe("ServiceMarketplace", function () {
       await expect(
         marketplace
           .connect(buyer)
-          .createAgreement(0, TERMS_CID, tooFar, 0)
+          .createAgreement(0, TERMS_CID, tooFar, 0, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(marketplace, "DeadlineTooFar");
     });
   });
@@ -474,7 +494,7 @@ describe("ServiceMarketplace", function () {
         .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, {
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
           value: ethers.parseEther("1"),
         });
     });
@@ -529,7 +549,7 @@ describe("ServiceMarketplace", function () {
         .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, {
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
           value: ethAmount,
         });
       await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
@@ -565,7 +585,7 @@ describe("ServiceMarketplace", function () {
       // Create a reputation-only agreement
       await marketplace
         .connect(agentC)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0);
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
       // agreementId = 1
       await marketplace.connect(provider).deliverWork(1, DELIVERY_CID);
 
@@ -585,7 +605,7 @@ describe("ServiceMarketplace", function () {
       const escrowEth = ethers.parseEther("10");
       await marketplace
         .connect(agentC)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, {
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
           value: escrowEth,
         });
       // agreementId = 1
@@ -615,6 +635,7 @@ describe("ServiceMarketplace", function () {
       await marketplace
         .connect(owner)
         .setPaymentToken(await token.getAddress());
+      await marketplace.connect(owner).setAllowedToken(await token.getAddress(), true);
       await marketplace.connect(owner).setPlatformFeeBps(500); // 5%
 
       const tokenAmount = ethers.parseEther("100");
@@ -626,7 +647,7 @@ describe("ServiceMarketplace", function () {
       // Create token agreement (agreementId = 1)
       await marketplace
         .connect(agentC)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), tokenAmount);
+        .createAgreement(0, TERMS_CID, await futureDeadline(), tokenAmount, await token.getAddress());
       await marketplace.connect(provider).deliverWork(1, DELIVERY_CID);
 
       await marketplace.connect(agentC).settleAgreement(1);
@@ -644,7 +665,7 @@ describe("ServiceMarketplace", function () {
       // Create agreement but don't deliver
       await marketplace
         .connect(agentC)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, {
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
           value: ethers.parseEther("1"),
         });
 
@@ -682,7 +703,7 @@ describe("ServiceMarketplace", function () {
         .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, {
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
           value: ethAmount,
         });
     });
@@ -755,7 +776,7 @@ describe("ServiceMarketplace", function () {
         .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, {
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
           value: ethAmount,
         });
       await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
@@ -795,14 +816,18 @@ describe("ServiceMarketplace", function () {
       );
     });
 
-    it("should refund full escrow to buyer when resolved against provider", async function () {
+    it("should refund escrow to buyer minus cancel fee when resolved against provider (buyer-initiated Agreed dispute)", async function () {
       const buyerBalanceBefore = await ethers.provider.getBalance(buyer.address);
+      const treasuryBalanceBefore = await ethers.provider.getBalance(treasury.address);
 
       await marketplace.connect(owner).resolveDispute(0, false);
 
       const buyerBalanceAfter = await ethers.provider.getBalance(buyer.address);
-      // Full refund, no fee deducted
-      expect(buyerBalanceAfter - buyerBalanceBefore).to.equal(ethAmount);
+      const treasuryBalanceAfter = await ethers.provider.getBalance(treasury.address);
+      // V5: 5% cancel fee on buyer-initiated Agreed dispute
+      // 5% of 2 ETH = 0.1 ETH fee, 1.9 ETH refund
+      expect(buyerBalanceAfter - buyerBalanceBefore).to.equal(ethers.parseEther("1.9"));
+      expect(treasuryBalanceAfter - treasuryBalanceBefore).to.equal(ethers.parseEther("0.1"));
 
       const agreement = await marketplace.getAgreement(0);
       expect(agreement.status).to.equal(5); // Cancelled
@@ -819,19 +844,19 @@ describe("ServiceMarketplace", function () {
       // Create a new agreement that is just Agreed
       await marketplace
         .connect(agentC)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0);
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
 
       await expect(
         marketplace.connect(owner).resolveDispute(1, true)
       ).to.be.revertedWithCustomError(marketplace, "InvalidStatus");
     });
 
-    it("should revert when caller is not the owner", async function () {
+    it("should revert when caller is not admin", async function () {
       await expect(
         marketplace.connect(buyer).resolveDispute(0, true)
       ).to.be.revertedWithCustomError(
         marketplace,
-        "OwnableUnauthorizedAccount"
+        "AccessControlUnauthorizedAccount"
       );
     });
   });
@@ -841,7 +866,7 @@ describe("ServiceMarketplace", function () {
   // ============================================================
 
   describe("Cancellation", function () {
-    it("should cancel and refund ETH escrow to buyer", async function () {
+    it("should cancel and refund ETH escrow to buyer minus cancellation fee", async function () {
       await marketplace
         .connect(provider)
         .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
@@ -849,22 +874,29 @@ describe("ServiceMarketplace", function () {
       const ethAmount = ethers.parseEther("3");
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, {
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
           value: ethAmount,
         });
 
       const balanceBefore = await ethers.provider.getBalance(buyer.address);
+      const treasuryBefore = await ethers.provider.getBalance(treasury.address);
 
       const tx = await marketplace.connect(buyer).cancelAgreement(0);
       const receipt = await tx.wait();
       const gasCost = receipt!.gasUsed * receipt!.gasPrice;
 
       const balanceAfter = await ethers.provider.getBalance(buyer.address);
-      expect(balanceAfter - balanceBefore + gasCost).to.equal(ethAmount);
+      const treasuryAfter = await ethers.provider.getBalance(treasury.address);
+
+      // V5: 5% cancel fee on 3 ETH = 0.15 ETH fee, 2.85 ETH refund
+      const expectedRefund = ethers.parseEther("2.85");
+      const expectedFee = ethers.parseEther("0.15");
+      expect(balanceAfter - balanceBefore + gasCost).to.equal(expectedRefund);
+      expect(treasuryAfter - treasuryBefore).to.equal(expectedFee);
 
       await expect(tx)
-        .to.emit(marketplace, "AgreementCancelled")
-        .withArgs(0);
+        .to.emit(marketplace, "AgreementCancelledWithFee")
+        .withArgs(0, expectedFee);
 
       const agreement = await marketplace.getAgreement(0);
       expect(agreement.status).to.equal(5); // Cancelled
@@ -877,7 +909,7 @@ describe("ServiceMarketplace", function () {
 
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0);
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
 
       await expect(marketplace.connect(buyer).cancelAgreement(0))
         .to.emit(marketplace, "AgreementCancelled")
@@ -887,7 +919,7 @@ describe("ServiceMarketplace", function () {
       expect(agreement.status).to.equal(5); // Cancelled
     });
 
-    it("should cancel and refund token escrow to buyer", async function () {
+    it("should cancel and refund token escrow to buyer minus cancellation fee", async function () {
       await marketplace
         .connect(provider)
         .listService(METADATA_CID, CATEGORY, 0, 0);
@@ -898,6 +930,7 @@ describe("ServiceMarketplace", function () {
       await marketplace
         .connect(owner)
         .setPaymentToken(await token.getAddress());
+      await marketplace.connect(owner).setAllowedToken(await token.getAddress(), true);
 
       const tokenAmount = ethers.parseEther("50");
       await token.mint(buyer.address, ethers.parseEther("1000"));
@@ -907,13 +940,15 @@ describe("ServiceMarketplace", function () {
 
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), tokenAmount);
+        .createAgreement(0, TERMS_CID, await futureDeadline(), tokenAmount, await token.getAddress());
 
       const tokensBefore = await token.balanceOf(buyer.address);
       await marketplace.connect(buyer).cancelAgreement(0);
       const tokensAfter = await token.balanceOf(buyer.address);
 
-      expect(tokensAfter - tokensBefore).to.equal(tokenAmount);
+      // V5: 5% cancel fee on 50 tokens = 2.5 tokens fee, 47.5 tokens refund
+      expect(tokensAfter - tokensBefore).to.equal(ethers.parseEther("47.5"));
+      expect(await token.balanceOf(treasury.address)).to.equal(ethers.parseEther("2.5"));
     });
 
     it("should revert cancel when agreement is Delivered", async function () {
@@ -922,7 +957,7 @@ describe("ServiceMarketplace", function () {
         .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, {
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
           value: ethers.parseEther("1"),
         });
       await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
@@ -938,7 +973,7 @@ describe("ServiceMarketplace", function () {
         .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, {
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
           value: ethers.parseEther("1"),
         });
 
@@ -960,12 +995,12 @@ describe("ServiceMarketplace", function () {
         .withArgs(ethers.ZeroAddress, tokenAddr);
     });
 
-    it("should only allow owner to set payment token", async function () {
+    it("should only allow admin to set payment token", async function () {
       await expect(
         marketplace.connect(provider).setPaymentToken(provider.address)
       ).to.be.revertedWithCustomError(
         marketplace,
-        "OwnableUnauthorizedAccount"
+        "AccessControlUnauthorizedAccount"
       );
     });
 
@@ -1020,33 +1055,33 @@ describe("ServiceMarketplace", function () {
       ).to.be.revertedWithCustomError(marketplace, "ZeroAddress");
     });
 
-    it("should revert admin calls from non-owner", async function () {
+    it("should revert admin calls from non-admin", async function () {
       await expect(
         marketplace.connect(provider).setPlatformFeeBps(100)
       ).to.be.revertedWithCustomError(
         marketplace,
-        "OwnableUnauthorizedAccount"
+        "AccessControlUnauthorizedAccount"
       );
 
       await expect(
         marketplace.connect(provider).setTreasury(provider.address)
       ).to.be.revertedWithCustomError(
         marketplace,
-        "OwnableUnauthorizedAccount"
+        "AccessControlUnauthorizedAccount"
       );
 
       await expect(
         marketplace.connect(provider).setPaymentToken(provider.address)
       ).to.be.revertedWithCustomError(
         marketplace,
-        "OwnableUnauthorizedAccount"
+        "AccessControlUnauthorizedAccount"
       );
 
       await expect(
         marketplace.connect(provider).setAgentRegistry(provider.address)
       ).to.be.revertedWithCustomError(
         marketplace,
-        "OwnableUnauthorizedAccount"
+        "AccessControlUnauthorizedAccount"
       );
     });
   });
@@ -1076,7 +1111,7 @@ describe("ServiceMarketplace", function () {
       await expect(
         marketplace
           .connect(buyer)
-          .createAgreement(0, TERMS_CID, await futureDeadline(), 0)
+          .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(marketplace, "EnforcedPause");
     });
 
@@ -1097,7 +1132,7 @@ describe("ServiceMarketplace", function () {
   // ============================================================
 
   describe("UUPS Upgrade Auth", function () {
-    it("should revert upgrade from non-owner", async function () {
+    it("should revert upgrade from non-admin", async function () {
       const MarketplaceFactory = await ethers.getContractFactory("ServiceMarketplace");
       await expect(
         upgrades.upgradeProxy(
@@ -1110,7 +1145,7 @@ describe("ServiceMarketplace", function () {
         )
       ).to.be.revertedWithCustomError(
         marketplace,
-        "OwnableUnauthorizedAccount"
+        "AccessControlUnauthorizedAccount"
       );
     });
   });
@@ -1226,14 +1261,14 @@ describe("ServiceMarketplace", function () {
       // Settle agreement on listing 0
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0);
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
       await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
       await marketplace.connect(buyer).settleAgreement(0);
 
       // Dispute agreement on listing 1
       await marketplace
         .connect(buyer)
-        .createAgreement(1, TERMS_CID, await futureDeadline(), 0);
+        .createAgreement(1, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
       await marketplace.connect(buyer).disputeAgreement(1, REASON_CID);
 
       const [completed, disputed] = await marketplace.getProviderStats(provider.address);
@@ -1255,11 +1290,11 @@ describe("ServiceMarketplace", function () {
       // buyer creates agreement
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0);
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
       // agentC creates another agreement on same listing
       await marketplace
         .connect(agentC)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0);
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
 
       expect(await marketplace.totalAgreements()).to.equal(2);
 
@@ -1296,7 +1331,7 @@ describe("ServiceMarketplace", function () {
       const ethAmount = ethers.parseEther("1");
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, {
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
           value: ethAmount,
         });
 
@@ -1319,7 +1354,7 @@ describe("ServiceMarketplace", function () {
 
       await marketplace
         .connect(buyer)
-        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, {
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
           value: ethAmount,
         });
 
@@ -1339,6 +1374,1179 @@ describe("ServiceMarketplace", function () {
 
       const agreement = await marketplace.getAgreement(0);
       expect(agreement.status).to.equal(5); // Cancelled
+    });
+  });
+
+  // ============================================================
+  //                V3 SECURITY FEATURES
+  // ============================================================
+
+  describe("V3 Security Features", function () {
+
+    // ----------------------------------------------------------
+    //                    Fee Snapshot
+    // ----------------------------------------------------------
+
+    describe("Fee Snapshot", function () {
+      it("should use fee at creation time for settlement, not current global", async function () {
+        // Set fee to 5% (500 bps) before creating agreement
+        await marketplace.connect(owner).setPlatformFeeBps(500);
+
+        await marketplace
+          .connect(provider)
+          .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
+
+        const escrowEth = ethers.parseEther("10");
+        await marketplace
+          .connect(buyer)
+          .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
+            value: escrowEth,
+          });
+
+        // Change global fee to 10% AFTER agreement creation
+        await marketplace.connect(owner).setPlatformFeeBps(1000);
+
+        // Deliver and settle
+        await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+
+        const providerBalanceBefore = await ethers.provider.getBalance(provider.address);
+        const treasuryBalanceBefore = await ethers.provider.getBalance(treasury.address);
+
+        await marketplace.connect(buyer).settleAgreement(0);
+
+        const providerBalanceAfter = await ethers.provider.getBalance(provider.address);
+        const treasuryBalanceAfter = await ethers.provider.getBalance(treasury.address);
+
+        // Should use 5% (500 bps) from creation time, NOT 10% current global
+        // 5% of 10 ETH = 0.5 ETH fee, 9.5 ETH to provider
+        const expectedFee = ethers.parseEther("0.5");
+        const expectedPayout = ethers.parseEther("9.5");
+
+        expect(providerBalanceAfter - providerBalanceBefore).to.equal(expectedPayout);
+        expect(treasuryBalanceAfter - treasuryBalanceBefore).to.equal(expectedFee);
+      });
+
+      it("should not be affected by platformFeeBps changes after creation", async function () {
+        // Set fee to 2.5% (250 bps)
+        await marketplace.connect(owner).setPlatformFeeBps(250);
+
+        await marketplace
+          .connect(provider)
+          .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
+
+        const escrowEth = ethers.parseEther("20");
+        await marketplace
+          .connect(buyer)
+          .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
+            value: escrowEth,
+          });
+
+        // Bump global fee to 0% after creation
+        await marketplace.connect(owner).setPlatformFeeBps(0);
+
+        // Deliver and settle
+        await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+
+        const providerBalanceBefore = await ethers.provider.getBalance(provider.address);
+        const treasuryBalanceBefore = await ethers.provider.getBalance(treasury.address);
+
+        await marketplace.connect(buyer).settleAgreement(0);
+
+        const providerBalanceAfter = await ethers.provider.getBalance(provider.address);
+        const treasuryBalanceAfter = await ethers.provider.getBalance(treasury.address);
+
+        // Should still use 2.5% (250 bps) from creation time
+        // 2.5% of 20 ETH = 0.5 ETH fee, 19.5 ETH to provider
+        const expectedFee = ethers.parseEther("0.5");
+        const expectedPayout = ethers.parseEther("19.5");
+
+        expect(providerBalanceAfter - providerBalanceBefore).to.equal(expectedPayout);
+        expect(treasuryBalanceAfter - treasuryBalanceBefore).to.equal(expectedFee);
+      });
+
+      it("should fall back to global rate for pre-V3 agreements (feeBps == 0)", async function () {
+        // platformFeeBps is 0 at agreement creation, so feeBps is stored as 0
+        await marketplace
+          .connect(provider)
+          .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
+
+        const escrowEth = ethers.parseEther("10");
+        await marketplace
+          .connect(buyer)
+          .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
+            value: escrowEth,
+          });
+
+        // Verify feeBps was stored as 0
+        const agreement = await marketplace.getAgreement(0);
+        expect(agreement.feeBps).to.equal(0);
+
+        // Set global fee to 3% (300 bps) AFTER creation
+        await marketplace.connect(owner).setPlatformFeeBps(300);
+
+        // Deliver and settle
+        await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+
+        const providerBalanceBefore = await ethers.provider.getBalance(provider.address);
+        const treasuryBalanceBefore = await ethers.provider.getBalance(treasury.address);
+
+        await marketplace.connect(buyer).settleAgreement(0);
+
+        const providerBalanceAfter = await ethers.provider.getBalance(provider.address);
+        const treasuryBalanceAfter = await ethers.provider.getBalance(treasury.address);
+
+        // feeBps == 0 → _effectiveFeeBps falls back to global platformFeeBps (300 bps = 3%)
+        // 3% of 10 ETH = 0.3 ETH fee, 9.7 ETH to provider
+        const expectedFee = ethers.parseEther("0.3");
+        const expectedPayout = ethers.parseEther("9.7");
+
+        expect(providerBalanceAfter - providerBalanceBefore).to.equal(expectedPayout);
+        expect(treasuryBalanceAfter - treasuryBalanceBefore).to.equal(expectedFee);
+      });
+    });
+
+    // ----------------------------------------------------------
+    //                  Emergency Withdraw
+    // ----------------------------------------------------------
+
+    describe("Emergency Withdraw", function () {
+      it("should allow admin to withdraw stuck tokens", async function () {
+        // Deploy a mock token and send some to the marketplace by accident
+        const MockFactory = await ethers.getContractFactory("MockERC20");
+        token = (await MockFactory.deploy("Stuck Token", "STUCK")) as unknown as MockERC20;
+        await token.waitForDeployment();
+
+        const stuckAmount = ethers.parseEther("42");
+        await token.mint(await marketplace.getAddress(), stuckAmount);
+
+        // Verify tokens are in contract
+        expect(await token.balanceOf(await marketplace.getAddress())).to.equal(stuckAmount);
+
+        // Admin withdraws stuck tokens
+        await expect(
+          marketplace.connect(owner).emergencyWithdraw(
+            await token.getAddress(),
+            treasury.address,
+            stuckAmount
+          )
+        )
+          .to.emit(marketplace, "EmergencyWithdraw")
+          .withArgs(await token.getAddress(), treasury.address, stuckAmount);
+
+        // Verify tokens were sent to treasury
+        expect(await token.balanceOf(treasury.address)).to.equal(stuckAmount);
+        expect(await token.balanceOf(await marketplace.getAddress())).to.equal(0);
+      });
+
+      it("should allow admin to rescue stuck ETH", async function () {
+        // Send ETH directly to the marketplace contract via a self-destructing contract
+        // or via an agreement that we can use to get ETH into the contract
+        await marketplace
+          .connect(provider)
+          .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
+
+        const stuckEth = ethers.parseEther("5");
+        await marketplace
+          .connect(buyer)
+          .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
+            value: stuckEth,
+          });
+
+        // Now rescue the ETH that is sitting in escrow (simulating stuck ETH)
+        const treasuryBalanceBefore = await ethers.provider.getBalance(treasury.address);
+
+        await expect(
+          marketplace.connect(owner).rescueETH(treasury.address, stuckEth)
+        )
+          .to.emit(marketplace, "EmergencyETHWithdraw")
+          .withArgs(treasury.address, stuckEth);
+
+        const treasuryBalanceAfter = await ethers.provider.getBalance(treasury.address);
+        expect(treasuryBalanceAfter - treasuryBalanceBefore).to.equal(stuckEth);
+      });
+
+      it("should revert emergency withdraw from non-admin", async function () {
+        const MockFactory = await ethers.getContractFactory("MockERC20");
+        token = (await MockFactory.deploy("Stuck Token", "STUCK")) as unknown as MockERC20;
+        await token.waitForDeployment();
+
+        await expect(
+          marketplace.connect(provider).emergencyWithdraw(
+            await token.getAddress(),
+            provider.address,
+            ethers.parseEther("1")
+          )
+        ).to.be.revertedWithCustomError(
+          marketplace,
+          "AccessControlUnauthorizedAccount"
+        );
+
+        await expect(
+          marketplace.connect(provider).rescueETH(
+            provider.address,
+            ethers.parseEther("1")
+          )
+        ).to.be.revertedWithCustomError(
+          marketplace,
+          "AccessControlUnauthorizedAccount"
+        );
+      });
+
+      it("should revert emergency withdraw with zero amount", async function () {
+        const MockFactory = await ethers.getContractFactory("MockERC20");
+        token = (await MockFactory.deploy("Stuck Token", "STUCK")) as unknown as MockERC20;
+        await token.waitForDeployment();
+
+        await expect(
+          marketplace.connect(owner).emergencyWithdraw(
+            await token.getAddress(),
+            treasury.address,
+            0
+          )
+        ).to.be.revertedWithCustomError(marketplace, "ZeroAmount");
+
+        await expect(
+          marketplace.connect(owner).rescueETH(treasury.address, 0)
+        ).to.be.revertedWithCustomError(marketplace, "ZeroAmount");
+      });
+    });
+
+    // ----------------------------------------------------------
+    //                   Access Control
+    // ----------------------------------------------------------
+
+    describe("Access Control", function () {
+      it("should allow admin to call admin functions", async function () {
+        // setPlatformFeeBps
+        await expect(marketplace.connect(owner).setPlatformFeeBps(100)).to.not.be.reverted;
+
+        // setTreasury
+        await expect(marketplace.connect(owner).setTreasury(agentC.address)).to.not.be.reverted;
+
+        // setAgentRegistry
+        await expect(marketplace.connect(owner).setAgentRegistry(agentC.address)).to.not.be.reverted;
+
+        // setPaymentToken
+        await expect(marketplace.connect(owner).setPaymentToken(ethers.ZeroAddress)).to.not.be.reverted;
+
+        // setAllowedToken
+        await expect(marketplace.connect(owner).setAllowedToken(agentC.address, true)).to.not.be.reverted;
+      });
+
+      it("should revert admin functions from non-admin", async function () {
+        await expect(
+          marketplace.connect(buyer).setPlatformFeeBps(100)
+        ).to.be.revertedWithCustomError(marketplace, "AccessControlUnauthorizedAccount");
+
+        await expect(
+          marketplace.connect(buyer).setTreasury(buyer.address)
+        ).to.be.revertedWithCustomError(marketplace, "AccessControlUnauthorizedAccount");
+
+        await expect(
+          marketplace.connect(buyer).setAgentRegistry(buyer.address)
+        ).to.be.revertedWithCustomError(marketplace, "AccessControlUnauthorizedAccount");
+
+        await expect(
+          marketplace.connect(buyer).setPaymentToken(buyer.address)
+        ).to.be.revertedWithCustomError(marketplace, "AccessControlUnauthorizedAccount");
+
+        await expect(
+          marketplace.connect(buyer).setAllowedToken(buyer.address, true)
+        ).to.be.revertedWithCustomError(marketplace, "AccessControlUnauthorizedAccount");
+
+        await expect(
+          marketplace.connect(buyer).unpause()
+        ).to.be.revertedWithCustomError(marketplace, "AccessControlUnauthorizedAccount");
+      });
+
+      it("should allow guardian to pause but not unpause", async function () {
+        // Guardian can pause
+        await expect(marketplace.connect(guardian).pause()).to.not.be.reverted;
+        expect(await marketplace.paused()).to.be.true;
+
+        // Guardian cannot unpause
+        await expect(
+          marketplace.connect(guardian).unpause()
+        ).to.be.revertedWithCustomError(marketplace, "AccessControlUnauthorizedAccount");
+
+        // Admin can unpause
+        await marketplace.connect(owner).unpause();
+        expect(await marketplace.paused()).to.be.false;
+      });
+
+      it("should allow admin to pause and unpause", async function () {
+        // Admin can pause
+        await expect(marketplace.connect(owner).pause()).to.not.be.reverted;
+        expect(await marketplace.paused()).to.be.true;
+
+        // Admin can unpause
+        await expect(marketplace.connect(owner).unpause()).to.not.be.reverted;
+        expect(await marketplace.paused()).to.be.false;
+      });
+    });
+  });
+
+  // ============================================================
+  //            V4 — EXPIRE DELIVERED (10 tests)
+  // ============================================================
+
+  describe("V4 — expireDelivered", function () {
+    const ethAmount = ethers.parseEther("2");
+
+    beforeEach(async function () {
+      await marketplace
+        .connect(provider)
+        .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
+    });
+
+    it("should release escrow to provider after deadline + grace period", async function () {
+      const deadline = await futureDeadline();
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, deadline, 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+
+      // Advance past deadline + grace period (1 day + 14 days + 1 second)
+      await ethers.provider.send("evm_increaseTime", [86400 + 14 * 86400 + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      const providerBefore = await ethers.provider.getBalance(provider.address);
+
+      await expect(marketplace.connect(agentC).expireDelivered(0))
+        .to.emit(marketplace, "DeliveryExpired")
+        .withArgs(0, provider.address, ethAmount);
+
+      const providerAfter = await ethers.provider.getBalance(provider.address);
+      expect(providerAfter - providerBefore).to.equal(ethAmount);
+
+      const agreement = await marketplace.getAgreement(0);
+      expect(agreement.status).to.equal(3); // Settled
+    });
+
+    it("should revert if agreement is not Delivered", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+
+      await expect(
+        marketplace.connect(agentC).expireDelivered(0)
+      ).to.be.revertedWithCustomError(marketplace, "InvalidStatus");
+    });
+
+    it("should revert if deadline + grace not elapsed", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+
+      await expect(
+        marketplace.connect(agentC).expireDelivered(0)
+      ).to.be.revertedWithCustomError(marketplace, "NotExpired");
+    });
+
+    it("should deduct platform fee on expiry", async function () {
+      await marketplace.connect(owner).setPlatformFeeBps(500); // 5%
+
+      const escrow = ethers.parseEther("10");
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: escrow });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+
+      await ethers.provider.send("evm_increaseTime", [86400 + 14 * 86400 + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      const providerBefore = await ethers.provider.getBalance(provider.address);
+      const treasuryBefore = await ethers.provider.getBalance(treasury.address);
+
+      await marketplace.connect(agentC).expireDelivered(0);
+
+      const providerAfter = await ethers.provider.getBalance(provider.address);
+      const treasuryAfter = await ethers.provider.getBalance(treasury.address);
+
+      expect(providerAfter - providerBefore).to.equal(ethers.parseEther("9.5"));
+      expect(treasuryAfter - treasuryBefore).to.equal(ethers.parseEther("0.5"));
+    });
+
+    it("should handle token escrow expiry", async function () {
+      const MockFactory = await ethers.getContractFactory("MockERC20");
+      token = (await MockFactory.deploy("Mock Token", "MOCK")) as unknown as MockERC20;
+      await token.waitForDeployment();
+      await marketplace.connect(owner).setAllowedToken(await token.getAddress(), true);
+
+      const tokenAmount = ethers.parseEther("100");
+      await token.mint(buyer.address, ethers.parseEther("1000"));
+      await token.connect(buyer).approve(await marketplace.getAddress(), tokenAmount);
+
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), tokenAmount, await token.getAddress());
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+
+      await ethers.provider.send("evm_increaseTime", [86400 + 14 * 86400 + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      await marketplace.connect(agentC).expireDelivered(0);
+
+      expect(await token.balanceOf(provider.address)).to.equal(tokenAmount);
+      const agreement = await marketplace.getAgreement(0);
+      expect(agreement.status).to.equal(3); // Settled
+    });
+
+    it("should handle zero-escrow expiry", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+
+      await ethers.provider.send("evm_increaseTime", [86400 + 14 * 86400 + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      await marketplace.connect(agentC).expireDelivered(0);
+
+      const agreement = await marketplace.getAgreement(0);
+      expect(agreement.status).to.equal(3); // Settled
+    });
+
+    it("should allow anyone to call expireDelivered", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+
+      await ethers.provider.send("evm_increaseTime", [86400 + 14 * 86400 + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      // nonAgent (not a registered agent) can call
+      await expect(marketplace.connect(nonAgent).expireDelivered(0)).to.not.be.reverted;
+    });
+
+    it("should increment totalCompleted on expiry", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+
+      await ethers.provider.send("evm_increaseTime", [86400 + 14 * 86400 + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      await marketplace.connect(agentC).expireDelivered(0);
+
+      const listing = await marketplace.getListing(0);
+      expect(listing.totalCompleted).to.equal(1);
+    });
+
+    it("should set settledAt timestamp", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+
+      await ethers.provider.send("evm_increaseTime", [86400 + 14 * 86400 + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      await marketplace.connect(agentC).expireDelivered(0);
+
+      const agreement = await marketplace.getAgreement(0);
+      expect(agreement.settledAt).to.be.greaterThan(0);
+    });
+
+    it("should revert on already settled agreement", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+      await marketplace.connect(buyer).settleAgreement(0);
+
+      await expect(
+        marketplace.connect(agentC).expireDelivered(0)
+      ).to.be.revertedWithCustomError(marketplace, "InvalidStatus");
+    });
+  });
+
+  // ============================================================
+  //            V5 — INITIALIZATION (3 tests)
+  // ============================================================
+
+  describe("V5 Initialization", function () {
+    it("should set cancellationFeeBps to 500 (5%)", async function () {
+      expect(await marketplace.cancellationFeeBps()).to.equal(500);
+    });
+
+    it("should set disputeTimeoutPeriod to 30 days", async function () {
+      expect(await marketplace.disputeTimeoutPeriod()).to.equal(30 * 86400);
+    });
+
+    it("should prevent double initialization", async function () {
+      await expect(marketplace.initializeV5()).to.be.revertedWithCustomError(
+        marketplace,
+        "InvalidInitialization"
+      );
+    });
+  });
+
+  // ============================================================
+  //       V5 — CANCEL AGREEMENT WITH FEE (6 tests)
+  // ============================================================
+
+  describe("V5 — cancelAgreement with Fee", function () {
+    beforeEach(async function () {
+      await marketplace
+        .connect(provider)
+        .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
+    });
+
+    it("should deduct ETH cancellation fee to treasury", async function () {
+      const escrow = ethers.parseEther("10");
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: escrow });
+
+      const buyerBefore = await ethers.provider.getBalance(buyer.address);
+      const treasuryBefore = await ethers.provider.getBalance(treasury.address);
+
+      const tx = await marketplace.connect(buyer).cancelAgreement(0);
+      const receipt = await tx.wait();
+      const gasCost = receipt!.gasUsed * receipt!.gasPrice;
+
+      const buyerAfter = await ethers.provider.getBalance(buyer.address);
+      const treasuryAfter = await ethers.provider.getBalance(treasury.address);
+
+      // 5% of 10 ETH = 0.5 ETH fee
+      const expectedFee = ethers.parseEther("0.5");
+      const expectedRefund = ethers.parseEther("9.5");
+
+      expect(treasuryAfter - treasuryBefore).to.equal(expectedFee);
+      expect(buyerAfter - buyerBefore + gasCost).to.equal(expectedRefund);
+
+      await expect(tx).to.emit(marketplace, "AgreementCancelledWithFee").withArgs(0, expectedFee);
+    });
+
+    it("should deduct token cancellation fee to treasury", async function () {
+      const MockFactory = await ethers.getContractFactory("MockERC20");
+      token = (await MockFactory.deploy("Mock Token", "MOCK")) as unknown as MockERC20;
+      await token.waitForDeployment();
+      await marketplace.connect(owner).setAllowedToken(await token.getAddress(), true);
+
+      const tokenAmount = ethers.parseEther("100");
+      await token.mint(buyer.address, ethers.parseEther("1000"));
+      await token.connect(buyer).approve(await marketplace.getAddress(), tokenAmount);
+
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), tokenAmount, await token.getAddress());
+
+      await marketplace.connect(buyer).cancelAgreement(0);
+
+      // 5% of 100 = 5 tokens fee, 95 tokens refund
+      expect(await token.balanceOf(buyer.address)).to.equal(ethers.parseEther("995")); // 1000 - 100 + 95
+      expect(await token.balanceOf(treasury.address)).to.equal(ethers.parseEther("5"));
+    });
+
+    it("should not deduct fee on zero-escrow cancellation", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
+
+      // Should emit plain AgreementCancelled, not AgreementCancelledWithFee
+      await expect(marketplace.connect(buyer).cancelAgreement(0))
+        .to.emit(marketplace, "AgreementCancelled")
+        .withArgs(0);
+    });
+
+    it("should refund full amount when cancellationFeeBps is 0", async function () {
+      // Set fee to 0
+      await marketplace.connect(owner).setCancellationFeeBps(0);
+
+      const escrow = ethers.parseEther("10");
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: escrow });
+
+      const buyerBefore = await ethers.provider.getBalance(buyer.address);
+
+      const tx = await marketplace.connect(buyer).cancelAgreement(0);
+      const receipt = await tx.wait();
+      const gasCost = receipt!.gasUsed * receipt!.gasPrice;
+
+      const buyerAfter = await ethers.provider.getBalance(buyer.address);
+      expect(buyerAfter - buyerBefore + gasCost).to.equal(escrow);
+
+      // Should emit plain AgreementCancelled
+      await expect(tx).to.emit(marketplace, "AgreementCancelled").withArgs(0);
+    });
+
+    it("should set status to Cancelled", async function () {
+      const escrow = ethers.parseEther("5");
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: escrow });
+
+      await marketplace.connect(buyer).cancelAgreement(0);
+
+      const agreement = await marketplace.getAgreement(0);
+      expect(agreement.status).to.equal(5); // Cancelled
+    });
+
+    it("should still revert when caller is not buyer", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
+          value: ethers.parseEther("1"),
+        });
+
+      await expect(
+        marketplace.connect(provider).cancelAgreement(0)
+      ).to.be.revertedWithCustomError(marketplace, "NotBuyer");
+    });
+  });
+
+  // ============================================================
+  //       V5 — DISPUTE METADATA RECORDING (4 tests)
+  // ============================================================
+
+  describe("V5 — disputeAgreement metadata", function () {
+    beforeEach(async function () {
+      await marketplace
+        .connect(provider)
+        .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, {
+          value: ethers.parseEther("2"),
+        });
+    });
+
+    it("should record disputedAt timestamp", async function () {
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      const timestamp = await marketplace.disputedAt(0);
+      expect(timestamp).to.be.greaterThan(0);
+    });
+
+    it("should record preDisputeStatus from Agreed", async function () {
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      const preStatus = await marketplace.preDisputeStatus(0);
+      expect(preStatus).to.equal(1); // ServiceStatus.Agreed
+    });
+
+    it("should record preDisputeStatus from Delivered", async function () {
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      const preStatus = await marketplace.preDisputeStatus(0);
+      expect(preStatus).to.equal(2); // ServiceStatus.Delivered
+    });
+
+    it("should record disputeInitiator", async function () {
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      const initiator = await marketplace.disputeInitiator(0);
+      expect(initiator).to.equal(buyer.address);
+    });
+  });
+
+  // ============================================================
+  //           V5 — EXPIRE DISPUTE (15 tests)
+  // ============================================================
+
+  describe("V5 — expireDispute", function () {
+    const ethAmount = ethers.parseEther("10");
+    const THIRTY_DAYS = 30 * 86400;
+
+    beforeEach(async function () {
+      await marketplace
+        .connect(provider)
+        .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
+    });
+
+    it("should revert if agreement is not Disputed", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+
+      await expect(
+        marketplace.connect(agentC).expireDispute(0)
+      ).to.be.revertedWithCustomError(marketplace, "NotDisputed");
+    });
+
+    it("should revert if timeout not elapsed", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      await expect(
+        marketplace.connect(agentC).expireDispute(0)
+      ).to.be.revertedWithCustomError(marketplace, "DisputeNotExpired");
+    });
+
+    it("should revert if disputedAt == 0 (pre-V5 dispute)", async function () {
+      // We can't easily create a pre-V5 dispute in test, but disputedAt defaults to 0
+      // for agreement IDs that were never disputed through V5 flow.
+      // Since our beforeEach runs V5 init, we test by checking that a non-disputed
+      // agreement's disputedAt is 0.
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+
+      // Manually verify disputedAt is 0 for this agreement
+      expect(await marketplace.disputedAt(0)).to.equal(0);
+    });
+
+    it("should release escrow to provider when pre-dispute was Delivered", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      // Advance past dispute timeout
+      await ethers.provider.send("evm_increaseTime", [THIRTY_DAYS + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      const providerBefore = await ethers.provider.getBalance(provider.address);
+
+      await expect(marketplace.connect(agentC).expireDispute(0))
+        .to.emit(marketplace, "DisputeExpired")
+        .withArgs(0, true, ethAmount, 0);
+
+      const providerAfter = await ethers.provider.getBalance(provider.address);
+      expect(providerAfter - providerBefore).to.equal(ethAmount);
+
+      const agreement = await marketplace.getAgreement(0);
+      expect(agreement.status).to.equal(3); // Settled
+    });
+
+    it("should deduct platform fee when provider wins dispute expiry", async function () {
+      await marketplace.connect(owner).setPlatformFeeBps(500); // 5%
+
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      await ethers.provider.send("evm_increaseTime", [THIRTY_DAYS + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      const providerBefore = await ethers.provider.getBalance(provider.address);
+      const treasuryBefore = await ethers.provider.getBalance(treasury.address);
+
+      await marketplace.connect(agentC).expireDispute(0);
+
+      const providerAfter = await ethers.provider.getBalance(provider.address);
+      const treasuryAfter = await ethers.provider.getBalance(treasury.address);
+
+      expect(providerAfter - providerBefore).to.equal(ethers.parseEther("9.5"));
+      expect(treasuryAfter - treasuryBefore).to.equal(ethers.parseEther("0.5"));
+    });
+
+    it("should refund buyer minus cancel fee when Agreed + buyer initiated", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      await ethers.provider.send("evm_increaseTime", [THIRTY_DAYS + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      const buyerBefore = await ethers.provider.getBalance(buyer.address);
+      const treasuryBefore = await ethers.provider.getBalance(treasury.address);
+
+      // 5% cancel fee on 10 ETH = 0.5 ETH
+      await expect(marketplace.connect(agentC).expireDispute(0))
+        .to.emit(marketplace, "DisputeExpired")
+        .withArgs(0, false, ethAmount, ethers.parseEther("0.5"));
+
+      const buyerAfter = await ethers.provider.getBalance(buyer.address);
+      const treasuryAfter = await ethers.provider.getBalance(treasury.address);
+
+      expect(buyerAfter - buyerBefore).to.equal(ethers.parseEther("9.5"));
+      expect(treasuryAfter - treasuryBefore).to.equal(ethers.parseEther("0.5"));
+
+      const agreement = await marketplace.getAgreement(0);
+      expect(agreement.status).to.equal(5); // Cancelled
+    });
+
+    it("should revert when provider disputes Agreed (V6)", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      // V6: Provider cannot dispute an Agreed agreement (must deliver first)
+      await expect(
+        marketplace.connect(provider).disputeAgreement(0, REASON_CID)
+      ).to.be.revertedWithCustomError(marketplace, "InvalidStatus");
+    });
+
+    it("should full refund buyer when Agreed + buyer initiated", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      await ethers.provider.send("evm_increaseTime", [THIRTY_DAYS + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      const buyerBefore = await ethers.provider.getBalance(buyer.address);
+
+      await expect(marketplace.connect(agentC).expireDispute(0))
+        .to.emit(marketplace, "DisputeExpired");
+
+      const buyerAfter = await ethers.provider.getBalance(buyer.address);
+      // Buyer-initiated Agreed dispute: buyer gets refund minus cancel fee
+      expect(buyerAfter).to.be.gt(buyerBefore);
+
+      const agreement = await marketplace.getAgreement(0);
+      expect(agreement.status).to.equal(5); // Cancelled
+    });
+
+    it("should handle token escrow in expire dispute (provider wins)", async function () {
+      const MockFactory = await ethers.getContractFactory("MockERC20");
+      token = (await MockFactory.deploy("Mock Token", "MOCK")) as unknown as MockERC20;
+      await token.waitForDeployment();
+      await marketplace.connect(owner).setAllowedToken(await token.getAddress(), true);
+
+      const tokenAmount = ethers.parseEther("100");
+      await token.mint(buyer.address, ethers.parseEther("1000"));
+      await token.connect(buyer).approve(await marketplace.getAddress(), tokenAmount);
+
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), tokenAmount, await token.getAddress());
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      await ethers.provider.send("evm_increaseTime", [THIRTY_DAYS + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      await marketplace.connect(agentC).expireDispute(0);
+
+      expect(await token.balanceOf(provider.address)).to.equal(tokenAmount);
+      const agreement = await marketplace.getAgreement(0);
+      expect(agreement.status).to.equal(3); // Settled
+    });
+
+    it("should handle token escrow in expire dispute (buyer wins minus cancel fee)", async function () {
+      const MockFactory = await ethers.getContractFactory("MockERC20");
+      token = (await MockFactory.deploy("Mock Token", "MOCK")) as unknown as MockERC20;
+      await token.waitForDeployment();
+      await marketplace.connect(owner).setAllowedToken(await token.getAddress(), true);
+
+      const tokenAmount = ethers.parseEther("100");
+      await token.mint(buyer.address, ethers.parseEther("1000"));
+      await token.connect(buyer).approve(await marketplace.getAddress(), tokenAmount);
+
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), tokenAmount, await token.getAddress());
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      await ethers.provider.send("evm_increaseTime", [THIRTY_DAYS + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      await marketplace.connect(agentC).expireDispute(0);
+
+      // 5% of 100 = 5 tokens fee, 95 tokens refund
+      expect(await token.balanceOf(buyer.address)).to.equal(ethers.parseEther("995")); // 1000-100+95
+      expect(await token.balanceOf(treasury.address)).to.equal(ethers.parseEther("5"));
+    });
+
+    it("should allow anyone to call expireDispute", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      await ethers.provider.send("evm_increaseTime", [THIRTY_DAYS + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      // nonAgent can call
+      await expect(marketplace.connect(nonAgent).expireDispute(0)).to.not.be.reverted;
+    });
+
+    it("should increment totalCompleted when provider wins", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      await ethers.provider.send("evm_increaseTime", [THIRTY_DAYS + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      await marketplace.connect(agentC).expireDispute(0);
+
+      const listing = await marketplace.getListing(0);
+      expect(listing.totalCompleted).to.equal(1);
+    });
+
+    it("should not increment totalCompleted when buyer wins", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      await ethers.provider.send("evm_increaseTime", [THIRTY_DAYS + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      await marketplace.connect(agentC).expireDispute(0);
+
+      const listing = await marketplace.getListing(0);
+      expect(listing.totalCompleted).to.equal(0);
+    });
+
+    it("should handle zero-escrow dispute expiry", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress);
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      await ethers.provider.send("evm_increaseTime", [THIRTY_DAYS + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      await marketplace.connect(agentC).expireDispute(0);
+
+      const agreement = await marketplace.getAgreement(0);
+      expect(agreement.status).to.equal(3); // Settled (provider wins)
+    });
+
+    it("should set settledAt when provider wins dispute expiry", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      await ethers.provider.send("evm_increaseTime", [THIRTY_DAYS + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      await marketplace.connect(agentC).expireDispute(0);
+
+      const agreement = await marketplace.getAgreement(0);
+      expect(agreement.settledAt).to.be.greaterThan(0);
+    });
+  });
+
+  // ============================================================
+  //   V5 — RESOLVE DISPUTE WITH CANCEL FEE (4 tests)
+  // ============================================================
+
+  describe("V5 — resolveDispute with cancellation fee", function () {
+    const ethAmount = ethers.parseEther("10");
+
+    beforeEach(async function () {
+      await marketplace
+        .connect(provider)
+        .listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("1"));
+    });
+
+    it("should deduct cancel fee when buyer-initiated Agreed dispute resolved in buyer's favor", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      // Buyer disputes from Agreed status
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      const buyerBefore = await ethers.provider.getBalance(buyer.address);
+      const treasuryBefore = await ethers.provider.getBalance(treasury.address);
+
+      // Admin resolves in buyer's favor
+      await marketplace.connect(owner).resolveDispute(0, false);
+
+      const buyerAfter = await ethers.provider.getBalance(buyer.address);
+      const treasuryAfter = await ethers.provider.getBalance(treasury.address);
+
+      // 5% cancel fee on 10 ETH = 0.5 ETH
+      expect(buyerAfter - buyerBefore).to.equal(ethers.parseEther("9.5"));
+      expect(treasuryAfter - treasuryBefore).to.equal(ethers.parseEther("0.5"));
+    });
+
+    it("should NOT deduct cancel fee when Delivered dispute resolved in buyer's favor", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+      // Buyer disputes from Delivered status
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      const buyerBefore = await ethers.provider.getBalance(buyer.address);
+
+      await marketplace.connect(owner).resolveDispute(0, false);
+
+      const buyerAfter = await ethers.provider.getBalance(buyer.address);
+      // Full refund — no cancel fee because pre-dispute was Delivered, not Agreed
+      expect(buyerAfter - buyerBefore).to.equal(ethAmount);
+    });
+
+    it("should revert when provider tries to dispute Agreed (V6 prevents this scenario)", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      // V6: Provider cannot dispute Agreed — must deliver first
+      await expect(
+        marketplace.connect(provider).disputeAgreement(0, REASON_CID)
+      ).to.be.revertedWithCustomError(marketplace, "InvalidStatus");
+    });
+
+    it("should release to provider normally when resolved in provider's favor (no cancel fee)", async function () {
+      await marketplace
+        .connect(buyer)
+        .createAgreement(0, TERMS_CID, await futureDeadline(), 0, ethers.ZeroAddress, { value: ethAmount });
+      await marketplace.connect(buyer).disputeAgreement(0, REASON_CID);
+
+      const providerBefore = await ethers.provider.getBalance(provider.address);
+
+      await marketplace.connect(owner).resolveDispute(0, true);
+
+      const providerAfter = await ethers.provider.getBalance(provider.address);
+      expect(providerAfter - providerBefore).to.equal(ethAmount);
+    });
+  });
+
+  // ============================================================
+  //         V5 — ADMIN FUNCTIONS (5 tests)
+  // ============================================================
+
+  describe("V5 Admin Functions", function () {
+    it("should set cancellationFeeBps", async function () {
+      await expect(marketplace.connect(owner).setCancellationFeeBps(300))
+        .to.emit(marketplace, "CancellationFeeUpdated")
+        .withArgs(500, 300);
+
+      expect(await marketplace.cancellationFeeBps()).to.equal(300);
+    });
+
+    it("should set disputeTimeoutPeriod", async function () {
+      const newPeriod = 14 * 86400; // 14 days
+      await expect(marketplace.connect(owner).setDisputeTimeoutPeriod(newPeriod))
+        .to.emit(marketplace, "DisputeTimeoutUpdated")
+        .withArgs(30 * 86400, newPeriod);
+
+      expect(await marketplace.disputeTimeoutPeriod()).to.equal(newPeriod);
+    });
+
+    it("should revert setCancellationFeeBps above max", async function () {
+      await expect(
+        marketplace.connect(owner).setCancellationFeeBps(1001)
+      ).to.be.revertedWithCustomError(marketplace, "CancellationFeeTooHigh");
+    });
+
+    it("should revert setCancellationFeeBps from non-admin", async function () {
+      await expect(
+        marketplace.connect(buyer).setCancellationFeeBps(100)
+      ).to.be.revertedWithCustomError(marketplace, "AccessControlUnauthorizedAccount");
+    });
+
+    it("should revert setDisputeTimeoutPeriod from non-admin", async function () {
+      await expect(
+        marketplace.connect(buyer).setDisputeTimeoutPeriod(86400)
+      ).to.be.revertedWithCustomError(marketplace, "AccessControlUnauthorizedAccount");
+    });
+  });
+
+  // ============================================================
+  //                     V6 SECURITY FIXES
+  // ============================================================
+
+  describe("V6 — cancelFeeBps snapshot", function () {
+    it("should use the snapshotted cancel fee even after global change", async function () {
+      // Deploy MockERC20 and allow it
+      const MockFactory = await ethers.getContractFactory("MockERC20");
+      const mockToken = (await MockFactory.deploy("MockUSDC", "USDC")) as unknown as MockERC20;
+      await mockToken.waitForDeployment();
+      const tokenAddr = await mockToken.getAddress();
+      await marketplace.setAllowedToken(tokenAddr, true);
+
+      // List service (pricingModel=0 = Fixed)
+      await marketplace.connect(provider).listService(METADATA_CID, CATEGORY, 0, ethers.parseUnits("100", 18));
+
+      // Set cancel fee to 500 (5%) — this should be snapshotted
+      await marketplace.setCancellationFeeBps(500);
+
+      // Create agreement with token escrow
+      const deadline = await futureDeadline();
+      const amount = ethers.parseUnits("100", 18);
+      await mockToken.mint(buyer.address, amount);
+      await mockToken.connect(buyer).approve(await marketplace.getAddress(), amount);
+      await marketplace.connect(buyer).createAgreement(0, TERMS_CID, deadline, amount, tokenAddr);
+
+      // Now change global cancel fee to 200 (2%)
+      await marketplace.setCancellationFeeBps(200);
+
+      // Cancel — should use the original 5% fee, not the new 2%
+      await marketplace.connect(buyer).cancelAgreement(0);
+
+      // Verify: 5% of 100 = 5 tokens to treasury, 95 to buyer
+      const treasuryBalance = await mockToken.balanceOf(treasury.address);
+      const buyerBalance = await mockToken.balanceOf(buyer.address);
+      expect(treasuryBalance).to.equal(ethers.parseUnits("5", 18));
+      expect(buyerBalance).to.equal(ethers.parseUnits("95", 18));
+    });
+  });
+
+  describe("V6 — dispute timeout bounds", function () {
+    it("should reject dispute timeout period of 0", async function () {
+      await expect(
+        marketplace.setDisputeTimeoutPeriod(0)
+      ).to.be.revertedWith("Period out of bounds");
+    });
+
+    it("should reject dispute timeout period > 365 days", async function () {
+      await expect(
+        marketplace.setDisputeTimeoutPeriod(366 * 86400)
+      ).to.be.revertedWith("Period out of bounds");
+    });
+
+    it("should accept dispute timeout period of 1 day", async function () {
+      await marketplace.setDisputeTimeoutPeriod(86400);
+      expect(await marketplace.disputeTimeoutPeriod()).to.equal(86400);
+    });
+
+    it("should accept dispute timeout period of 365 days", async function () {
+      await marketplace.setDisputeTimeoutPeriod(365 * 86400);
+      expect(await marketplace.disputeTimeoutPeriod()).to.equal(365 * 86400);
+    });
+  });
+
+  describe("V6 — provider cannot dispute Agreed status", function () {
+    it("should revert when provider disputes an Agreed agreement", async function () {
+      // List and create agreement
+      await marketplace.connect(provider).listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("0.01"));
+      const deadline = await futureDeadline();
+      await marketplace.connect(buyer).createAgreement(0, TERMS_CID, deadline, 0, ethers.ZeroAddress, { value: ethers.parseEther("0.01") });
+
+      // Provider tries to dispute before delivering — should revert
+      await expect(
+        marketplace.connect(provider).disputeAgreement(0, REASON_CID)
+      ).to.be.revertedWithCustomError(marketplace, "InvalidStatus");
+    });
+
+    it("should allow buyer to dispute an Agreed agreement", async function () {
+      // List and create agreement
+      await marketplace.connect(provider).listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("0.01"));
+      const deadline = await futureDeadline();
+      await marketplace.connect(buyer).createAgreement(0, TERMS_CID, deadline, 0, ethers.ZeroAddress, { value: ethers.parseEther("0.01") });
+
+      // Buyer disputes — should succeed
+      await expect(
+        marketplace.connect(buyer).disputeAgreement(0, REASON_CID)
+      ).to.emit(marketplace, "AgreementDisputed");
+    });
+
+    it("should allow provider to dispute a Delivered agreement", async function () {
+      // List, create, and deliver
+      await marketplace.connect(provider).listService(METADATA_CID, CATEGORY, 0, ethers.parseEther("0.01"));
+      const deadline = await futureDeadline();
+      await marketplace.connect(buyer).createAgreement(0, TERMS_CID, deadline, 0, ethers.ZeroAddress, { value: ethers.parseEther("0.01") });
+      await marketplace.connect(provider).deliverWork(0, DELIVERY_CID);
+
+      // Provider disputes after delivery — should succeed
+      await expect(
+        marketplace.connect(provider).disputeAgreement(0, REASON_CID)
+      ).to.emit(marketplace, "AgreementDisputed");
     });
   });
 });

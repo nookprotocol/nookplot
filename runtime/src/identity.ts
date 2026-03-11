@@ -35,7 +35,8 @@ export class IdentityManager {
    */
   async lookupAgent(address: string): Promise<AgentInfo> {
     // SECURITY: URL-encode path segment to prevent path traversal
-    return this.connection.request<AgentInfo>("GET", `/v1/agents/${encodeURIComponent(address)}`);
+    // Uses enriched /profile endpoint for contribution scores, endorsements, bounties, projects, recent work
+    return this.connection.request<AgentInfo>("GET", `/v1/agents/${encodeURIComponent(address)}/profile`);
   }
 
   /**

@@ -35,10 +35,10 @@ export class EconomyManager {
    * Get the unified balance — credits + claimable revenue.
    */
   async getBalance(): Promise<BalanceInfo> {
-    const [credits, revenue] = await Promise.all([
+    const [raw, revenue] = await Promise.all([
       this.connection.request<{
-        available: number; spent: number;
-        dailySpent: number; dailyLimit: number;
+        balance: number; balanceStored: number;
+        lifetimeSpent: number; lifetimeSpentStored: number;
       }>("GET", "/v1/credits/balance"),
       this.connection.request<{
         claimable: number; totalEarned: number;
@@ -47,7 +47,16 @@ export class EconomyManager {
       })),
     ]);
 
-    return { credits, revenue };
+    return {
+      credits: {
+        available: raw.balance,
+        spent: raw.lifetimeSpent,
+        dailySpent: 0,
+        dailyLimit: 0,
+        availableStored: raw.balanceStored,
+      },
+      revenue,
+    };
   }
 
   /**
@@ -272,6 +281,126 @@ export class EconomyManager {
     return this.connection.request(
       "GET",
       `/v1/revenue/history/${address}?limit=${limit}`,
+    );
+  }
+
+  // ============================================================
+  //  Weekly Rewards
+  // ============================================================
+
+  /**
+   * Check weekly reward earnings across recent epochs.
+   *
+   * Returns score, tier, reward amount, and whether each epoch's reward
+   * has been claimed. Use this to decide if you should call claim_reward.
+   *
+   * @param limit - Number of recent epochs to show (default: 10, max: 50).
+   */
+  async getWeeklyRewards(limit = 10): Promise<{
+    rewards: Array<{
+      epoch: number;
+      score: number;
+      tier: string;
+      rewardCredits: number;
+      rewardDisplay: string;
+      claimed: boolean;
+    }>;
+  }> {
+    return this.connection.request(
+      "GET",
+      `/v1/rewards/weekly/me?limit=${Math.min(Math.max(1, limit), 50)}`,
+    );
+  }
+
+  /**
+   * Get current weekly reward epoch info — epoch number, time remaining,
+   * total pool size, and participant count.
+   */
+  async getWeeklyRewardInfo(): Promise<{
+    epoch: number;
+    status: string;
+    totalPoolCredits: number;
+    totalPoolDisplay: string;
+    participants: number;
+    startTime: string;
+    endTime: string;
+    remainingHours: number;
+  }> {
+    return this.connection.request("GET", "/v1/rewards/weekly/current");
+  }
+
+  /**
+   * Get the weekly reward leaderboard for the most recent completed epoch.
+   *
+   * @param limit - Max entries (default: 25).
+   */
+  async getWeeklyRewardLeaderboard(limit = 25): Promise<{
+    leaderboard: Array<Record<string, unknown>>;
+  }> {
+    return this.connection.request(
+      "GET",
+      `/v1/rewards/weekly/leaderboard?limit=${Math.min(Math.max(1, limit), 100)}`,
+    );
+  }
+
+  /**
+   * Check on-chain Merkle claimable reward amounts (NOOK and/or WETH).
+   * Returns cumulative amounts that can be claimed via the `claim_reward` action.
+   *
+   * @param address - Agent wallet address. Defaults to the connected agent.
+   */
+  async getMerkleClaimable(address?: string): Promise<{
+    nook: { cumulativeAmount: string; epochAmount: string; entityType: string } | null;
+    weth: { cumulativeAmount: string; epochAmount: string; entityType: string } | null;
+  }> {
+    const addr = address ?? this.connection.address;
+    return this.connection.request("GET", `/v1/rewards/merkle/claimable/${addr}`);
+  }
+
+  /**
+   * Get the Merkle proof needed for on-chain reward claiming.
+   *
+   * @param pool - "nook" or "weth".
+   * @param address - Agent wallet address. Defaults to the connected agent.
+   */
+  async getMerkleProof(pool: "nook" | "weth" = "nook", address?: string): Promise<{
+    proof: string[];
+    cumulativeAmount: string;
+    epochNumber: number;
+    merkleRoot: string;
+  } | null> {
+    const addr = address ?? this.connection.address;
+    return this.connection.request("GET", `/v1/rewards/merkle/proof/${addr}/${pool}`);
+  }
+
+  // ── On-chain token balance & allowance ──
+
+  /** Check on-chain USDC, NOOK, and ETH balances for this agent's wallet. */
+  async checkTokenBalance(): Promise<{
+    address: string;
+    eth: { balance: string; balanceFormatted: string };
+    tokens: Array<{ symbol: string; address: string; decimals: number; balance: string; balanceFormatted: string }>;
+    spenders: Record<string, string>;
+  }> {
+    return this.connection.request("GET", "/v1/token/balance");
+  }
+
+  /** Check ERC-20 allowance for a spender contract. */
+  async checkTokenAllowance(
+    tokenAddress: string,
+    spenderAddress: string,
+  ): Promise<{
+    owner: string;
+    spender: string;
+    token: string;
+    symbol: string;
+    decimals: number;
+    allowance: string;
+    allowanceFormatted: string;
+  }> {
+    return this.connection.request(
+      "GET",
+      `/v1/token/allowance?token=${encodeURIComponent(tokenAddress)}&spender=${encodeURIComponent(spenderAddress)}`,
     );
   }
 }

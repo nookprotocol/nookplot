@@ -27,6 +27,12 @@ export interface MintResult {
   transferTxHash?: string;
 }
 
+export interface ImportResult {
+  agentId: bigint;
+  imported: true;
+  metadataCid: string | null;
+}
+
 interface IpfsUploader {
   uploadJson(data: Record<string, unknown>, name?: string): Promise<{ cid: string }>;
   getGatewayUrl(cid: string): string;
@@ -36,6 +42,7 @@ export class ERC8004MintService {
   private readonly pool: Pool;
   private readonly ipfs: IpfsUploader;
   private readonly contract: ethers.Contract;
+  private readonly provider: ethers.JsonRpcProvider;
   private readonly relayerAddress: string;
   private readonly autoTransfer: boolean;
 
@@ -48,6 +55,7 @@ export class ERC8004MintService {
   ) {
     this.pool = pool;
     this.ipfs = ipfs;
+    this.provider = provider;
     this.autoTransfer = config.autoTransfer;
     this.relayerAddress = relayerWallet.address;
 
@@ -137,6 +145,7 @@ export class ERC8004MintService {
        SET erc8004_agent_id = $1,
            erc8004_tx_hash = $2,
            erc8004_metadata_cid = $3,
+           erc8004_source = 'minted',
            updated_at = NOW()
        WHERE id = $4`,
       [agentId.toString(), transferTxHash ?? mintTxHash, metadataCid, gatewayAgentId],
@@ -183,6 +192,109 @@ export class ERC8004MintService {
       agent.description,
       agent.capabilities,
     );
+  }
+
+  /**
+   * Check if an address already owns an ERC-8004 identity on-chain and link it
+   * in the gateway DB without minting a new one.
+   *
+   * Flow: check DB → balanceOf → scan Transfer events → optionally read tokenURI → update DB.
+   * Returns the import result if an existing identity was found, or null if no on-chain 8004 exists.
+   * Idempotent: returns early if agent already has an erc8004_agent_id.
+   */
+  async importExisting(
+    gatewayAgentId: string,
+    agentAddress: string,
+  ): Promise<ImportResult | null> {
+    // 1. Check gateway DB — already has erc8004_agent_id? Return early.
+    const { rows: existing } = await this.pool.query<{
+      erc8004_agent_id: string | null;
+    }>(
+      `SELECT erc8004_agent_id::text FROM agents WHERE id = $1`,
+      [gatewayAgentId],
+    );
+    if (existing.length > 0 && existing[0].erc8004_agent_id) {
+      return {
+        agentId: BigInt(existing[0].erc8004_agent_id),
+        imported: true,
+        metadataCid: null,
+      };
+    }
+
+    // 2. Check on-chain balance (read-only, no gas)
+    const balance = await this.contract.balanceOf(agentAddress);
+    if (BigInt(balance) === 0n) {
+      return null; // No existing ERC-8004 identity
+    }
+
+    // 3. Scan Transfer events to find the token ID (same approach as SDK's getERC8004Id)
+    const filter = this.contract.filters.Transfer(
+      ethers.ZeroAddress,
+      agentAddress,
+    );
+    const currentBlock = await this.provider.getBlockNumber();
+    const MAX_RANGE = 9_999;
+    const MAX_SCAN_CHUNKS = 50;
+    let agentId: bigint | null = null;
+
+    for (let i = 0; i < MAX_SCAN_CHUNKS; i++) {
+      const to = currentBlock - i * MAX_RANGE;
+      if (to < 0) break;
+      const from = Math.max(0, to - MAX_RANGE + 1);
+
+      try {
+        const chunk = await this.contract.queryFilter(filter, from, to);
+        if (chunk.length > 0) {
+          const lastEvent = chunk[chunk.length - 1];
+          if ("args" in lastEvent && lastEvent.args) {
+            agentId = BigInt(lastEvent.args.tokenId);
+            break;
+          }
+        }
+      } catch {
+        // Skip failed chunks
+      }
+
+      if (from === 0) break;
+    }
+
+    if (agentId === null) {
+      return null; // Balance > 0 but couldn't find mint event — skip import
+    }
+
+    // 4. Optionally read existing metadata CID from tokenURI
+    let metadataCid: string | null = null;
+    try {
+      const tokenURI: string = await this.contract.tokenURI(agentId);
+      // tokenURI is typically an IPFS gateway URL like https://gateway.pinata.cloud/ipfs/Qm...
+      // Extract the CID from the end of the URL
+      const cidMatch = tokenURI.match(/\/ipfs\/([a-zA-Z0-9]+)$/);
+      if (cidMatch) {
+        metadataCid = cidMatch[1];
+      }
+    } catch {
+      // tokenURI read failed — non-fatal, proceed without metadata CID
+    }
+
+    // 5. Store in gateway DB
+    await this.pool.query(
+      `UPDATE agents
+       SET erc8004_agent_id = $1,
+           erc8004_source = 'imported',
+           erc8004_metadata_cid = COALESCE($2, erc8004_metadata_cid),
+           updated_at = NOW()
+       WHERE id = $3`,
+      [agentId.toString(), metadataCid, gatewayAgentId],
+    );
+
+    logSecurityEvent("info", "erc8004-import-existing", {
+      gatewayAgentId,
+      agentAddress,
+      erc8004AgentId: agentId.toString(),
+      metadataCid,
+    });
+
+    return { agentId, imported: true, metadataCid };
   }
 
   /**

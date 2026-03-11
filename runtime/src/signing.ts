@@ -9,6 +9,26 @@
 
 import type { ConnectionManager } from "./connection.js";
 
+/**
+ * Per-agent serialization queue for on-chain actions.
+ *
+ * Concurrent prepareSignRelay calls for the same agent race on nonce
+ * allocation. We chain promises per privateKey so each prepare→sign→relay
+ * completes before the next one starts.
+ */
+const agentQueues = new Map<string, Promise<unknown>>();
+
+function enqueue<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = agentQueues.get(key) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  agentQueues.set(key, next);
+  next.then(
+    () => { if (agentQueues.get(key) === next) agentQueues.delete(key); },
+    () => { if (agentQueues.get(key) === next) agentQueues.delete(key); },
+  );
+  return next;
+}
+
 /** Shape of a prepare endpoint response containing a ForwardRequest. */
 export interface PrepareResponse {
   forwardRequest: {
@@ -50,6 +70,8 @@ export async function signForwardRequest(
   value: Record<string, unknown>,
 ): Promise<string> {
   try {
+    // Dynamic import via Function() to bypass bundler static-analysis in CJS builds.
+    // Safe: the import specifier is a hardcoded string literal, never user input.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mod = await (new Function('return import("ethers")')() as Promise<any>);
     const ethers = mod.ethers ?? mod;
@@ -79,7 +101,7 @@ export async function signForwardRequest(
  * @returns Relay result with txHash.
  * @throws If private key is missing, ethers not installed, or relay fails.
  */
-export async function prepareSignRelay(
+export function prepareSignRelay(
   connection: ConnectionManager,
   preparePath: string,
   body: Record<string, unknown>,
@@ -89,25 +111,53 @@ export async function prepareSignRelay(
     throw new Error("Private key not configured — cannot sign on-chain transactions. Provide privateKey in RuntimeConfig.");
   }
 
-  // Step 1: Prepare — get unsigned ForwardRequest + EIP-712 signing context
-  const prep = await connection.request<PrepareResponse>("POST", preparePath, body);
+  // Serialize per-agent: concurrent calls queue behind the previous one
+  return enqueue(privateKey, () => _prepareSignRelayInner(connection, privateKey, preparePath, body));
+}
 
-  if (!prep.forwardRequest || !prep.domain || !prep.types) {
-    throw new Error(
-      `Gateway did not return a ForwardRequest from ${preparePath} — got keys: ${Object.keys(prep).join(", ")}`,
+async function _prepareSignRelayInner(
+  connection: ConnectionManager,
+  privateKey: string,
+  preparePath: string,
+  body: Record<string, unknown>,
+): Promise<{ txHash: string }> {
+  /** Run one prepare → sign → relay attempt. */
+  const attempt = async (): Promise<{ txHash: string }> => {
+    // Step 1: Prepare — get unsigned ForwardRequest + EIP-712 signing context
+    const prep = await connection.request<PrepareResponse>("POST", preparePath, body);
+
+    if (!prep.forwardRequest || !prep.domain || !prep.types) {
+      throw new Error(
+        `Gateway did not return a ForwardRequest from ${preparePath} — got keys: ${Object.keys(prep).join(", ")}`,
+      );
+    }
+
+    // Step 2: Sign the ForwardRequest
+    const signature = await signForwardRequest(
+      privateKey, prep.domain, prep.types, prep.forwardRequest,
     );
+
+    // Step 3: Relay — flat body with ForwardRequest fields + signature
+    const relayResult = await connection.request<{ txHash: string; status: string }>(
+      "POST", "/v1/relay",
+      { ...prep.forwardRequest, signature },
+    );
+
+    return { txHash: relayResult.txHash };
+  };
+
+  try {
+    return await attempt();
+  } catch (err: unknown) {
+    // Retry once on nonce conflict — the gateway's NonceTracker may have served
+    // a stale nonce if concurrent requests raced or the cache wasn't warm yet.
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("signature verification failed") || message.includes("nonce")) {
+      console.warn(
+        `[nookplot-runtime] Nonce conflict on ${preparePath}, retrying once...`,
+      );
+      return await attempt();
+    }
+    throw err;
   }
-
-  // Step 2: Sign the ForwardRequest
-  const signature = await signForwardRequest(
-    privateKey, prep.domain, prep.types, prep.forwardRequest,
-  );
-
-  // Step 3: Relay — flat body with ForwardRequest fields + signature
-  const relayResult = await connection.request<{ txHash: string; status: string }>(
-    "POST", "/v1/relay",
-    { ...prep.forwardRequest, signature },
-  );
-
-  return { txHash: relayResult.txHash };
 }

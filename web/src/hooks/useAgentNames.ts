@@ -1,43 +1,38 @@
 /**
- * Resolves agent addresses to display names via DID documents.
+ * Resolves agent addresses to display names via the gateway batch endpoint.
  *
- * Batch-fetches didCid from the subgraph, then fetches DID docs from IPFS
- * to extract displayName. Results are cached via TanStack Query so each
- * agent's name is only resolved once per session.
+ * Uses a two-layer cache strategy:
+ * 1. Per-address cache: individual names are stored in the QueryClient so they
+ *    survive across different batch requests. When the activity feed refreshes
+ *    and the address set changes, only genuinely unknown addresses are fetched.
+ * 2. Batch query cache: the combined Map result is cached by TanStack Query
+ *    with keepPreviousData so the UI never flickers back to truncated addresses.
+ *
+ * This prevents the "all names flash to truncated addresses on every 30s poll"
+ * problem caused by the old approach of keying on the full address list.
  */
 
-import { useQuery } from "@tanstack/react-query";
-import { querySubgraph } from "@/lib/subgraph";
-import { fetchJson } from "@/lib/ipfs";
-import type { DIDDocument } from "@/lib/did";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { GATEWAY_URL } from "@/config/constants";
 
-interface AgentDidCid {
-  id: string;
-  didCid: string | null;
-}
+/** Per-address cache key prefix */
+const ADDR_KEY = "agentName";
 
-const DID_CID_QUERY = `
-  query AgentDidCids($ids: [Bytes!]!) {
-    agents(where: { id_in: $ids }) {
-      id
-      didCid
-    }
-  }
-`;
-
-function extractName(did: DIDDocument): string | null {
-  return did.agentProfile?.displayName
-    || did.metadata?.displayName
-    || null;
-}
+/** How long a per-address cache entry is considered fresh (10 min). */
+const PER_ADDR_STALE_MS = 10 * 60 * 1000;
 
 /**
  * Given a list of addresses, returns a Map<address, displayName | null>.
- * Addresses without a DID doc or displayName will map to null.
+ * Addresses without a display name will map to null.
+ *
+ * On every call, only addresses not already cached are sent to the gateway.
+ * Already-resolved names are returned instantly from the per-address cache.
  */
 export function useAgentNames(addresses: string[]) {
-  // Deduplicate and normalise
-  const unique = [...new Set(addresses.map((a) => a.toLowerCase()))];
+  const queryClient = useQueryClient();
+
+  // Deduplicate, normalise, and sort for a stable query key
+  const unique = [...new Set(addresses.map((a) => a.toLowerCase()))].sort();
 
   return useQuery<Map<string, string | null>>({
     queryKey: ["agentNames", unique.join(",")],
@@ -45,42 +40,75 @@ export function useAgentNames(addresses: string[]) {
       const nameMap = new Map<string, string | null>();
       if (unique.length === 0) return nameMap;
 
-      // 1. Batch-fetch didCids from subgraph
-      const data = await querySubgraph<{ agents: AgentDidCid[] }>(
-        DID_CID_QUERY,
-        { ids: unique },
-      );
-
-      // 2. Fetch DID docs in parallel for agents that have a didCid
-      const cidMap = new Map<string, string>();
-      for (const agent of data.agents) {
-        if (agent.didCid) cidMap.set(agent.id.toLowerCase(), agent.didCid);
-      }
-
-      const entries = [...cidMap.entries()];
-      const results = await Promise.allSettled(
-        entries.map(async ([addr, cid]) => {
-          const did = await fetchJson<DIDDocument>(cid);
-          return { addr, name: extractName(did) };
-        }),
-      );
-
-      // 3. Build the result map
-      for (const r of results) {
-        if (r.status === "fulfilled") {
-          nameMap.set(r.value.addr, r.value.name);
+      // --- Layer 1: read from per-address cache ---
+      const uncached: string[] = [];
+      for (const addr of unique) {
+        const cached = queryClient.getQueryData<string | null>([ADDR_KEY, addr]);
+        if (cached !== undefined) {
+          nameMap.set(addr, cached);
+        } else {
+          uncached.push(addr);
         }
       }
 
-      // Fill in nulls for addresses we couldn't resolve
-      for (const addr of unique) {
-        if (!nameMap.has(addr)) nameMap.set(addr, null);
+      // If everything is cached, skip the network request entirely
+      if (uncached.length === 0) return nameMap;
+
+      // --- Layer 2: batch-fetch only unknown addresses ---
+      try {
+        const response = await fetch(`${GATEWAY_URL}/v1/agents/names`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ addresses: uncached }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Gateway returned ${response.status}`);
+        }
+
+        const result = (await response.json()) as Record<
+          string,
+          { displayName: string | null; description: string | null }
+        >;
+
+        for (const addr of uncached) {
+          const name = result[addr]?.displayName ?? null;
+          nameMap.set(addr, name);
+          // Store in per-address cache for future batches
+          queryClient.setQueryData([ADDR_KEY, addr], name, {
+            updatedAt: Date.now(),
+          });
+        }
+      } catch {
+        // On failure, fill with nulls so UI doesn't break
+        for (const addr of uncached) {
+          if (!nameMap.has(addr)) nameMap.set(addr, null);
+        }
       }
 
       return nameMap;
     },
+
+    // Immediately show previously resolved names while fetching new ones.
+    // This prevents the UI from flashing truncated addresses on every poll.
+    placeholderData: (previousData) => {
+      if (previousData) return previousData;
+      // If no previous batch result, build a placeholder from per-address cache
+      if (unique.length === 0) return undefined;
+      const map = new Map<string, string | null>();
+      let found = 0;
+      for (const addr of unique) {
+        const cached = queryClient.getQueryData<string | null>([ADDR_KEY, addr]);
+        if (cached !== undefined) {
+          map.set(addr, cached);
+          found++;
+        }
+      }
+      return found > 0 ? map : undefined;
+    },
+
     enabled: unique.length > 0,
-    staleTime: 5 * 60 * 1000, // 5 min — names don't change often
-    gcTime: 30 * 60 * 1000,   // 30 min cache
+    staleTime: PER_ADDR_STALE_MS, // 10 min — names don't change often
+    gcTime: 30 * 60 * 1000,       // 30 min before GC
   });
 }

@@ -34,6 +34,8 @@ export class SettlementStore {
   private settlements = new Map<string, number[]>();
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private readonly windowMs: number;
+  /** Max unique wallets tracked to prevent unbounded memory growth. */
+  private static readonly MAX_ENTRIES = 10_000;
 
   constructor(windowMs = 60_000) {
     this.windowMs = windowMs;
@@ -51,6 +53,10 @@ export class SettlementStore {
    */
   record(payer: string): void {
     const key = payer.toLowerCase();
+    // Skip new wallets if at capacity (existing wallets still tracked)
+    if (!this.settlements.has(key) && this.settlements.size >= SettlementStore.MAX_ENTRIES) {
+      return;
+    }
     const timestamps = this.settlements.get(key) ?? [];
     timestamps.push(Date.now());
     this.settlements.set(key, timestamps);

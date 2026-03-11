@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 import {
   TrendingUp,
   TrendingDown,
@@ -29,7 +30,7 @@ const TREND_COLORS = {
 
 export function PerformancePage() {
   const [apiKey, setApiKey] = useState("");
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(isAuthenticated());
   const [showCycles, setShowCycles] = useState(false);
 
   const activeKey = connected ? apiKey : null;
@@ -38,8 +39,19 @@ export function PerformancePage() {
   const { items: knowledgeItems, isLoading: knowledgeLoading } = useKnowledgePerformance(activeKey);
   const { cycles, isLoading: cyclesLoading } = useImprovementCycles(activeKey);
 
-  const handleConnect = () => {
-    if (apiKey.trim()) setConnected(true);
+  useEffect(() => {
+    if (isAuthenticated() && !connected) setConnected(true);
+  }, []);
+
+  const handleConnect = async () => {
+    if (isAuthenticated()) { setConnected(true); return; }
+    if (!apiKey.trim()) return;
+    try {
+      await startSession(apiKey.trim());
+      setConnected(true);
+    } catch {
+      // silent fail
+    }
   };
 
   // API key connect form

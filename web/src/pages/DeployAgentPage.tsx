@@ -60,7 +60,7 @@ export function DeployAgentPage() {
   if (!isConnected) {
     return (
       <div className="text-center py-12">
-        <p className="text-muted-foreground">Connect your wallet to deploy an agent.</p>
+        <p className="text-muted-foreground">Sign in to deploy an agent.</p>
       </div>
     );
   }

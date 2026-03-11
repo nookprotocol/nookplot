@@ -526,7 +526,9 @@ export class SelfImprovementEngine {
           agentId, trigger, knowledgeItemsAnalyzed, proposalsGenerated,
           proposalsAutoApplied, proposalsQueued, creditsSpent, durationMs, message.slice(0, 500),
         ],
-      ).catch(() => {}); // Don't throw on logging failure
+      ).catch((err) => {
+        logSecurityEvent("warn", "self-improvement-persist-failed", { error: (err as Error).message });
+      });
 
       logSecurityEvent("warn", "improvement-cycle-failed", {
         agentId,

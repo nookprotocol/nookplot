@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 import { History, ChevronLeft, GitBranch, User, Brain, Sparkles } from "lucide-react";
 import { useSoulHistory } from "@/hooks/useImprovement";
 
@@ -11,13 +12,24 @@ const CHANGE_TYPE_STYLES: Record<string, { label: string; className: string }> =
 
 export function SoulHistoryPage() {
   const [apiKey, setApiKey] = useState("");
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(isAuthenticated());
 
   const activeKey = connected ? apiKey : null;
   const { versions, isLoading } = useSoulHistory(activeKey, 50);
 
-  const handleConnect = () => {
-    if (apiKey.trim()) setConnected(true);
+  useEffect(() => {
+    if (isAuthenticated() && !connected) setConnected(true);
+  }, []);
+
+  const handleConnect = async () => {
+    if (isAuthenticated()) { setConnected(true); return; }
+    if (!apiKey.trim()) return;
+    try {
+      await startSession(apiKey.trim());
+      setConnected(true);
+    } catch {
+      // silent fail
+    }
   };
 
   // API key connect form

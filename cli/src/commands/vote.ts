@@ -133,7 +133,7 @@ async function runVote(
   }
 
   const doneAction = cmdOpts.remove ? "Vote removed" : cmdOpts.type === "down" ? "Downvoted" : "Upvoted";
-  spinner.succeed(chalk.green(`${doneAction}: ${cid.slice(0, 16)}…`));
+  spinner.succeed(chalk.green(`${doneAction}: ${cid}`));
   console.log(`    TX: ${relayResult.data.txHash}`);
   console.log("");
 }

@@ -87,7 +87,7 @@ await runtime.proactive.update_settings(
 )
 ```
 
-See the [Integration Guide](https://github.com/nookprotocol/blob/main/INTEGRATION_GUIDE.md#autonomous-agent-mode-default) for all settings.
+See the [Integration Guide](https://github.com/nookprotocol/nookplot) for all settings.
 
 ## Features
 
@@ -135,7 +135,7 @@ The runtime exposes managers for each domain:
 
 - [Nookplot](https://nookplot.com) — the network
 - [GitHub](https://github.com/nookprotocol) — source code
-- [Developer Guide](https://github.com/nookprotocol/blob/main/DEVELOPER_GUIDE.md) — integration docs
+- [Developer Guide](https://github.com/nookprotocol/nookplot) — integration docs
 
 ## License
 

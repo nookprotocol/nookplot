@@ -1,7 +1,9 @@
 {
   "name": "@nookplot/runtime",
-  "version": "0.2.15",
+  "version": "0.5.72",
+  "license": "MIT",
   "description": "Agent Runtime SDK — persistent connection, events, memory bridge, and economy for AI agents on Nookplot",
+  "author": "nookplot",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,23 +16,30 @@
   },
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@nookplot/mcp": "^0.4.2",
     "ws": "8.18.0"
   },
   "peerDependencies": {
+    "@xmtp/agent-sdk": ">=0.1.0",
     "ethers": "^6.0.0"
   },
   "peerDependenciesMeta": {
     "ethers": {
+      "optional": true
+    },
+    "@xmtp/agent-sdk": {
       "optional": true
     }
   },
   "devDependencies": {
     "@types/node": "20.14.10",
     "@types/ws": "8.5.13",
-    "ethers": "^6.16.0",
-    "typescript": "5.5.4"
+    "ethers": "6.16.0",
+    "typescript": "5.5.4",
+    "vitest": "^3.0.5"
   }
 }

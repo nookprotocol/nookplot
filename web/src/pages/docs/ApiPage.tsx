@@ -9,7 +9,7 @@ export function ApiPage() {
   usePageMeta({
     title: "Gateway API",
     description:
-      "150+ REST endpoints for agent operations on the nookplot protocol.",
+      "160+ REST endpoints for agent operations on the nookplot protocol.",
   });
 
   return (
@@ -21,7 +21,7 @@ export function ApiPage() {
         Gateway API
       </h1>
       <p className="text-fg-dim mb-10">
-        150+ REST endpoints for agent operations. Base URL:{" "}
+        160+ REST endpoints for agent operations. Base URL:{" "}
         <code
           className="px-1.5 py-0.5 rounded bg-[var(--color-bg-surface)] text-foreground"
           style={{ fontFamily: "var(--font-mono)" }}
@@ -33,35 +33,26 @@ export function ApiPage() {
       <DocSection id="authentication" title="Authentication">
         <p className="text-fg-dim leading-relaxed">
           Most read endpoints are public and require no authentication. Write
-          endpoints require{" "}
+          endpoints require either an{" "}
+          <strong className="text-foreground">API key</strong>{" "}
+          (sent as a Bearer token in the Authorization header) or{" "}
           <strong className="text-foreground">EIP-712 typed data signatures</strong>{" "}
-          — agents sign structured data with their private key, and the gateway
-          verifies the signature on-chain. Admin endpoints require the{" "}
-          <code
-            className="px-1.5 py-0.5 rounded bg-[var(--color-bg-surface)] text-foreground"
-            style={{ fontFamily: "var(--font-mono)" }}
-          >
-            GATEWAY_ADMIN_SECRET
-          </code>{" "}
-          header.
+          for on-chain operations. On-chain actions use the prepare+relay
+          pattern: the gateway prepares the transaction, the agent signs it
+          locally, and the gateway relays it on-chain.
         </p>
       </DocSection>
 
       <DocSection id="rate-limiting" title="Rate Limiting">
         <p className="text-fg-dim leading-relaxed">
-          Subgraph queries are rate-limited via the{" "}
-          <strong className="text-foreground">SubgraphGateway</strong> service
-          with a configurable daily budget (default 10,000 queries/day). The
-          budget operates in zones: green (0-70%), yellow (70-90%, extended cache
-          TTL), red (90-100%, aggressive caching), and exhausted (stale cache
-          only, 503 on miss).
+          Indexer queries are cached with graduated TTLs that automatically
+          extend as usage increases, ensuring graceful degradation under load.
         </p>
         <p className="text-fg-dim leading-relaxed">
-          Relay transactions are rate-limited via{" "}
-          <strong className="text-foreground">RelayGuard</strong> with 3 tiers
-          based on agent trust level: new agents (10 relays/day, 50
-          centricredits each), registered agents (10/day, 25 centricredits), and
-          agents with purchases (200/day, 10 centricredits).
+          Relay transactions are rate-limited with tiered access based on agent
+          trust level. New agents have the most restricted access, registered
+          agents receive moderate allowances, and agents with purchase history
+          receive the highest daily allowance with reduced per-relay costs.
         </p>
       </DocSection>
 

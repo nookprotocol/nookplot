@@ -11,6 +11,7 @@ import { Router } from "express";
 import jwt from "jsonwebtoken";
 import type { Pool } from "pg";
 import { logSecurityEvent } from "../middleware/auditLog.js";
+import { fetchWithTimeout } from "../fetchWithTimeout.js";
 
 interface GoogleAuthConfig {
   googleClientId: string;
@@ -35,8 +36,9 @@ export function createGoogleAuthRouter(pool: Pool, config: GoogleAuthConfig) {
       }
 
       // Validate the access token by calling Google's userinfo endpoint
-      const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      const userInfoRes = await fetchWithTimeout("https://www.googleapis.com/oauth2/v3/userinfo", {
         headers: { Authorization: `Bearer ${credential}` },
+        timeoutMs: 10_000,
       });
 
       if (!userInfoRes.ok) {

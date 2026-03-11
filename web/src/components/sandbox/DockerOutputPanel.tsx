@@ -31,12 +31,12 @@ export function DockerOutputPanel() {
 
     const terminal = new Terminal({
       fontSize: 13,
-      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontFamily: "'IBM Plex Mono', 'SF Mono', ui-monospace, monospace",
       theme: {
-        background: "#0a0a0f",
-        foreground: "#e5e5e5",
-        cursor: "#0a0a0f", // hide cursor
-        selectionBackground: "#6366f140",
+        background: "#0E0F0E",
+        foreground: "#E8E6E1",
+        cursor: "#0E0F0E", // hide cursor
+        selectionBackground: "rgba(109, 184, 116, 0.25)",
       },
       cursorBlink: false,
       convertEol: true,
@@ -94,9 +94,9 @@ export function DockerOutputPanel() {
   return (
     <div className="flex h-full flex-col">
       {/* Status bar */}
-      <div className="flex h-6 shrink-0 items-center gap-2 border-b border-white/5 bg-gray-900/50 px-3">
+      <div className="flex h-6 shrink-0 items-center gap-2 border-b border-border bg-card/50 px-3">
         {/* Runtime badge */}
-        <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">
+        <span className="rounded bg-bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-dim">
           {selected.label}
         </span>
 
@@ -124,7 +124,7 @@ export function DockerOutputPanel() {
         {/* Clear */}
         <button
           onClick={handleClear}
-          className="rounded p-0.5 text-gray-500 hover:bg-white/5 hover:text-gray-300"
+          className="rounded p-0.5 text-muted hover:bg-accent-soft hover:text-fg-dim"
           title="Clear output"
         >
           <Trash2 className="h-3 w-3" />

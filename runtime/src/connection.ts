@@ -8,6 +8,9 @@
  */
 
 import WebSocket from "ws";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 import type {
   RuntimeConfig,
   ConnectionState,
@@ -18,6 +21,13 @@ import type {
   RuntimeEvent,
   EventHandler,
 } from "./types.js";
+
+/** Runtime SDK version, read from package.json at module load. */
+const __conn_filename = fileURLToPath(import.meta.url);
+const __conn_dirname = dirname(__conn_filename);
+const RUNTIME_VERSION: string = JSON.parse(
+  readFileSync(join(__conn_dirname, "..", "package.json"), "utf-8"),
+).version;
 
 /** Default reconnect settings. */
 const DEFAULT_RECONNECT = {
@@ -65,6 +75,10 @@ export class ConnectionManager {
   get address(): string | null { return this._address; }
   /** Agent private key for signing on-chain transactions (optional). */
   get privateKey(): string | null { return this.config.privateKey ?? null; }
+  /** Gateway base URL for direct API calls. */
+  get gatewayUrl(): string { return this.baseUrl; }
+  /** API key for authenticated gateway requests. */
+  get apiKey(): string { return this.config.apiKey; }
 
   // ============================================================
   //  HTTP Client
@@ -143,11 +157,25 @@ export class ConnectionManager {
     this.intentionalClose = false;
     this.reconnectAttempts = 0;
 
-    // 1. Register session via HTTP
-    const result = await this.request<ConnectResult>("POST", "/v1/runtime/connect");
+    // 1. Register session via HTTP (send client version for version exchange)
+    const result = await this.request<ConnectResult>("POST", "/v1/runtime/connect", {
+      clientVersion: RUNTIME_VERSION,
+      clientName: "@nookplot/runtime",
+    });
     this._sessionId = result.sessionId;
     this._agentId = result.agentId;
     this._address = result.address;
+
+    // Log any version notices from the gateway
+    if (result.notices?.length) {
+      for (const notice of result.notices) {
+        if (notice.severity === "warning") {
+          console.warn(`[nookplot-runtime] ${notice.message}`);
+        } else {
+          console.info(`[nookplot-runtime] ${notice.message}`);
+        }
+      }
+    }
 
     // 2. Get WS ticket
     const ticket = await this.request<{ ticket: string }>("POST", "/v1/ws/ticket");
@@ -329,7 +357,9 @@ export class ConnectionManager {
             const result = handler(event);
             // Swallow async errors from handlers — don't crash the connection
             if (result instanceof Promise) {
-              result.catch(() => {});
+              result.catch((err) => {
+                console.warn("[nookplot-runtime] event handler error:", err);
+              });
             }
           } catch {
             // Swallow sync errors from handlers
@@ -343,7 +373,11 @@ export class ConnectionManager {
         for (const handler of wildcardHandlers) {
           try {
             const result = handler(event);
-            if (result instanceof Promise) result.catch(() => {});
+            if (result instanceof Promise) {
+              result.catch((err) => {
+                console.warn("[nookplot-runtime] wildcard event handler error:", err);
+              });
+            }
           } catch {
             // Swallow
           }
@@ -394,7 +428,10 @@ export class ConnectionManager {
     this.reconnectTimer = setTimeout(async () => {
       try {
         // Re-establish the full connection
-        const result = await this.request<ConnectResult>("POST", "/v1/runtime/connect");
+        const result = await this.request<ConnectResult>("POST", "/v1/runtime/connect", {
+          clientVersion: RUNTIME_VERSION,
+          clientName: "@nookplot/runtime",
+        });
         this._sessionId = result.sessionId;
 
         const ticket = await this.request<{ ticket: string }>("POST", "/v1/ws/ticket");

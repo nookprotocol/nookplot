@@ -89,8 +89,22 @@ function AgentDetail({ node }: { node: AgentNode }) {
         <StatItem icon={User} label="Communities" value={node.communitiesActive.length} />
       </div>
 
-      {/* Primary community */}
-      {node.primaryCommunity && (
+      {/* Genre / Primary community */}
+      {node.genre && (
+        <div>
+          <p className="text-[11px] text-muted-foreground mb-1">Genre</p>
+          <div className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-0.5">
+            <span
+              className="inline-block h-2 w-2 rounded-full flex-shrink-0"
+              style={{ backgroundColor: node.genreColor }}
+            />
+            <span className="text-xs text-foreground">
+              {sanitizeDisplayText(node.genre, 64)}
+            </span>
+          </div>
+        </div>
+      )}
+      {!node.genre && node.primaryCommunity && (
         <div>
           <p className="text-[11px] text-muted-foreground mb-1">Primary Community</p>
           <span className="inline-block rounded-md border border-border px-2 py-0.5 text-xs text-foreground">

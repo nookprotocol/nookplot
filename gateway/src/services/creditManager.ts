@@ -36,6 +36,8 @@ export interface CreditManagerConfig {
   defaultInitialCredits: number;
   /** Per-agent daily spend cap in credits. */
   maxDailySpend: number;
+  /** Minimum balance floor (credits) for purchased agents. 0 = feature off. */
+  minBalance: number;
 }
 
 export interface CreditAccountInfo {
@@ -99,10 +101,10 @@ export class CreditManager {
       timestamp: new Date().toISOString(),
       data: {
         agentId,
-        balance: balanceAfter,
-        balanceDisplay: CreditManager.toDisplay(balanceAfter),
-        delta,
-        deltaDisplay: CreditManager.toDisplay(delta),
+        balance: CreditManager.toDisplay(balanceAfter),
+        balanceStored: balanceAfter,
+        delta: CreditManager.toDisplay(delta),
+        deltaStored: delta,
         reason,
         ...(referenceId ? { referenceId } : {}),
       },
@@ -127,10 +129,10 @@ export class CreditManager {
       data: {
         agentId,
         level,
-        balance,
-        balanceDisplay: CreditManager.toDisplay(balance),
-        threshold,
-        thresholdDisplay: CreditManager.toDisplay(threshold),
+        balance: CreditManager.toDisplay(balance),
+        balanceStored: balance,
+        threshold: CreditManager.toDisplay(threshold),
+        thresholdStored: threshold,
         suggestion,
       },
     });
@@ -158,8 +160,8 @@ export class CreditManager {
         metadata: {
           _type: "credits.budget_alert",
           level,
-          balance,
-          balanceDisplay: CreditManager.toDisplay(balance),
+          balance: CreditManager.toDisplay(balance),
+          balanceStored: balance,
           deepLink: "/economy#purchase",
         },
       })
@@ -171,15 +173,16 @@ export class CreditManager {
       });
   }
 
-  /** Convert centricredits (stored) to display credits (e.g. 100 → 1.00). */
-  static toDisplay(centricredits: number): number {
-    return Math.round(centricredits) / 100;
+  /** Convert stored credits to display credits (e.g. 100 → 1.00). */
+  static toDisplay(stored: number): number {
+    return Math.round(stored) / 100;
   }
 
-  /** Convert display credits to centricredits (e.g. 1.00 → 100). */
-  static toCentricredits(display: number): number {
+  /** Convert display credits to stored credits (e.g. 1.00 → 100). */
+  static toStored(display: number): number {
     return Math.round(display * 100);
   }
+
 
   constructor(pool: pg.Pool, config: CreditManagerConfig) {
     this.pool = pool;
@@ -246,28 +249,32 @@ export class CreditManager {
         balance_credits: string;
         lifetime_spent: string;
         lifetime_earned: string;
+        has_purchased: boolean;
         budget_low_threshold: string;
         budget_critical_threshold: string;
       }>(
-        `SELECT balance_credits, lifetime_spent, lifetime_earned, budget_low_threshold, budget_critical_threshold
+        `SELECT balance_credits, lifetime_spent, lifetime_earned, has_purchased, budget_low_threshold, budget_critical_threshold
          FROM credit_accounts WHERE agent_id = $1 FOR UPDATE`,
         [agentId],
       );
 
       // Check daily spend cap INSIDE the transaction to prevent TOCTOU race.
       // The row lock above serializes concurrent deductions for the same agent.
-      const { rows: dailyRows } = await client.query<{ total: string | null }>(
-        `SELECT COALESCE(SUM(ABS(amount_credits)), 0)::text AS total
-         FROM credit_transactions
-         WHERE agent_id = $1
-           AND amount_credits < 0
-           AND created_at > NOW() - INTERVAL '24 hours'`,
-        [agentId],
-      );
-      const dailySpent = Number(dailyRows[0]?.total ?? "0");
-      if (dailySpent + amount > this.config.maxDailySpend) {
-        await client.query("ROLLBACK");
-        throw new Error("DAILY_SPEND_LIMIT");
+      // When maxDailySpend is 0, the cap is unlimited — skip the check entirely.
+      if (this.config.maxDailySpend > 0) {
+        const { rows: dailyRows } = await client.query<{ total: string | null }>(
+          `SELECT COALESCE(SUM(ABS(amount_credits)), 0)::text AS total
+           FROM credit_transactions
+           WHERE agent_id = $1
+             AND amount_credits < 0
+             AND created_at > NOW() - INTERVAL '24 hours'`,
+          [agentId],
+        );
+        const dailySpent = Number(dailyRows[0]?.total ?? "0");
+        if (dailySpent + amount > this.config.maxDailySpend) {
+          await client.query("ROLLBACK");
+          throw new Error("DAILY_SPEND_LIMIT");
+        }
       }
 
       if (rows.length === 0) {
@@ -275,7 +282,9 @@ export class CreditManager {
       }
 
       const currentBalance = Number(rows[0].balance_credits);
-      if (currentBalance < amount) {
+      const hasPurchased = rows[0].has_purchased === true;
+      const floor = hasPurchased ? -this.config.minBalance : 0;
+      if (currentBalance - amount < floor) {
         await client.query("ROLLBACK");
         throw new Error("INSUFFICIENT_CREDITS");
       }
@@ -285,7 +294,7 @@ export class CreditManager {
       const lifetimeEarned = Number(rows[0].lifetime_earned);
 
       // Compute status
-      const status = this.computeStatus(newBalance, lifetimeEarned);
+      const status = this.computeStatus(newBalance, lifetimeEarned, hasPurchased);
 
       await client.query(
         `UPDATE credit_accounts
@@ -325,7 +334,9 @@ export class CreditManager {
 
       return { balanceAfter: newBalance };
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
+      await client.query("ROLLBACK").catch((err) => {
+        logSecurityEvent("debug", "credit-deduct-rollback-failed", { error: (err as Error).message });
+      });
       throw error;
     } finally {
       client.release();
@@ -349,8 +360,8 @@ export class CreditManager {
     try {
       await client.query("BEGIN");
 
-      const { rows } = await client.query<{ balance_credits: string; lifetime_earned: string }>(
-        `SELECT balance_credits, lifetime_earned
+      const { rows } = await client.query<{ balance_credits: string; lifetime_earned: string; has_purchased: boolean }>(
+        `SELECT balance_credits, lifetime_earned, has_purchased
          FROM credit_accounts WHERE agent_id = $1 FOR UPDATE`,
         [agentId],
       );
@@ -359,9 +370,10 @@ export class CreditManager {
         throw new Error("ACCOUNT_NOT_FOUND");
       }
 
+      const hasPurchased = rows[0].has_purchased === true;
       const newBalance = Number(rows[0].balance_credits) + amount;
       const newLifetimeEarned = Number(rows[0].lifetime_earned) + amount;
-      const status = this.computeStatus(newBalance, newLifetimeEarned);
+      const status = this.computeStatus(newBalance, newLifetimeEarned, hasPurchased);
 
       await client.query(
         `UPDATE credit_accounts
@@ -383,7 +395,9 @@ export class CreditManager {
 
       return { balanceAfter: newBalance };
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
+      await client.query("ROLLBACK").catch((err) => {
+        logSecurityEvent("debug", "credit-add-rollback-failed", { error: (err as Error).message });
+      });
       throw error;
     } finally {
       client.release();
@@ -469,7 +483,9 @@ export class CreditManager {
         parentBalanceAfter: newParentBalance,
       });
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
+      await client.query("ROLLBACK").catch((err) => {
+        logSecurityEvent("debug", "credit-split-rollback-failed", { error: (err as Error).message });
+      });
       throw error;
     } finally {
       client.release();
@@ -679,8 +695,10 @@ export class CreditManager {
   //  Private helpers
   // -------------------------------------------------------
 
-  private computeStatus(balance: number, lifetimeEarned: number): string {
-    if (balance <= 0) return "paused";
+  private computeStatus(balance: number, lifetimeEarned: number, hasPurchased: boolean = false): string {
+    const floor = hasPurchased ? -this.config.minBalance : 0;
+    if (balance <= floor) return "paused";
+    if (balance < 0) return "low_power";
     if (lifetimeEarned > 0 && balance <= lifetimeEarned * 0.05) return "low_power";
     return "active";
   }

@@ -74,6 +74,7 @@ export interface FileCommitResult {
   linesAdded: number;
   linesRemoved: number;
   reviewStatus: string;
+  parentCommitId: string | null;
   createdAt: string;
 }
 
@@ -91,6 +92,17 @@ export interface FileCommit {
   approvals: number;
   rejections: number;
   source: string;
+  parentCommitId: string | null;
+  createdAt: string;
+}
+
+export interface ProjectNote {
+  id: string;
+  projectId: string;
+  authorAddress: string | null;
+  authorName: string | null;
+  text: string;
+  commitRef: string | null;
   createdAt: string;
 }
 
@@ -128,15 +140,64 @@ export interface ProjectActivityEvent {
   createdAt: string;
 }
 
+export interface ForkResult {
+  projectId: string;
+  name: string;
+  forkedFrom: string;
+  filesCount: number;
+  initialCommitId: string;
+}
+
+export interface MergeRequestRecord {
+  id: string;
+  sourceProjectId: string;
+  sourceProjectName: string | null;
+  targetProjectId: string;
+  targetProjectName: string | null;
+  authorAddress: string | null;
+  authorName: string | null;
+  title: string;
+  description: string | null;
+  commitIds: string[];
+  status: string;
+  reviewerAddress: string | null;
+  reviewerName: string | null;
+  reviewComment: string | null;
+  mergedCommitId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MergeRequestDetailRecord extends MergeRequestRecord {
+  commits: FileCommit[];
+  fileDiffs: FileCommitChange[];
+}
+
 // ============================================================
 //  FileManager
 // ============================================================
 
+export interface LinkedTask {
+  taskId: string;
+  milestoneId: string | null;
+  title: string;
+}
+
 export class FileManager {
+  /** Tasks auto-linked by the last commitFiles() call. Consumed by the route handler for signal emission. */
+  _lastLinkedTasks: LinkedTask[] | null = null;
+
   constructor(
     private readonly pool: pg.Pool,
     private readonly githubClient: GitHubClient,
   ) {}
+
+  /** Consume and clear the linked tasks from the last commit. */
+  consumeLinkedTasks(): LinkedTask[] {
+    const tasks = this._lastLinkedTasks ?? [];
+    this._lastLinkedTasks = null;
+    return tasks;
+  }
 
   // ------------------------------------------------------------------
   //  Helpers
@@ -249,6 +310,7 @@ export class FileManager {
     message: string,
     agentId: string,
     agentAddress: string,
+    parentCommitId?: string | null,
   ): Promise<FileCommitResult> {
     if (files.length === 0) throw new Error("No files to commit.");
     if (files.length > MAX_FILES_PER_COMMIT) {
@@ -363,10 +425,10 @@ export class FileManager {
 
       // Insert commit record
       const commitResult = await client.query(
-        `INSERT INTO file_commits (project_id, author_id, author_address, message, files_changed, lines_added, lines_removed, languages, source)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'gateway')
+        `INSERT INTO file_commits (project_id, author_id, author_address, message, files_changed, lines_added, lines_removed, languages, source, parent_commit_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'gateway', $9)
          RETURNING id, created_at`,
-        [projectId, agentId, agentAddress, message, files.length, totalAdded, totalRemoved, Array.from(detectedLangs)],
+        [projectId, agentId, agentAddress, message, files.length, totalAdded, totalRemoved, Array.from(detectedLangs), parentCommitId ?? null],
       );
       const commitId = commitResult.rows[0].id;
       const createdAt = commitResult.rows[0].created_at;
@@ -408,6 +470,38 @@ export class FileManager {
         linesAdded: totalAdded, linesRemoved: totalRemoved,
       });
 
+      // Task-commit auto-linking: parse "closes #<uuid-prefix>" or "fixes #<uuid-prefix>"
+      // This runs outside the transaction so failures don't break commits.
+      try {
+        const taskRefs = message.match(/(?:closes|fixes)\s+#([a-f0-9-]{4,36})/gi);
+        if (taskRefs) {
+          for (const ref of taskRefs) {
+            const prefix = ref.replace(/^(?:closes|fixes)\s+#/i, "");
+            // Match tasks whose UUID starts with this prefix
+            const { rows: taskRows } = await this.pool.query(
+              `SELECT id, milestone_id, title FROM project_tasks
+               WHERE project_id = $1 AND CAST(id AS TEXT) LIKE $2 AND status != 'completed'
+               LIMIT 1`,
+              [projectId, `${prefix}%`],
+            );
+            if (taskRows.length > 0) {
+              await this.pool.query(
+                `UPDATE project_tasks SET status = 'completed', linked_commit_id = $1, completed_at = NOW(), updated_at = NOW()
+                 WHERE id = $2`,
+                [commitId, taskRows[0].id],
+              );
+              // Store linked task info for the caller to use for signal emission
+              if (!this._lastLinkedTasks) this._lastLinkedTasks = [];
+              this._lastLinkedTasks.push({
+                taskId: taskRows[0].id,
+                milestoneId: taskRows[0].milestone_id,
+                title: taskRows[0].title,
+              });
+            }
+          }
+        }
+      } catch { /* non-fatal — don't break the commit response */ }
+
       return {
         commitId,
         message,
@@ -415,6 +509,7 @@ export class FileManager {
         linesAdded: totalAdded,
         linesRemoved: totalRemoved,
         reviewStatus: "pending_review",
+        parentCommitId: parentCommitId ?? null,
         createdAt: createdAt?.toISOString() ?? new Date().toISOString(),
       };
     } catch (err) {
@@ -450,7 +545,8 @@ export class FileManager {
     const { rows } = await this.pool.query(
       `SELECT fc.id, fc.project_id, fc.author_address, fc.message,
               fc.files_changed, fc.lines_added, fc.lines_removed,
-              fc.review_status, fc.approvals, fc.rejections, fc.source, fc.created_at,
+              fc.review_status, fc.approvals, fc.rejections, fc.source,
+              fc.parent_commit_id, fc.created_at,
               a.display_name AS author_name
        FROM file_commits fc
        LEFT JOIN agents a ON a.id = fc.author_id
@@ -473,6 +569,7 @@ export class FileManager {
       approvals: r.approvals,
       rejections: r.rejections,
       source: r.source,
+      parentCommitId: r.parent_commit_id ?? null,
       createdAt: r.created_at?.toISOString() ?? new Date().toISOString(),
     }));
   }
@@ -482,7 +579,8 @@ export class FileManager {
     const { rows: commitRows } = await this.pool.query(
       `SELECT fc.id, fc.project_id, fc.author_address, fc.message,
               fc.files_changed, fc.lines_added, fc.lines_removed,
-              fc.review_status, fc.approvals, fc.rejections, fc.source, fc.created_at,
+              fc.review_status, fc.approvals, fc.rejections, fc.source,
+              fc.parent_commit_id, fc.created_at,
               a.display_name AS author_name
        FROM file_commits fc
        LEFT JOIN agents a ON a.id = fc.author_id
@@ -526,6 +624,7 @@ export class FileManager {
       approvals: c.approvals,
       rejections: c.rejections,
       source: c.source,
+      parentCommitId: c.parent_commit_id ?? null,
       createdAt: c.created_at?.toISOString() ?? new Date().toISOString(),
       changes: changeRows.map((r) => ({
         filePath: r.file_path,
@@ -819,5 +918,923 @@ export class FileManager {
       url: result.url,
       filesExported: commitFiles.length,
     };
+  }
+
+  // ------------------------------------------------------------------
+  //  Fork & Merge Requests
+  // ------------------------------------------------------------------
+
+  /**
+   * Fork a project — copies all files into a new project with fork lineage.
+   * The caller must be a registered agent. The new project is created off-chain
+   * (no prepare/relay required).
+   */
+  async forkProject(
+    sourceProjectId: string,
+    agentId: string,
+    agentAddress: string,
+    opts?: { name?: string; projectSlug?: string },
+  ): Promise<ForkResult> {
+    // 1. Load source project — try exact slug, then case-insensitive, then UUID
+    let { rows: srcRows } = await this.pool.query(
+      `SELECT id, project_id, name, description, languages, tags, license
+       FROM projects WHERE project_id = $1 AND status = 'active'`,
+      [sourceProjectId],
+    );
+    if (srcRows.length === 0) {
+      // Fallback: case-insensitive slug match
+      ({ rows: srcRows } = await this.pool.query(
+        `SELECT id, project_id, name, description, languages, tags, license
+         FROM projects WHERE LOWER(project_id) = LOWER($1) AND status = 'active'`,
+        [sourceProjectId],
+      ));
+    }
+    if (srcRows.length === 0) {
+      // Fallback: UUID lookup (agents sometimes pass the internal id)
+      ({ rows: srcRows } = await this.pool.query(
+        `SELECT id, project_id, name, description, languages, tags, license
+         FROM projects WHERE id::text = $1 AND status = 'active'`,
+        [sourceProjectId],
+      ));
+    }
+    if (srcRows.length === 0) throw new Error(`Source project not found: "${sourceProjectId}". Use the project slug (lowercase-with-hyphens), not the display name or UUID.`);
+    const src = srcRows[0];
+
+    // 2. Generate fork slug
+    const randomSuffix = Math.random().toString(36).slice(2, 10);
+    const forkSlug = opts?.projectSlug ?? `${src.project_id}-fork-${randomSuffix}`;
+    const forkName = opts?.name ?? `Fork of ${src.name}`;
+
+    // 3. Check slug uniqueness
+    const { rows: existing } = await this.pool.query(
+      `SELECT 1 FROM projects WHERE project_id = $1`, [forkSlug],
+    );
+    if (existing.length > 0) throw new Error(`Project slug "${forkSlug}" already exists.`);
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 4. Create new project row with fork lineage
+      if (!forkSlug) throw new Error(`Fork slug is null/undefined (source=${src.project_id})`);
+      const { rows: newProj } = await client.query(
+        `INSERT INTO projects (project_id, agent_id, name, description, languages, tags, license, forked_from, status, source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', 'manual')
+         RETURNING id, created_at`,
+        [forkSlug, agentId, forkName, src.description, src.languages, src.tags, src.license, src.id],
+      );
+      const forkInternalId = newProj[0].id;
+
+      // 5. Copy all files from source (in-DB copy, no app-layer transfer)
+      const { rowCount: filesCopied } = await client.query(
+        `INSERT INTO project_files (project_id, file_path, content, size_bytes, language, sha256, created_by, updated_by)
+         SELECT $1, file_path, content, size_bytes, language, sha256, $2, $2
+         FROM project_files WHERE project_id = $3`,
+        [forkSlug, agentId, sourceProjectId],
+      );
+
+      // 6. Increment fork_count on source
+      await client.query(
+        `UPDATE projects SET fork_count = fork_count + 1 WHERE id = $1`,
+        [src.id],
+      );
+
+      // 7. Create initial commit
+      const { rows: commitRows } = await client.query(
+        `INSERT INTO file_commits (project_id, author_id, author_address, message, files_changed, lines_added, lines_removed, languages, source)
+         VALUES ($1, $2, $3, $4, $5, 0, 0, $6, 'gateway')
+         RETURNING id`,
+        [forkSlug, agentId, agentAddress, `Initial fork from ${src.name}`, filesCopied ?? 0, src.languages ?? []],
+      );
+      const initialCommitId = commitRows[0].id;
+
+      // 8. Activity events on both source and fork
+      const srcName = src.name;
+      await client.query(
+        `INSERT INTO project_activity (project_id, project_name, event_type, actor_id, actor_address, metadata)
+         VALUES ($1, $2, 'project_forked', $3, $4, $5)`,
+        [sourceProjectId, srcName, agentId, agentAddress, JSON.stringify({
+          forkProjectId: forkSlug, forkName, filesCopied: filesCopied ?? 0,
+        })],
+      );
+      await client.query(
+        `INSERT INTO project_activity (project_id, project_name, event_type, actor_id, actor_address, metadata)
+         VALUES ($1, $2, 'project_created', $3, $4, $5)`,
+        [forkSlug, forkName, agentId, agentAddress, JSON.stringify({
+          forkedFrom: sourceProjectId, sourceName: srcName, filesCopied: filesCopied ?? 0,
+        })],
+      );
+
+      // 9. Insert commit_log for contribution scoring
+      await client.query(
+        `INSERT INTO commit_log (agent_id, project_id, source, files_changed, lines_added, lines_removed, languages, frameworks, success)
+         VALUES ($1, $2, 'gateway', $3, 0, 0, $4, '{}', true)`,
+        [agentId, forkSlug, filesCopied ?? 0, src.languages ?? []],
+      );
+
+      await client.query("COMMIT");
+
+      logSecurityEvent("info", "project-forked", {
+        agentId, sourceProjectId, forkSlug, filesCopied: filesCopied ?? 0,
+      });
+
+      return {
+        projectId: forkSlug,
+        name: forkName,
+        forkedFrom: sourceProjectId,
+        filesCount: filesCopied ?? 0,
+        initialCommitId,
+      };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Create a merge request from a fork back to its parent project.
+   */
+  async createMergeRequest(
+    sourceProjectId: string,
+    authorId: string,
+    title: string,
+    description: string | null,
+    commitIds: string[],
+  ): Promise<MergeRequestRecord> {
+    if (!title || title.length > 500) throw new Error("Title is required (max 500 chars).");
+    if (!commitIds || commitIds.length === 0) throw new Error("At least one commit ID is required.");
+
+    // 1. Verify source is a fork and find the target (with case-insensitive + UUID fallback)
+    const mrProjectQuery = `SELECT p.id, p.project_id, p.name, p.forked_from,
+              parent.project_id AS target_slug, parent.name AS target_name
+       FROM projects p
+       LEFT JOIN projects parent ON parent.id = p.forked_from`;
+    let { rows: srcRows } = await this.pool.query(
+      `${mrProjectQuery} WHERE p.project_id = $1 AND p.status = 'active'`,
+      [sourceProjectId],
+    );
+    if (srcRows.length === 0) {
+      ({ rows: srcRows } = await this.pool.query(
+        `${mrProjectQuery} WHERE LOWER(p.project_id) = LOWER($1) AND p.status = 'active'`,
+        [sourceProjectId],
+      ));
+    }
+    if (srcRows.length === 0) {
+      ({ rows: srcRows } = await this.pool.query(
+        `${mrProjectQuery} WHERE p.id::text = $1 AND p.status = 'active'`,
+        [sourceProjectId],
+      ));
+    }
+    if (srcRows.length === 0) throw new Error(`Source project not found: "${sourceProjectId}". Use the project slug (lowercase-with-hyphens).`);
+    const src = srcRows[0];
+    if (!src.forked_from) throw new Error("Only forked projects can create merge requests.");
+    if (!src.target_slug) throw new Error("Parent project not found (may have been deleted).");
+
+    // 2. Verify all commits belong to the source project
+    const { rows: validCommits } = await this.pool.query(
+      `SELECT id FROM file_commits WHERE project_id = $1 AND id = ANY($2::uuid[])`,
+      [sourceProjectId, commitIds],
+    );
+    if (validCommits.length !== commitIds.length) {
+      throw new Error(`Some commit IDs don't belong to project "${sourceProjectId}".`);
+    }
+
+    // 3. Check no open MR with the same commits already exists
+    const { rows: existingMRs } = await this.pool.query(
+      `SELECT id FROM merge_requests
+       WHERE source_project_id = $1 AND target_project_id = $2 AND status = 'open'
+       LIMIT 1`,
+      [src.id, src.forked_from],
+    );
+    if (existingMRs.length > 0) {
+      throw new Error("An open merge request already exists for this fork. Close it first.");
+    }
+
+    // 4. Insert merge request
+    const { rows: mrRows } = await this.pool.query(
+      `INSERT INTO merge_requests (source_project_id, target_project_id, author_id, title, description, commit_ids)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, created_at, updated_at`,
+      [src.id, src.forked_from, authorId, title, description, commitIds],
+    );
+    const mr = mrRows[0];
+
+    // 5. Activity event on target project
+    const { rows: authorRows } = await this.pool.query(
+      `SELECT address, display_name FROM agents WHERE id = $1`, [authorId],
+    );
+    const authorAddress = authorRows[0]?.address ?? null;
+    const authorName = authorRows[0]?.display_name ?? null;
+
+    await this.pool.query(
+      `INSERT INTO project_activity (project_id, project_name, event_type, actor_id, actor_address, metadata)
+       VALUES ($1, $2, 'merge_request_created', $3, $4, $5)`,
+      [src.target_slug, src.target_name, authorId, authorAddress, JSON.stringify({
+        mrId: mr.id, title, sourceProject: sourceProjectId, commitCount: commitIds.length,
+      })],
+    );
+
+    logSecurityEvent("info", "merge-request-created", {
+      mrId: mr.id, sourceProjectId, targetProjectId: src.target_slug, authorId, commitCount: commitIds.length,
+    });
+
+    return {
+      id: mr.id,
+      sourceProjectId: sourceProjectId,
+      sourceProjectName: src.name,
+      targetProjectId: src.target_slug,
+      targetProjectName: src.target_name,
+      authorAddress,
+      authorName,
+      title,
+      description,
+      commitIds,
+      status: "open",
+      reviewerAddress: null,
+      reviewerName: null,
+      reviewComment: null,
+      mergedCommitId: null,
+      createdAt: mr.created_at?.toISOString() ?? new Date().toISOString(),
+      updatedAt: mr.updated_at?.toISOString() ?? new Date().toISOString(),
+    };
+  }
+
+  /**
+   * List merge requests targeting a project.
+   */
+  async listMergeRequests(
+    targetProjectId: string,
+    status?: string,
+    limit = 20,
+    offset = 0,
+  ): Promise<{ mergeRequests: MergeRequestRecord[]; total: number }> {
+    // Resolve target project internal ID
+    const { rows: projRows } = await this.pool.query(
+      `SELECT id FROM projects WHERE project_id = $1`, [targetProjectId],
+    );
+    if (projRows.length === 0) throw new Error("Project not found.");
+    const targetId = projRows[0].id;
+
+    const conditions = ["mr.target_project_id = $1"];
+    const params: unknown[] = [targetId];
+    let paramIdx = 2;
+
+    if (status && ["open", "merged", "closed"].includes(status)) {
+      conditions.push(`mr.status = $${paramIdx}`);
+      params.push(status);
+      paramIdx++;
+    }
+
+    const where = conditions.join(" AND ");
+    const countResult = await this.pool.query(
+      `SELECT COUNT(*)::int AS total FROM merge_requests mr WHERE ${where}`,
+      params,
+    );
+    const total = countResult.rows[0].total;
+
+    params.push(Math.min(limit, 100));
+    params.push(Math.max(offset, 0));
+
+    const { rows } = await this.pool.query(
+      `SELECT mr.id, mr.title, mr.description, mr.commit_ids, mr.status,
+              mr.review_comment, mr.merged_commit_id, mr.created_at, mr.updated_at,
+              sp.project_id AS source_slug, sp.name AS source_name,
+              tp.project_id AS target_slug, tp.name AS target_name,
+              aa.address AS author_address, aa.display_name AS author_name,
+              ra.address AS reviewer_address, ra.display_name AS reviewer_name
+       FROM merge_requests mr
+       JOIN projects sp ON sp.id = mr.source_project_id
+       JOIN projects tp ON tp.id = mr.target_project_id
+       LEFT JOIN agents aa ON aa.id = mr.author_id
+       LEFT JOIN agents ra ON ra.id = mr.reviewer_id
+       WHERE ${where}
+       ORDER BY mr.created_at DESC
+       LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+      params,
+    );
+
+    return {
+      mergeRequests: rows.map((r) => ({
+        id: r.id,
+        sourceProjectId: r.source_slug,
+        sourceProjectName: r.source_name,
+        targetProjectId: r.target_slug,
+        targetProjectName: r.target_name,
+        authorAddress: r.author_address,
+        authorName: r.author_name ?? null,
+        title: r.title,
+        description: r.description,
+        commitIds: r.commit_ids ?? [],
+        status: r.status,
+        reviewerAddress: r.reviewer_address ?? null,
+        reviewerName: r.reviewer_name ?? null,
+        reviewComment: r.review_comment,
+        mergedCommitId: r.merged_commit_id,
+        createdAt: r.created_at?.toISOString() ?? new Date().toISOString(),
+        updatedAt: r.updated_at?.toISOString() ?? new Date().toISOString(),
+      })),
+      total,
+    };
+  }
+
+  /**
+   * Get detailed merge request with commit diffs.
+   */
+  async getMergeRequestDetail(mrId: string): Promise<MergeRequestDetailRecord | null> {
+    const { rows: mrRows } = await this.pool.query(
+      `SELECT mr.id, mr.title, mr.description, mr.commit_ids, mr.status,
+              mr.review_comment, mr.merged_commit_id, mr.created_at, mr.updated_at,
+              sp.project_id AS source_slug, sp.name AS source_name,
+              tp.project_id AS target_slug, tp.name AS target_name,
+              aa.address AS author_address, aa.display_name AS author_name,
+              ra.address AS reviewer_address, ra.display_name AS reviewer_name
+       FROM merge_requests mr
+       JOIN projects sp ON sp.id = mr.source_project_id
+       JOIN projects tp ON tp.id = mr.target_project_id
+       LEFT JOIN agents aa ON aa.id = mr.author_id
+       LEFT JOIN agents ra ON ra.id = mr.reviewer_id
+       WHERE mr.id = $1`,
+      [mrId],
+    );
+    if (mrRows.length === 0) return null;
+    const r = mrRows[0];
+
+    // Fetch commit details for each commit in the MR
+    const commits: FileCommit[] = [];
+    const allChanges: FileCommitChange[] = [];
+
+    if (r.commit_ids && r.commit_ids.length > 0) {
+      const { rows: commitRows } = await this.pool.query(
+        `SELECT fc.id, fc.project_id, fc.author_address, fc.message,
+                fc.files_changed, fc.lines_added, fc.lines_removed,
+                fc.review_status, fc.approvals, fc.rejections, fc.source,
+                fc.parent_commit_id, fc.created_at,
+                a.display_name AS author_name
+         FROM file_commits fc
+         LEFT JOIN agents a ON a.id = fc.author_id
+         WHERE fc.id = ANY($1::uuid[])
+         ORDER BY fc.created_at ASC`,
+        [r.commit_ids],
+      );
+      for (const c of commitRows) {
+        commits.push({
+          id: c.id,
+          commitId: c.id,
+          projectId: c.project_id,
+          authorAddress: c.author_address,
+          authorName: c.author_name ?? null,
+          message: c.message,
+          filesChanged: c.files_changed,
+          linesAdded: c.lines_added,
+          linesRemoved: c.lines_removed,
+          reviewStatus: c.review_status,
+          approvals: c.approvals,
+          rejections: c.rejections,
+          source: c.source,
+          parentCommitId: c.parent_commit_id ?? null,
+          createdAt: c.created_at?.toISOString() ?? new Date().toISOString(),
+        });
+      }
+
+      // Fetch all file changes across all commits
+      const { rows: changeRows } = await this.pool.query(
+        `SELECT fcc.commit_id, fcc.file_path, fcc.change_type, fcc.lines_added, fcc.lines_removed,
+                fcc.old_content, fcc.new_content
+         FROM file_commit_changes fcc
+         WHERE fcc.commit_id = ANY($1::uuid[])
+         ORDER BY fcc.file_path ASC`,
+        [r.commit_ids],
+      );
+      for (const ch of changeRows) {
+        allChanges.push({
+          filePath: ch.file_path,
+          changeType: ch.change_type,
+          linesAdded: ch.lines_added,
+          linesRemoved: ch.lines_removed,
+          oldContent: ch.old_content,
+          newContent: ch.new_content,
+        });
+      }
+    }
+
+    return {
+      id: r.id,
+      sourceProjectId: r.source_slug,
+      sourceProjectName: r.source_name,
+      targetProjectId: r.target_slug,
+      targetProjectName: r.target_name,
+      authorAddress: r.author_address,
+      authorName: r.author_name ?? null,
+      title: r.title,
+      description: r.description,
+      commitIds: r.commit_ids ?? [],
+      status: r.status,
+      reviewerAddress: r.reviewer_address ?? null,
+      reviewerName: r.reviewer_name ?? null,
+      reviewComment: r.review_comment,
+      mergedCommitId: r.merged_commit_id,
+      createdAt: r.created_at?.toISOString() ?? new Date().toISOString(),
+      updatedAt: r.updated_at?.toISOString() ?? new Date().toISOString(),
+      commits,
+      fileDiffs: allChanges,
+    };
+  }
+
+  /**
+   * Execute a merge — apply fork commits to the parent project as a single merge commit.
+   * Only callable by target project owner or admin.
+   */
+  async executeMerge(
+    mrId: string,
+    reviewerId: string,
+    reviewerAddress: string,
+    reviewComment?: string,
+  ): Promise<FileCommitResult & { mergeRequestId: string }> {
+    // 1. Load MR and verify status
+    const { rows: mrRows } = await this.pool.query(
+      `SELECT mr.*, tp.project_id AS target_slug, tp.name AS target_name,
+              sp.project_id AS source_slug
+       FROM merge_requests mr
+       JOIN projects tp ON tp.id = mr.target_project_id
+       JOIN projects sp ON sp.id = mr.source_project_id
+       WHERE mr.id = $1`,
+      [mrId],
+    );
+    if (mrRows.length === 0) throw new Error("Merge request not found.");
+    const mr = mrRows[0];
+    if (mr.status !== "open") throw new Error(`Merge request is already ${mr.status}.`);
+
+    // 2. Verify reviewer has admin/owner access on target project
+    const access = await this.getAccessLevel(mr.target_slug, reviewerId);
+    if (access < 2 && access !== 3) {
+      throw new Error("Only project owners or admins can merge.");
+    }
+
+    // 3. Collect file changes from all commits in order (oldest first)
+    const commitIds: string[] = mr.commit_ids ?? [];
+    if (commitIds.length === 0) throw new Error("Merge request has no commits.");
+
+    // Build final file state: last-write-wins for each file path
+    const finalFiles = new Map<string, { content: string | null; changeType: string }>();
+
+    for (const cid of commitIds) {
+      const { rows: changes } = await this.pool.query(
+        `SELECT file_path, change_type, new_content
+         FROM file_commit_changes WHERE commit_id = $1
+         ORDER BY file_path ASC`,
+        [cid],
+      );
+      for (const ch of changes) {
+        if (ch.change_type === "delete") {
+          finalFiles.set(ch.file_path, { content: null, changeType: "delete" });
+        } else {
+          finalFiles.set(ch.file_path, { content: ch.new_content, changeType: ch.change_type });
+        }
+      }
+    }
+
+    if (finalFiles.size === 0) throw new Error("No file changes found in the merge request commits.");
+
+    // 4. Apply as single merge commit on target via commitFiles
+    const filesToCommit: CommitFileInput[] = [];
+    for (const [path, { content }] of finalFiles) {
+      filesToCommit.push({ path, content });
+    }
+
+    const { rows: authorRows } = await this.pool.query(
+      `SELECT aa.display_name AS author_name FROM agents aa WHERE aa.id = $1`, [mr.author_id],
+    );
+    const authorName = authorRows[0]?.author_name ?? "unknown";
+
+    const mergeMessage = `Merge: ${mr.title} (from ${mr.source_slug} by ${authorName})`;
+    const mergeResult = await this.commitFiles(
+      mr.target_slug, filesToCommit, mergeMessage, reviewerId, reviewerAddress,
+    );
+
+    // 5. Update MR status
+    await this.pool.query(
+      `UPDATE merge_requests
+       SET status = 'merged', reviewer_id = $1, review_comment = $2,
+           merged_commit_id = $3, updated_at = NOW()
+       WHERE id = $4`,
+      [reviewerId, reviewComment ?? null, mergeResult.commitId, mrId],
+    );
+
+    // 6. Activity event
+    await this.pool.query(
+      `INSERT INTO project_activity (project_id, project_name, event_type, actor_id, actor_address, metadata)
+       VALUES ($1, $2, 'merge_request_merged', $3, $4, $5)`,
+      [mr.target_slug, mr.target_name, reviewerId, reviewerAddress, JSON.stringify({
+        mrId, title: mr.title, sourceProject: mr.source_slug,
+        mergedCommitId: mergeResult.commitId, filesChanged: mergeResult.filesChanged,
+      })],
+    );
+
+    logSecurityEvent("info", "merge-request-merged", {
+      mrId, targetProject: mr.target_slug, reviewerId, filesChanged: mergeResult.filesChanged,
+    });
+
+    return { ...mergeResult, mergeRequestId: mrId };
+  }
+
+  /**
+   * Close a merge request without merging.
+   * Callable by MR author or target project owner/admin.
+   */
+  async closeMergeRequest(
+    mrId: string,
+    closerId: string,
+    comment?: string,
+  ): Promise<MergeRequestRecord> {
+    // 1. Load MR
+    const { rows: mrRows } = await this.pool.query(
+      `SELECT mr.*, tp.project_id AS target_slug, tp.name AS target_name,
+              sp.project_id AS source_slug, sp.name AS source_name
+       FROM merge_requests mr
+       JOIN projects tp ON tp.id = mr.target_project_id
+       JOIN projects sp ON sp.id = mr.source_project_id
+       WHERE mr.id = $1`,
+      [mrId],
+    );
+    if (mrRows.length === 0) throw new Error("Merge request not found.");
+    const mr = mrRows[0];
+    if (mr.status !== "open") throw new Error(`Merge request is already ${mr.status}.`);
+
+    // 2. Verify closer is MR author or has admin/owner on target
+    const isAuthor = mr.author_id === closerId;
+    const access = await this.getAccessLevel(mr.target_slug, closerId);
+    if (!isAuthor && access < 2 && access !== 3) {
+      throw new Error("Only the MR author or target project owner/admin can close.");
+    }
+
+    // 3. Update status
+    const { rows: closerRows } = await this.pool.query(
+      `SELECT address, display_name FROM agents WHERE id = $1`, [closerId],
+    );
+    const closerAddress = closerRows[0]?.address ?? null;
+
+    await this.pool.query(
+      `UPDATE merge_requests
+       SET status = 'closed', reviewer_id = $1, review_comment = $2, updated_at = NOW()
+       WHERE id = $3`,
+      [closerId, comment ?? null, mrId],
+    );
+
+    // 4. Activity event
+    await this.pool.query(
+      `INSERT INTO project_activity (project_id, project_name, event_type, actor_id, actor_address, metadata)
+       VALUES ($1, $2, 'merge_request_closed', $3, $4, $5)`,
+      [mr.target_slug, mr.target_name, closerId, closerAddress, JSON.stringify({
+        mrId, title: mr.title, sourceProject: mr.source_slug,
+      })],
+    );
+
+    return {
+      id: mr.id,
+      sourceProjectId: mr.source_slug,
+      sourceProjectName: mr.source_name,
+      targetProjectId: mr.target_slug,
+      targetProjectName: mr.target_name,
+      authorAddress: null, // not fetched here, optional
+      authorName: null,
+      title: mr.title,
+      description: mr.description,
+      commitIds: mr.commit_ids ?? [],
+      status: "closed",
+      reviewerAddress: closerRows[0]?.address ?? null,
+      reviewerName: closerRows[0]?.display_name ?? null,
+      reviewComment: comment ?? null,
+      mergedCommitId: null,
+      createdAt: mr.created_at?.toISOString() ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  // ------------------------------------------------------------------
+  //  Collaboration Mode
+  // ------------------------------------------------------------------
+
+  /**
+   * Get the collaboration mode for a project.
+   * Returns 'standard' (fork-based) or 'open' (any agent can commit).
+   */
+  async getCollaborationMode(projectId: string): Promise<string> {
+    const { rows } = await this.pool.query(
+      `SELECT collaboration_mode FROM projects WHERE project_id = $1 AND status = 'active'`,
+      [projectId],
+    );
+    return rows[0]?.collaboration_mode ?? "standard";
+  }
+
+  /**
+   * Set the collaboration mode for a project. Only the owner can change this.
+   */
+  async setCollaborationMode(
+    projectId: string, agentId: string, mode: string,
+  ): Promise<void> {
+    if (!["standard", "open"].includes(mode)) {
+      throw new Error('collaboration_mode must be "standard" or "open".');
+    }
+    const access = await this.getAccessLevel(projectId, agentId);
+    if (access !== 3) throw new Error("Only the project owner can change collaboration mode.");
+    await this.pool.query(
+      `UPDATE projects SET collaboration_mode = $1, updated_at = NOW() WHERE project_id = $2`,
+      [mode, projectId],
+    );
+  }
+
+  /**
+   * Check if an agent can commit to a project, considering collaboration mode.
+   * For "open" projects, any registered agent can commit.
+   * For "standard" projects, normal access rules apply.
+   */
+  async canCommit(projectId: string, agentId: string): Promise<{ allowed: boolean; reason?: string }> {
+    const { rows } = await this.pool.query(
+      `SELECT agent_id, collaboration_mode FROM projects WHERE project_id = $1 AND status = 'active'`,
+      [projectId],
+    );
+    if (rows.length === 0) return { allowed: false, reason: "Project not found." };
+
+    const mode = rows[0].collaboration_mode ?? "standard";
+
+    if (mode === "open") {
+      // Any registered agent can commit to open labs
+      return { allowed: true };
+    }
+
+    // Standard mode — check normal access
+    const access = await this.getAccessLevel(projectId, agentId);
+    if (access >= 1 || access === 3) return { allowed: true };
+    if (access === 0) return { allowed: false, reason: "Viewers cannot commit files. Need Editor role or higher." };
+    return { allowed: false, reason: "Project not found or you don't have access." };
+  }
+
+  // ------------------------------------------------------------------
+  //  DAG Browsing
+  // ------------------------------------------------------------------
+
+  /**
+   * Get leaf commits — commits that have no children (the frontier of exploration).
+   */
+  async getLeafCommits(
+    projectId: string, limit = 20,
+  ): Promise<FileCommit[]> {
+    const { rows } = await this.pool.query(
+      `SELECT fc.id, fc.project_id, fc.author_address, fc.message,
+              fc.files_changed, fc.lines_added, fc.lines_removed,
+              fc.review_status, fc.approvals, fc.rejections, fc.source,
+              fc.parent_commit_id, fc.created_at,
+              a.display_name AS author_name
+       FROM file_commits fc
+       LEFT JOIN agents a ON a.id = fc.author_id
+       WHERE fc.project_id = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM file_commits child
+           WHERE child.parent_commit_id = fc.id
+         )
+       ORDER BY fc.created_at DESC
+       LIMIT $2`,
+      [projectId, Math.min(limit, 100)],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      commitId: r.id,
+      projectId: r.project_id,
+      authorAddress: r.author_address,
+      authorName: r.author_name ?? null,
+      message: r.message,
+      filesChanged: r.files_changed,
+      linesAdded: r.lines_added,
+      linesRemoved: r.lines_removed,
+      reviewStatus: r.review_status,
+      approvals: r.approvals,
+      rejections: r.rejections,
+      source: r.source,
+      parentCommitId: r.parent_commit_id ?? null,
+      createdAt: r.created_at?.toISOString() ?? new Date().toISOString(),
+    }));
+  }
+
+  /**
+   * Get children of a commit — what was branched from this point.
+   */
+  async getCommitChildren(
+    commitId: string, limit = 20,
+  ): Promise<FileCommit[]> {
+    const { rows } = await this.pool.query(
+      `SELECT fc.id, fc.project_id, fc.author_address, fc.message,
+              fc.files_changed, fc.lines_added, fc.lines_removed,
+              fc.review_status, fc.approvals, fc.rejections, fc.source,
+              fc.parent_commit_id, fc.created_at,
+              a.display_name AS author_name
+       FROM file_commits fc
+       LEFT JOIN agents a ON a.id = fc.author_id
+       WHERE fc.parent_commit_id = $1
+       ORDER BY fc.created_at DESC
+       LIMIT $2`,
+      [commitId, Math.min(limit, 100)],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      commitId: r.id,
+      projectId: r.project_id,
+      authorAddress: r.author_address,
+      authorName: r.author_name ?? null,
+      message: r.message,
+      filesChanged: r.files_changed,
+      linesAdded: r.lines_added,
+      linesRemoved: r.lines_removed,
+      reviewStatus: r.review_status,
+      approvals: r.approvals,
+      rejections: r.rejections,
+      source: r.source,
+      parentCommitId: r.parent_commit_id ?? null,
+      createdAt: r.created_at?.toISOString() ?? new Date().toISOString(),
+    }));
+  }
+
+  /**
+   * Get lineage of a commit — trace ancestry back to root.
+   */
+  async getCommitLineage(
+    commitId: string, maxDepth = 50,
+  ): Promise<FileCommit[]> {
+    // Recursive CTE to walk parent chain
+    const { rows } = await this.pool.query(
+      `WITH RECURSIVE lineage AS (
+         SELECT fc.id, fc.project_id, fc.author_id, fc.author_address, fc.message,
+                fc.files_changed, fc.lines_added, fc.lines_removed,
+                fc.review_status, fc.approvals, fc.rejections, fc.source,
+                fc.parent_commit_id, fc.created_at,
+                1 AS depth
+         FROM file_commits fc WHERE fc.id = $1
+         UNION ALL
+         SELECT p.id, p.project_id, p.author_id, p.author_address, p.message,
+                p.files_changed, p.lines_added, p.lines_removed,
+                p.review_status, p.approvals, p.rejections, p.source,
+                p.parent_commit_id, p.created_at,
+                l.depth + 1
+         FROM file_commits p
+         JOIN lineage l ON l.parent_commit_id = p.id
+         WHERE l.depth < $2
+       )
+       SELECT l.*, a.display_name AS author_name
+       FROM lineage l
+       LEFT JOIN agents a ON a.id = l.author_id
+       ORDER BY l.depth ASC`,
+      [commitId, maxDepth],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      commitId: r.id,
+      projectId: r.project_id,
+      authorAddress: r.author_address,
+      authorName: r.author_name ?? null,
+      message: r.message,
+      filesChanged: r.files_changed,
+      linesAdded: r.lines_added,
+      linesRemoved: r.lines_removed,
+      reviewStatus: r.review_status,
+      approvals: r.approvals,
+      rejections: r.rejections,
+      source: r.source,
+      parentCommitId: r.parent_commit_id ?? null,
+      createdAt: r.created_at?.toISOString() ?? new Date().toISOString(),
+    }));
+  }
+
+  // ------------------------------------------------------------------
+  //  Lab Notes
+  // ------------------------------------------------------------------
+
+  /**
+   * Create a lab note — lightweight, fire-and-forget text entry.
+   */
+  async createNote(
+    projectId: string,
+    agentId: string,
+    agentAddress: string,
+    text: string,
+    commitRef?: string | null,
+  ): Promise<ProjectNote> {
+    if (!text || text.length > 2000) throw new Error("Note text is required (max 2000 chars).");
+
+    // Verify project exists
+    const { rows: projCheck } = await this.pool.query(
+      `SELECT name, collaboration_mode FROM projects WHERE project_id = $1 AND status = 'active'`,
+      [projectId],
+    );
+    if (projCheck.length === 0) throw new Error("Project not found.");
+
+    // For standard projects, require at least viewer access. For open projects, anyone can post notes.
+    const mode = projCheck[0].collaboration_mode ?? "standard";
+    if (mode === "standard") {
+      const access = await this.getAccessLevel(projectId, agentId);
+      if (access === -1) throw new Error("Project not found or you don't have access.");
+    }
+
+    const { rows } = await this.pool.query(
+      `INSERT INTO project_notes (project_id, author_id, author_address, text, commit_ref)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, created_at`,
+      [projectId, agentId, agentAddress, text, commitRef ?? null],
+    );
+
+    const nameResult = await this.pool.query(
+      `SELECT display_name FROM agents WHERE id = $1`, [agentId],
+    );
+
+    return {
+      id: rows[0].id,
+      projectId,
+      authorAddress: agentAddress,
+      authorName: nameResult.rows[0]?.display_name ?? null,
+      text,
+      commitRef: commitRef ?? null,
+      createdAt: rows[0].created_at?.toISOString() ?? new Date().toISOString(),
+    };
+  }
+
+  /**
+   * List lab notes for a project.
+   */
+  async listNotes(
+    projectId: string, limit = 50, offset = 0,
+  ): Promise<{ notes: ProjectNote[]; total: number }> {
+    const countResult = await this.pool.query(
+      `SELECT COUNT(*)::int AS total FROM project_notes WHERE project_id = $1`,
+      [projectId],
+    );
+    const total = countResult.rows[0].total;
+
+    const { rows } = await this.pool.query(
+      `SELECT pn.id, pn.project_id, pn.author_address, pn.text, pn.commit_ref, pn.created_at,
+              a.display_name AS author_name
+       FROM project_notes pn
+       LEFT JOIN agents a ON a.id = pn.author_id
+       WHERE pn.project_id = $1
+       ORDER BY pn.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [projectId, Math.min(limit, 100), Math.max(offset, 0)],
+    );
+    return {
+      notes: rows.map((r) => ({
+        id: r.id,
+        projectId: r.project_id,
+        authorAddress: r.author_address,
+        authorName: r.author_name ?? null,
+        text: r.text,
+        commitRef: r.commit_ref ?? null,
+        createdAt: r.created_at?.toISOString() ?? new Date().toISOString(),
+      })),
+      total,
+    };
+  }
+
+  // ------------------------------------------------------------------
+  //  Cross-Project Frontier Feed
+  // ------------------------------------------------------------------
+
+  /**
+   * Get frontier commits across all public projects — leaf commits with no children.
+   */
+  async getGlobalFrontiers(limit = 20): Promise<(FileCommit & { projectName: string | null })[]> {
+    const { rows } = await this.pool.query(
+      `SELECT fc.id, fc.project_id, fc.author_address, fc.message,
+              fc.files_changed, fc.lines_added, fc.lines_removed,
+              fc.review_status, fc.approvals, fc.rejections, fc.source,
+              fc.parent_commit_id, fc.created_at,
+              a.display_name AS author_name,
+              p.name AS project_name
+       FROM file_commits fc
+       LEFT JOIN agents a ON a.id = fc.author_id
+       JOIN projects p ON p.project_id = fc.project_id AND p.status = 'active'
+       WHERE NOT EXISTS (
+         SELECT 1 FROM file_commits child WHERE child.parent_commit_id = fc.id
+       )
+       ORDER BY fc.created_at DESC
+       LIMIT $1`,
+      [Math.min(limit, 100)],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      commitId: r.id,
+      projectId: r.project_id,
+      authorAddress: r.author_address,
+      authorName: r.author_name ?? null,
+      message: r.message,
+      filesChanged: r.files_changed,
+      linesAdded: r.lines_added,
+      linesRemoved: r.lines_removed,
+      reviewStatus: r.review_status,
+      approvals: r.approvals,
+      rejections: r.rejections,
+      source: r.source,
+      parentCommitId: r.parent_commit_id ?? null,
+      createdAt: r.created_at?.toISOString() ?? new Date().toISOString(),
+      projectName: r.project_name ?? null,
+    }));
   }
 }

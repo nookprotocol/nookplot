@@ -14,8 +14,8 @@ import {
 const STATS = [
   { value: "20", label: "Smart Contracts" },
   { value: "980+", label: "Tests" },
-  { value: "150+", label: "API Endpoints" },
-  { value: "13", label: "Runtime Managers" },
+  { value: "200+", label: "API Endpoints" },
+  { value: "17", label: "Runtime Managers" },
   { value: "27", label: "CLI Commands" },
 ];
 
@@ -30,7 +30,7 @@ const QUICK_LINKS = [
     to: "/docs/contracts",
     icon: FileCode2,
     title: "Smart Contracts",
-    description: "20 UUPS proxy contracts on Base", // MAINNET-TODO: already correct for mainnet
+    description: "20 UUPS proxy contracts on Base",
   },
   {
     to: "/docs/sdk",
@@ -42,7 +42,7 @@ const QUICK_LINKS = [
     to: "/docs/api",
     icon: Server,
     title: "Gateway API",
-    description: "150+ REST endpoints for agent operations",
+    description: "200+ REST endpoints for agent operations",
   },
   {
     to: "/docs/economics",
@@ -140,7 +140,6 @@ export function DocsIndexPage() {
         </div>
       </div>
 
-      {/* MAINNET-TODO: Update GitHub URL to new org/repo */}
       <div className="border-t border-border pt-8 text-center">
         <a
           href="https://github.com/nookprotocol"

@@ -17,8 +17,8 @@ import type { Duplex } from "stream";
 import type pg from "pg";
 import type { RuntimeSessionManager } from "./runtimeSessionManager.js";
 import type { MessageBus } from "./messageBus.js";
+import type { OnboardingService } from "./onboardingService.js";
 import { logSecurityEvent } from "../middleware/auditLog.js";
-import type { SubgraphGateway } from "./subgraphGateway.js";
 
 /** A runtime event sent over WebSocket. */
 export interface RuntimeWsEvent {
@@ -33,6 +33,7 @@ interface ClientMessage {
   timestamp?: string;
   eventTypes?: string[];
   channelId?: string;
+  workspaceId?: string;
 }
 
 export class RuntimeEventBroadcaster {
@@ -50,9 +51,8 @@ export class RuntimeEventBroadcaster {
   /** MEDIUM-3: Maximum WebSocket connections per agent to prevent DoS. */
   private readonly maxConnectionsPerAgent = 3;
 
-  /** Subgraph polling interval. */
+  /** idx_content polling interval. */
   private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private readonly subgraphGateway: SubgraphGateway | undefined;
   private lastPollTimestamp = Math.floor(Date.now() / 1000).toString();
 
   /** Optional message bus for decoupled message routing. */
@@ -63,27 +63,35 @@ export class RuntimeEventBroadcaster {
   private channelBroadcaster: { subscribe: (agentId: string, channelId: string) => Promise<boolean>; unsubscribe: (agentId: string, channelId: string) => void; removeAgent: (agentId: string) => void } | null = null;
 
   /** Optional proactive scheduler for reactive signals on new posts/comments. */
-  private proactiveScheduler: { handleReactiveSignal: (agentId: string, signal: { signalType: string; channelId?: string; channelName?: string; senderId?: string; senderAddress?: string; messagePreview?: string; community?: string; postCid?: string }) => Promise<void> } | null = null;
+  private proactiveScheduler: {
+    handleReactiveSignal: (agentId: string, signal: { signalType: string; channelId?: string; channelName?: string; senderId?: string; senderAddress?: string; messagePreview?: string; community?: string; postCid?: string }) => Promise<void>;
+    getPendingSignals: (agentId: string, limit?: number) => Promise<Array<{ id: string; signalType: string; payload: Record<string, unknown>; createdAt: string }>>;
+    markSignalDelivered: (signalId: string) => Promise<void>;
+  } | null = null;
+
+  /** Optional workspace broadcaster for WebSocket workspace subscriptions. */
+  private workspaceBroadcaster: { subscribe: (agentId: string, workspaceId: string) => Promise<boolean>; unsubscribe: (agentId: string, workspaceId: string) => void; removeAgent: (agentId: string) => void } | null = null;
+
+  /** Optional onboarding service for welcome guide + nudge signals. */
+  private onboardingService: OnboardingService | null = null;
 
   constructor(
     pool: pg.Pool,
     sessionManager: RuntimeSessionManager,
     hmacSecret: string,
-    subgraphGateway?: SubgraphGateway,
     pollIntervalMs = 10_000,
     messageBus?: MessageBus,
   ) {
     this.pool = pool;
     this.sessionManager = sessionManager;
     this.hmacSecret = hmacSecret;
-    this.subgraphGateway = subgraphGateway;
     this.messageBus = messageBus;
 
     // Create WebSocket server in noServer mode
     this.wss = new WebSocketServer({ noServer: true });
 
-    // Start subgraph polling if endpoint configured
-    if (subgraphGateway && pollIntervalMs > 0) {
+    // Start idx_content polling if interval > 0
+    if (pollIntervalMs > 0) {
       this.pollTimer = setInterval(() => {
         this.pollForEvents().catch((err) => {
           logSecurityEvent("warn", "event-broadcaster-poll-failed", {
@@ -116,11 +124,43 @@ export class RuntimeEventBroadcaster {
   }
 
   /**
+   * Set the workspace broadcaster for handling workspace subscribe/unsubscribe
+   * WebSocket messages. Set after construction to avoid circular dependency.
+   */
+  setWorkspaceBroadcaster(broadcaster: { subscribe: (agentId: string, workspaceId: string) => Promise<boolean>; unsubscribe: (agentId: string, workspaceId: string) => void; removeAgent: (agentId: string) => void }): void {
+    this.workspaceBroadcaster = broadcaster;
+  }
+
+  /**
+   * Set the onboarding service for welcome guide + nudge signals.
+   * Called after construction to avoid ordering dependency.
+   */
+  setOnboardingService(service: OnboardingService): void {
+    this.onboardingService = service;
+  }
+
+  /**
    * Set the proactive scheduler for emitting reactive signals when new
    * posts/comments are discovered via subgraph polling.
    */
-  setProactiveScheduler(scheduler: { handleReactiveSignal: (agentId: string, signal: { signalType: string; channelId?: string; channelName?: string; senderId?: string; senderAddress?: string; messagePreview?: string; community?: string; postCid?: string }) => Promise<void> }): void {
+  setProactiveScheduler(scheduler: {
+    handleReactiveSignal: (agentId: string, signal: { signalType: string; channelId?: string; channelName?: string; senderId?: string; senderAddress?: string; messagePreview?: string; community?: string; postCid?: string }) => Promise<void>;
+    getPendingSignals: (agentId: string, limit?: number) => Promise<Array<{ id: string; signalType: string; payload: Record<string, unknown>; createdAt: string }>>;
+    markSignalDelivered: (signalId: string) => Promise<void>;
+  }): void {
     this.proactiveScheduler = scheduler;
+  }
+
+  /**
+   * Check if an agent has at least one open WebSocket connection.
+   */
+  hasConnection(agentId: string): boolean {
+    const conns = this.connections.get(agentId);
+    if (!conns) return false;
+    for (const ws of conns) {
+      if (ws.readyState === WebSocket.OPEN) return true;
+    }
+    return false;
   }
 
   /**
@@ -247,11 +287,16 @@ export class RuntimeEventBroadcaster {
       totalConnections: this.connectedCount,
     });
 
-    // Auto-enable proactive settings for connected agents (ensures enabled=true on every reconnect)
+    // Auto-enable proactive settings for connected agents.
+    // Only flip enabled if currently disabled — never overwrite other columns
+    // (the agent's custom budgets, cadence, etc. must survive reconnects).
     this.pool.query(
-      `INSERT INTO proactive_settings (agent_id, enabled, scan_interval_minutes, max_credits_per_cycle, max_actions_per_day)
-       VALUES ($1, true, 60, 5000, 10)
-       ON CONFLICT (agent_id) DO UPDATE SET enabled = true`,
+      `INSERT INTO proactive_settings (
+         agent_id, enabled, scan_interval_minutes, max_credits_per_cycle, max_actions_per_day,
+         creativity_level, social_level, discovery_cadence,
+         max_follows_per_day, max_attestations_per_day, max_communities_per_week, auto_follow_back
+       ) VALUES ($1, true, 60, 2000, 5, 'quiet', 'passive', 'conservative', 2, 1, 0, false)
+       ON CONFLICT (agent_id) DO UPDATE SET enabled = true WHERE proactive_settings.enabled = false`,
       [agentId],
     ).catch((err) => {
       logSecurityEvent("warn", "proactive-auto-enable-failed", {
@@ -286,7 +331,59 @@ export class RuntimeEventBroadcaster {
       data: { state: "connected", agentId },
     }));
 
+    // Push any queued signals that arrived while the agent was offline
+    this.pushQueuedSignals(agentId, ws).catch((err) => {
+      logSecurityEvent("warn", "queued-signals-push-failed", {
+        agentId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    // Fire one-time welcome_guide signal for new agents (async, non-blocking)
+    this.maybeFireWelcomeGuide(agentId).catch((err) => {
+      logSecurityEvent("warn", "welcome-guide-failed", {
+        agentId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
     return true;
+  }
+
+  /**
+   * Fire a one-time welcome_guide signal the first time an agent connects.
+   * Uses proactive_actions table to ensure it only fires once.
+   */
+  private async maybeFireWelcomeGuide(agentId: string): Promise<void> {
+    if (!this.proactiveScheduler || !this.onboardingService) return;
+
+    // Check if welcome was already sent
+    const { rows } = await this.pool.query(
+      "SELECT 1 FROM proactive_actions WHERE agent_id = $1 AND action_type = 'onboarding_welcome' LIMIT 1",
+      [agentId],
+    );
+    if (rows.length > 0) return;
+
+    // Build a lite bootstrap payload for the welcome guide
+    const bootstrap = await this.onboardingService.buildBootstrapPayload(
+      agentId, null, null, null, null,
+    );
+
+    // Fire welcome_guide signal via proactive scheduler
+    await this.proactiveScheduler.handleReactiveSignal(agentId, {
+      signalType: "welcome_guide",
+      network: bootstrap?.network,
+      suggestedActions: bootstrap?.suggestedActions,
+      relevantTo: bootstrap?.relevantTo,
+    } as Record<string, unknown> & { signalType: string });
+
+    // Record to prevent re-fire
+    await this.pool.query(
+      `INSERT INTO proactive_actions (agent_id, action_type, status, inference_cost, created_at, completed_at)
+       VALUES ($1, 'onboarding_welcome', 'completed', 0, NOW(), NOW())
+       ON CONFLICT DO NOTHING`,
+      [agentId],
+    );
   }
 
   private unregisterConnection(agentId: string, ws: WebSocket): void {
@@ -298,6 +395,10 @@ export class RuntimeEventBroadcaster {
         // Clean up channel subscriptions when agent fully disconnects
         if (this.channelBroadcaster) {
           this.channelBroadcaster.removeAgent(agentId);
+        }
+        // Clean up workspace subscriptions when agent fully disconnects
+        if (this.workspaceBroadcaster) {
+          this.workspaceBroadcaster.removeAgent(agentId);
         }
       }
     }
@@ -361,6 +462,41 @@ export class RuntimeEventBroadcaster {
         }
         break;
 
+      case "workspace.subscribe":
+        if (this.workspaceBroadcaster && msg.workspaceId) {
+          this.workspaceBroadcaster.subscribe(agentId, msg.workspaceId)
+            .then((ok) => {
+              const responseWs = ws ?? this.getFirstConnection(agentId);
+              if (responseWs && responseWs.readyState === WebSocket.OPEN) {
+                responseWs.send(JSON.stringify({
+                  type: ok ? "workspace.joined" : "workspace.error",
+                  timestamp: new Date().toISOString(),
+                  data: { workspaceId: msg.workspaceId, error: ok ? undefined : "Cannot subscribe — not a member or limit reached" },
+                }));
+              }
+            })
+            .catch((err) => {
+              logSecurityEvent("warn", "event-broadcaster-workspace-subscribe-failed", {
+                error: err instanceof Error ? err.message : String(err),
+              });
+            });
+        }
+        break;
+
+      case "workspace.unsubscribe":
+        if (this.workspaceBroadcaster && msg.workspaceId) {
+          this.workspaceBroadcaster.unsubscribe(agentId, msg.workspaceId);
+          const responseWs = ws ?? this.getFirstConnection(agentId);
+          if (responseWs && responseWs.readyState === WebSocket.OPEN) {
+            responseWs.send(JSON.stringify({
+              type: "workspace.left",
+              timestamp: new Date().toISOString(),
+              data: { workspaceId: msg.workspaceId },
+            }));
+          }
+        }
+        break;
+
       default:
         break;
     }
@@ -394,36 +530,28 @@ export class RuntimeEventBroadcaster {
    * Poll subgraph for new events and broadcast to relevant agents.
    */
   private async pollForEvents(): Promise<void> {
-    if (!this.subgraphGateway || this.connections.size === 0) return;
+    if (this.connections.size === 0) return;
 
     try {
-      // Get new content entries since last poll
-      // SECURITY: lastPollTimestamp is internally managed. Belt-and-suspenders:
-      // parse as integer to guarantee no injection (The Graph doesn't support
-      // GraphQL variables, so we must interpolate, but only a validated integer).
+      // Get new content entries since last poll from idx_content
       const parsedTs = parseInt(this.lastPollTimestamp, 10);
-      const safePollTs = Number.isFinite(parsedTs) && parsedTs >= 0 ? String(parsedTs) : "0";
-      const query = `{
-        contents(
-          first: 50
-          orderBy: timestamp
-          orderDirection: asc
-          where: { timestamp_gt: "${safePollTs}" }
-        ) {
-          cid
-          author { id }
-          community { id }
-          score
-          timestamp
-        }
-      }`;
+      const safePollTs = Number.isFinite(parsedTs) && parsedTs >= 0 ? parsedTs : 0;
 
-      const sgResult = await this.subgraphGateway!.query<{ contents?: Array<{
-        cid: string; author: { id: string }; community: { id: string };
-        score: number; timestamp: string;
-      }> }>(query);
+      const { rows: entries } = await this.pool.query<{
+        cid: string;
+        author_id: string;
+        community_id: string;
+        score: number;
+        timestamp: string;
+      }>(
+        `SELECT cid, author_id, community_id, score, "timestamp"
+         FROM idx_content
+         WHERE "timestamp" > $1
+         ORDER BY "timestamp" ASC
+         LIMIT 50`,
+        [safePollTs],
+      );
 
-      const entries = sgResult.data?.contents ?? [];
       if (entries.length === 0) return;
 
       // Update last poll timestamp
@@ -436,15 +564,19 @@ export class RuntimeEventBroadcaster {
           timestamp: new Date(parseInt(entry.timestamp) * 1000).toISOString(),
           data: {
             cid: entry.cid,
-            author: entry.author.id,
-            community: entry.community.id,
+            author: entry.author_id,
+            community: entry.community_id,
             score: entry.score,
           },
         });
 
         // Emit reactive signals to proactive agents in this community
         if (this.proactiveScheduler) {
-          this.emitPostReactiveSignals(entry).catch((err) => {
+          this.emitPostReactiveSignals({
+            cid: entry.cid,
+            author: { id: entry.author_id },
+            community: { id: entry.community_id },
+          }).catch((err) => {
             logSecurityEvent("warn", "event-broadcaster-reactive-signal-failed", {
               error: err instanceof Error ? err.message : String(err),
             });
@@ -453,6 +585,40 @@ export class RuntimeEventBroadcaster {
       }
     } catch (err) {
       logSecurityEvent("warn", "event-broadcaster-poll-error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Push queued signals to a newly connected agent.
+   * Called on WebSocket reconnect to deliver signals that arrived while offline.
+   */
+  private async pushQueuedSignals(agentId: string, ws: WebSocket): Promise<void> {
+    if (!this.proactiveScheduler) return;
+
+    try {
+      const signals = await this.proactiveScheduler.getPendingSignals(agentId, 20);
+      if (signals.length === 0) return;
+
+      logSecurityEvent("info", "queued-signals-delivering", {
+        agentId,
+        count: signals.length,
+      });
+
+      for (const signal of signals) {
+        if (ws.readyState !== WebSocket.OPEN) break;
+
+        // The payload is the full RuntimeWsEvent that was persisted
+        const event = signal.payload as unknown as RuntimeWsEvent;
+        ws.send(JSON.stringify(event));
+
+        // Mark as delivered
+        await this.proactiveScheduler.markSignalDelivered(signal.id);
+      }
+    } catch (err) {
+      logSecurityEvent("warn", "queued-signals-delivery-failed", {
+        agentId,
         error: err instanceof Error ? err.message : String(err),
       });
     }

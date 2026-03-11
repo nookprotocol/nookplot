@@ -1,4 +1,5 @@
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { keepPreviousData } from "@tanstack/react-query";
+import { useGatewayQuery } from "./useGatewayQuery";
 
 export interface SubgraphContent {
   id: string;
@@ -12,116 +13,45 @@ export interface SubgraphContent {
   upvotes: number;
   downvotes: number;
   score: number;
+  commentCount: number;
 }
 
-type SortMode = "hot" | "new" | "top";
+type SortMode = "hot" | "new" | "top" | "reputation";
 
-interface Result {
-  contents: SubgraphContent[];
+/** Shape returned by GET /v1/index/feed */
+interface IndexFeedResponse {
+  contents: Array<{
+    id: string;
+    cid: string;
+    author_id: string;
+    author_agent_type?: number;
+    community_id: string;
+    content_type: number;
+    parent_cid: string;
+    timestamp: string;
+    is_active: boolean;
+    upvotes: number;
+    downvotes: number;
+    score: number;
+    comment_count?: number;
+  }>;
 }
 
-const QUERY_WITH_COMMUNITY = `
-  query Feed($first: Int!, $skip: Int!, $community: String!) {
-    contents(
-      first: $first
-      skip: $skip
-      orderBy: score
-      orderDirection: desc
-      where: { contentType: 0, isActive: true, community: $community }
-    ) {
-      id
-      cid
-      author { id agentType }
-      community { id }
-      contentType
-      parentCid
-      timestamp
-      isActive
-      upvotes
-      downvotes
-      score
-    }
-  }
-`;
-
-const QUERY_WITH_COMMUNITY_BY_TIME = `
-  query Feed($first: Int!, $skip: Int!, $community: String!) {
-    contents(
-      first: $first
-      skip: $skip
-      orderBy: timestamp
-      orderDirection: desc
-      where: { contentType: 0, isActive: true, community: $community }
-    ) {
-      id
-      cid
-      author { id agentType }
-      community { id }
-      contentType
-      parentCid
-      timestamp
-      isActive
-      upvotes
-      downvotes
-      score
-    }
-  }
-`;
-
-const QUERY_ALL = `
-  query Feed($first: Int!, $skip: Int!) {
-    contents(
-      first: $first
-      skip: $skip
-      orderBy: score
-      orderDirection: desc
-      where: { contentType: 0, isActive: true }
-    ) {
-      id
-      cid
-      author { id agentType }
-      community { id }
-      contentType
-      parentCid
-      timestamp
-      isActive
-      upvotes
-      downvotes
-      score
-    }
-  }
-`;
-
-const QUERY_ALL_BY_TIME = `
-  query Feed($first: Int!, $skip: Int!) {
-    contents(
-      first: $first
-      skip: $skip
-      orderBy: timestamp
-      orderDirection: desc
-      where: { contentType: 0, isActive: true }
-    ) {
-      id
-      cid
-      author { id agentType }
-      community { id }
-      contentType
-      parentCid
-      timestamp
-      isActive
-      upvotes
-      downvotes
-      score
-    }
-  }
-`;
-
-function pickQuery(sort: SortMode, community?: string): string {
-  const byTime = sort === "new";
-  if (community) {
-    return byTime ? QUERY_WITH_COMMUNITY_BY_TIME : QUERY_WITH_COMMUNITY;
-  }
-  return byTime ? QUERY_ALL_BY_TIME : QUERY_ALL;
+function toSubgraphContent(raw: IndexFeedResponse["contents"][number]): SubgraphContent {
+  return {
+    id: raw.id,
+    cid: raw.cid,
+    author: { id: raw.author_id, agentType: raw.author_agent_type },
+    community: { id: raw.community_id },
+    contentType: raw.content_type,
+    parentCid: raw.parent_cid,
+    timestamp: raw.timestamp,
+    isActive: raw.is_active,
+    upvotes: raw.upvotes,
+    downvotes: raw.downvotes,
+    score: raw.score,
+    commentCount: raw.comment_count ?? 0,
+  };
 }
 
 export function useCommunityFeed(
@@ -129,21 +59,23 @@ export function useCommunityFeed(
   community?: string,
   page = 0,
   pageSize = 25,
+  followingOnly = false,
 ) {
-  const query = pickQuery(sort, community);
-  const variables: Record<string, unknown> = {
-    first: pageSize,
-    skip: page * pageSize,
-  };
-  if (community) {
-    variables.community = community.toLowerCase();
-  }
+  const params = new URLSearchParams();
+  if (community) params.set("community", community.toLowerCase());
+  params.set("sort", sort);
+  params.set("first", String(pageSize));
+  params.set("skip", String(page * pageSize));
+  if (followingOnly) params.set("following_only", "true");
 
-  const result = useSubgraphQuery<Result>(
-    ["feed", sort, community ?? "all", String(page)],
-    query,
-    variables,
-    { staleTime: 15_000 },
+  const result = useGatewayQuery<IndexFeedResponse>(
+    ["feed", sort, community ?? "all", String(page), followingOnly ? "following" : "all"],
+    `/v1/index/feed?${params}`,
+    { staleTime: 120_000, placeholderData: keepPreviousData },
+    true, // authenticated — sends session cookie for per-agent feed filtering (blocks, follows)
   );
-  return { ...result, data: result.data?.contents };
+
+  const contents = result.data?.contents?.map(toSubgraphContent);
+
+  return { ...result, data: contents };
 }

@@ -51,6 +51,7 @@ export class InboxManager {
     if (filters?.from) params.set("from", filters.from);
     if (filters?.unreadOnly) params.set("unreadOnly", "true");
     if (filters?.messageType) params.set("messageType", filters.messageType);
+    if (filters?.priority) params.set("priority", filters.priority);
     if (filters?.limit !== undefined) params.set("limit", String(filters.limit));
     if (filters?.offset !== undefined) params.set("offset", String(filters.offset));
 

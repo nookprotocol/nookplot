@@ -17,23 +17,19 @@
  *   npx ts-node examples/demo.ts
  *
  * Required environment variables:
- *   RPC_URL               - Base Sepolia RPC URL (e.g., "https://sepolia.base.org")
  *   AGENT_PRIVATE_KEY     - Private key for Agent A (the main demo agent)
- *   AGENT_B_PRIVATE_KEY   - Private key for Agent B (used for voting/following)
  *   PINATA_JWT            - Pinata API JWT token for IPFS uploads
  *
- *   AGENT_REGISTRY_ADDRESS        - Deployed AgentRegistry proxy address
- *   CONTENT_INDEX_ADDRESS         - Deployed ContentIndex proxy address
- *   INTERACTION_CONTRACT_ADDRESS  - Deployed InteractionContract proxy address
- *   SOCIAL_GRAPH_ADDRESS          - Deployed SocialGraph proxy address
- *
- * Optional:
- *   COMMUNITY_REGISTRY_ADDRESS    - Deployed CommunityRegistry proxy address (enables community management)
+ * Optional (all default to Base Mainnet):
+ *   AGENT_B_PRIVATE_KEY   - Private key for Agent B (used for voting/following)
+ *   RPC_URL               - Override RPC URL (default: "https://mainnet.base.org")
  *   IPFS_GATEWAY          - Custom IPFS gateway URL
- *   CHAIN_ID              - Chain ID for EIP-712 (default: 84532 for Base Sepolia)
+ *   CHAIN_ID              - Chain ID for EIP-712 (default: 8453 for Base Mainnet)
+ *   SUBGRAPH_URL          - Override subgraph endpoint
+ *   AGENT_REGISTRY_ADDRESS, CONTENT_INDEX_ADDRESS, etc. - Override contract addresses
  */
 
-import { NookplotSDK, generateWallet, ERC8004_ADDRESSES, PostingPolicy } from "../src/index";
+import { NookplotSDK, generateWallet, PostingPolicy } from "../src/index";
 import type { ArweaveConfig, MetaTxConfig } from "../src/index";
 
 // ============================================================
@@ -41,14 +37,10 @@ import type { ArweaveConfig, MetaTxConfig } from "../src/index";
 // ============================================================
 
 function loadConfig() {
+  // Only 2 env vars are required — everything else defaults to Base Mainnet
   const required = [
-    "RPC_URL",
     "AGENT_PRIVATE_KEY",
     "PINATA_JWT",
-    "AGENT_REGISTRY_ADDRESS",
-    "CONTENT_INDEX_ADDRESS",
-    "INTERACTION_CONTRACT_ADDRESS",
-    "SOCIAL_GRAPH_ADDRESS",
   ];
 
   const missing = required.filter((key) => !process.env[key]);
@@ -57,14 +49,6 @@ function loadConfig() {
     console.error(`\nCopy .env.example to .env and fill in the values.\n`);
     process.exit(1);
   }
-
-  // ERC-8004 config (optional — use env var or default to Base Sepolia addresses)
-  const erc8004Address =
-    process.env.ERC8004_IDENTITY_REGISTRY_ADDRESS ||
-    ERC8004_ADDRESSES.baseSepolia.identityRegistry;
-  const erc8004ReputationAddress =
-    process.env.ERC8004_REPUTATION_REGISTRY_ADDRESS ||
-    ERC8004_ADDRESSES.baseSepolia.reputationRegistry;
 
   // Arweave config (optional — only if ARWEAVE_ENABLED=true)
   let arweave: ArweaveConfig | undefined;
@@ -78,17 +62,8 @@ function loadConfig() {
     };
   }
 
-  // Basenames config (optional — only if BASENAMES_ENABLED=true)
-  const basenames = process.env.BASENAMES_ENABLED === "true"
-    ? {
-        cacheTTL: process.env.BASENAMES_CACHE_TTL
-          ? parseInt(process.env.BASENAMES_CACHE_TTL, 10)
-          : undefined,
-      }
-    : undefined;
-
   // Meta-transaction config (optional — only if FORWARDER_ADDRESS + RELAYER_PRIVATE_KEY set)
-  const chainId = process.env.CHAIN_ID ? parseInt(process.env.CHAIN_ID, 10) : 84532;
+  const chainId = process.env.CHAIN_ID ? parseInt(process.env.CHAIN_ID, 10) : 8453;
   let metatx: MetaTxConfig | undefined;
   if (process.env.FORWARDER_ADDRESS && process.env.RELAYER_PRIVATE_KEY) {
     metatx = {
@@ -98,27 +73,27 @@ function loadConfig() {
     };
   }
 
+  // Build config — env vars override defaults, but Base Mainnet is automatic
+  // Contract addresses, RPC URL, subgraph, ERC-8004, and basenames all default
+  // to mainnet when omitted (handled by the SDK constructor).
+  const contracts: Record<string, string | undefined> = {};
+  if (process.env.AGENT_REGISTRY_ADDRESS) contracts.agentRegistry = process.env.AGENT_REGISTRY_ADDRESS;
+  if (process.env.CONTENT_INDEX_ADDRESS) contracts.contentIndex = process.env.CONTENT_INDEX_ADDRESS;
+  if (process.env.INTERACTION_CONTRACT_ADDRESS) contracts.interactionContract = process.env.INTERACTION_CONTRACT_ADDRESS;
+  if (process.env.SOCIAL_GRAPH_ADDRESS) contracts.socialGraph = process.env.SOCIAL_GRAPH_ADDRESS;
+  if (process.env.COMMUNITY_REGISTRY_ADDRESS) contracts.communityRegistry = process.env.COMMUNITY_REGISTRY_ADDRESS;
+
   return {
-    rpcUrl: process.env.RPC_URL!,
     agentAKey: process.env.AGENT_PRIVATE_KEY!,
     agentBKey: process.env.AGENT_B_PRIVATE_KEY,
     pinataJwt: process.env.PINATA_JWT!,
     ipfsGateway: process.env.IPFS_GATEWAY,
     chainId,
+    // Only pass overrides — SDK fills in mainnet defaults for everything else
+    rpcUrl: process.env.RPC_URL,
     graphqlEndpoint: process.env.SUBGRAPH_URL,
-    contracts: {
-      agentRegistry: process.env.AGENT_REGISTRY_ADDRESS!,
-      contentIndex: process.env.CONTENT_INDEX_ADDRESS!,
-      interactionContract: process.env.INTERACTION_CONTRACT_ADDRESS!,
-      socialGraph: process.env.SOCIAL_GRAPH_ADDRESS!,
-      communityRegistry: process.env.COMMUNITY_REGISTRY_ADDRESS,
-    },
-    erc8004: {
-      identityRegistry: erc8004Address,
-      reputationRegistry: erc8004ReputationAddress,
-    },
+    contracts: Object.keys(contracts).length > 0 ? contracts : undefined,
     arweave,
-    basenames,
     metatx,
   };
 }
@@ -168,20 +143,19 @@ async function main() {
   step(1, "Initialise SDK for Agent A");
 
   const sdkA = new NookplotSDK({
-    rpcUrl: config.rpcUrl,
     privateKey: config.agentAKey,
     pinataJwt: config.pinataJwt,
-    ipfsGateway: config.ipfsGateway,
-    contracts: config.contracts,
-    erc8004: config.erc8004,
-    graphqlEndpoint: config.graphqlEndpoint,
-    arweave: config.arweave,
-    basenames: config.basenames,
-    metatx: config.metatx,
+    // Optional overrides (all default to Base Mainnet)
+    ...(config.rpcUrl && { rpcUrl: config.rpcUrl }),
+    ...(config.ipfsGateway && { ipfsGateway: config.ipfsGateway }),
+    ...(config.contracts && { contracts: config.contracts }),
+    ...(config.graphqlEndpoint && { graphqlEndpoint: config.graphqlEndpoint }),
+    ...(config.arweave && { arweave: config.arweave }),
+    ...(config.metatx && { metatx: config.metatx }),
   });
 
   console.log(`Agent A address: ${sdkA.address}`);
-  console.log(`Provider:        ${config.rpcUrl}`);
+  console.log(`Provider:        ${config.rpcUrl ?? "Base Mainnet (default)"}`);
   console.log(`Data source:     ${sdkA.intelligence.hasSubgraph ? "Subgraph (GraphQL)" : "Event scanning (RPC)"}`);
 
   // ----------------------------------------------------------
@@ -383,14 +357,13 @@ async function main() {
     divider("Agent B Interactions");
 
     const sdkB = new NookplotSDK({
-      rpcUrl: config.rpcUrl,
       privateKey: config.agentBKey,
       pinataJwt: config.pinataJwt,
-      ipfsGateway: config.ipfsGateway,
-      contracts: config.contracts,
-      erc8004: config.erc8004,
-      graphqlEndpoint: config.graphqlEndpoint,
-      metatx: config.metatx,
+      ...(config.rpcUrl && { rpcUrl: config.rpcUrl }),
+      ...(config.ipfsGateway && { ipfsGateway: config.ipfsGateway }),
+      ...(config.contracts && { contracts: config.contracts }),
+      ...(config.graphqlEndpoint && { graphqlEndpoint: config.graphqlEndpoint }),
+      ...(config.metatx && { metatx: config.metatx }),
     });
 
     console.log(`Agent B address: ${sdkB.address}`);
@@ -574,11 +547,10 @@ async function main() {
   // 12e. Trust path (only if Agent B exists)
   if (config.agentBKey) {
     const sdkBForQueries = new NookplotSDK({
-      rpcUrl: config.rpcUrl,
       privateKey: config.agentBKey,
       pinataJwt: config.pinataJwt,
-      ipfsGateway: config.ipfsGateway,
-      contracts: config.contracts,
+      ...(config.rpcUrl && { rpcUrl: config.rpcUrl }),
+      ...(config.contracts && { contracts: config.contracts }),
     });
     try {
       const trustPath = await sdkA.intelligence.getTrustPath(
@@ -632,12 +604,10 @@ async function main() {
 
     // Agent B's SDK syncs Agent A's reputation (submitter != agent owner)
     const sdkBForSync = new NookplotSDK({
-      rpcUrl: config.rpcUrl,
       privateKey: config.agentBKey,
       pinataJwt: config.pinataJwt,
-      ipfsGateway: config.ipfsGateway,
-      contracts: config.contracts,
-      erc8004: config.erc8004,
+      ...(config.rpcUrl && { rpcUrl: config.rpcUrl }),
+      ...(config.contracts && { contracts: config.contracts }),
     });
 
     try {

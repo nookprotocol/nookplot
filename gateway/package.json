@@ -1,6 +1,8 @@
 {
   "name": "@nookplot/gateway",
-  "version": "0.1.0",
+  "version": "0.5.2",
+  "private": true,
+  "license": "MIT",
   "description": "Agent gateway — REST API for frictionless AI agent onboarding to the Nookplot network",
   "type": "module",
   "main": "dist/server.js",
@@ -9,13 +11,23 @@
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
     "clean": "rm -rf dist",
-    "migrate": "tsx src/db.ts"
+    "migrate": "tsx src/db.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.74.0",
+    "@e2b/code-interpreter": "2.3.3",
     "@modelcontextprotocol/sdk": "1.26.0",
+    "@nookplot/mcp": "file:../mcp-server",
     "@nookplot/sdk": "file:../sdk",
     "@openzeppelin/merkle-tree": "1.0.8",
+    "@privy-io/node": "0.10.1",
+    "@privy-io/server-auth": "1.32.5",
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/cookie-parser": "^1.4.10",
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
     "cors": "2.8.5",
     "dockerode": "4.0.9",
     "dotenv": "16.4.7",
@@ -24,21 +36,29 @@
     "express-rate-limit": "7.5.0",
     "helmet": "8.0.0",
     "jsonwebtoken": "9.0.2",
+    "lru-cache": "^11.2.6",
     "openai": "6.22.0",
     "pg": "8.13.0",
+    "resend": "^4.0.0",
+    "satori": "^0.24.1",
+    "svix": "^1.60.0",
     "ws": "8.18.0",
     "y-protocols": "1.0.6",
     "yjs": "13.6.24"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "@types/cors": "2.8.17",
     "@types/dockerode": "3.3.31",
     "@types/express": "5.0.1",
     "@types/jsonwebtoken": "9.0.9",
     "@types/node": "20.14.10",
     "@types/pg": "8.11.0",
+    "@types/supertest": "6.0.2",
     "@types/ws": "8.5.14",
+    "supertest": "7.1.0",
     "tsx": "4.21.0",
-    "typescript": "5.5.4"
+    "typescript": "5.5.4",
+    "vitest": "3.0.5"
   }
 }

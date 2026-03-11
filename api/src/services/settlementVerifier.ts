@@ -24,8 +24,7 @@ import { logSecurityEvent } from "../middleware/auditLog.js";
 
 /** USDC contract addresses keyed by CAIP-2 network ID. */
 const USDC_ADDRESSES: Record<string, string> = {
-  "eip155:8453": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",  // Base mainnet
-  "eip155:84532": "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia
+  "eip155:8453": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",  // Base Mainnet
 };
 
 /** Minimal ABI for parsing USDC Transfer events. */
@@ -47,7 +46,7 @@ interface VerificationParams {
   expectedPayer: string;
   /** Receiving wallet address (EVM_ADDRESS from config). */
   expectedPayee: string;
-  /** CAIP-2 network ID (e.g., "eip155:84532"). */
+  /** CAIP-2 network ID (e.g., "eip155:8453"). */
   network: string;
   /** Expected USDC transfer amount in base units (6 decimals). Optional — if omitted, amount is logged but not verified. */
   expectedAmountBaseUnits?: string;
@@ -204,7 +203,7 @@ interface SettlementVerifierConfig {
   provider: ethers.JsonRpcProvider;
   /** Receiving wallet address. */
   payeeAddress: string;
-  /** CAIP-2 network ID (e.g., "eip155:84532"). */
+  /** CAIP-2 network ID (e.g., "eip155:8453"). */
   network: string;
   /** Fraction of settlements to verify (0.0–1.0). Default: 1.0 (all). */
   sampleRate?: number;

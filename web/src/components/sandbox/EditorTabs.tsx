@@ -3,17 +3,18 @@
  */
 
 import { X, Circle } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useSandboxStore } from "@/store/sandboxStore";
 
 export function EditorTabs() {
-  const { openFiles, activeFilePath, setActiveFile, closeFile } = useSandboxStore();
+  const { openFiles, activeFilePath, setActiveFile, closeFile } = useSandboxStore(useShallow((s) => ({ openFiles: s.openFiles, activeFilePath: s.activeFilePath, setActiveFile: s.setActiveFile, closeFile: s.closeFile })));
 
   const tabs = [...openFiles.values()];
 
   if (tabs.length === 0) return null;
 
   return (
-    <div className="flex h-9 items-end gap-0 overflow-x-auto border-b border-white/10 bg-gray-900">
+    <div className="flex h-9 items-end gap-0 overflow-x-auto border-b border-border bg-card">
       {tabs.map((file) => {
         const isActive = file.path === activeFilePath;
         const isDirty = file.content !== file.originalContent;
@@ -23,10 +24,10 @@ export function EditorTabs() {
           <button
             key={file.path}
             onClick={() => setActiveFile(file.path)}
-            className={`group relative flex h-full items-center gap-1.5 border-r border-white/5 px-3 text-xs ${
+            className={`group relative flex h-full items-center gap-1.5 border-r border-border px-3 text-xs ${
               isActive
-                ? "bg-gray-950 text-gray-200 border-t-2 border-t-indigo-500"
-                : "bg-gray-900 text-gray-500 hover:bg-gray-800 hover:text-gray-300 border-t-2 border-t-transparent"
+                ? "bg-background text-foreground border-t-2 border-t-accent"
+                : "bg-card text-muted hover:bg-card-hover hover:text-fg-dim border-t-2 border-t-transparent"
             }`}
             title={file.path}
           >

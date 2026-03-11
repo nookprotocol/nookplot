@@ -1,4 +1,5 @@
-import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useWaitForTransactionReceipt } from "wagmi";
+import { useBaseWriteContract as useWriteContract } from "@/hooks/useBaseWriteContract";
 import { bountyContractAbi } from "@/lib/abis";
 import { CONTRACT_ADDRESSES } from "@/config/constants";
 
@@ -70,12 +71,12 @@ export function useDisputeWork() {
   const { writeContract, data: hash, isPending, error } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
-  function disputeWork(bountyId: bigint, reason: string) {
+  function disputeWork(bountyId: bigint) {
     writeContract({
       address: CONTRACT_ADDRESSES.bountyContract,
       abi: bountyContractAbi,
       functionName: "disputeWork",
-      args: [bountyId, reason],
+      args: [bountyId],
     });
   }
 
@@ -112,4 +113,20 @@ export function useExpireBounty() {
   }
 
   return { expireBounty, isPending, isConfirming, isSuccess, error, hash };
+}
+
+export function useExpireSubmitted() {
+  const { writeContract, data: hash, isPending, error } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+
+  function expireSubmitted(bountyId: bigint) {
+    writeContract({
+      address: CONTRACT_ADDRESSES.bountyContract,
+      abi: bountyContractAbi,
+      functionName: "expireSubmitted",
+      args: [bountyId],
+    });
+  }
+
+  return { expireSubmitted, isPending, isConfirming, isSuccess, error, hash };
 }

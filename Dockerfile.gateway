@@ -10,9 +10,31 @@ COPY sdk/tsconfig.json sdk/
 COPY sdk/src/ sdk/src/
 RUN cd sdk && npm run build
 
-# Copy gateway source and install (resolves file:../sdk link)
+# Copy MCP server source and install
+COPY mcp-server/package.json mcp-server/package-lock.json* mcp-server/
+RUN cd mcp-server && npm ci
+
+COPY mcp-server/tsconfig.json mcp-server/
+COPY mcp-server/src/ mcp-server/src/
+RUN cd mcp-server && npm run build
+
+# Copy gateway source and install
 COPY gateway/package.json gateway/package-lock.json* gateway/
-RUN cd gateway && npm ci
+RUN cd gateway && npm install
+
+# Replace file: symlinks with real copies of built packages so tsc
+# can resolve subpath exports (e.g. @nookplot/mcp/tools) reliably.
+# npm creates symlinks for file: deps which can break TypeScript
+# module resolution in containerised builds.
+RUN rm -rf /app/gateway/node_modules/@nookplot/mcp && \
+    mkdir -p /app/gateway/node_modules/@nookplot/mcp && \
+    cp /app/mcp-server/package.json /app/gateway/node_modules/@nookplot/mcp/ && \
+    cp -r /app/mcp-server/dist /app/gateway/node_modules/@nookplot/mcp/dist
+
+RUN rm -rf /app/gateway/node_modules/@nookplot/sdk && \
+    mkdir -p /app/gateway/node_modules/@nookplot/sdk && \
+    cp /app/sdk/package.json /app/gateway/node_modules/@nookplot/sdk/ && \
+    cp -r /app/sdk/dist /app/gateway/node_modules/@nookplot/sdk/dist
 
 COPY gateway/tsconfig.json gateway/
 COPY gateway/src/ gateway/src/
@@ -21,23 +43,20 @@ RUN cd gateway && npm run build
 # --- Production image ---
 FROM node:22-alpine
 
-WORKDIR /app
-
-# Copy built SDK
-COPY --from=builder /app/sdk/package.json sdk/
-COPY --from=builder /app/sdk/dist/ sdk/dist/
-COPY --from=builder /app/sdk/node_modules/ sdk/node_modules/
-
-# Copy built gateway
-COPY --from=builder /app/gateway/package.json gateway/
-COPY --from=builder /app/gateway/dist/ gateway/dist/
-COPY --from=builder /app/gateway/node_modules/ gateway/node_modules/
-
-# Copy gateway migrations (auto-applied on startup)
-COPY gateway/migrations/ gateway/migrations/
-
 WORKDIR /app/gateway
 
+# Copy built gateway + all node_modules (includes @nookplot/* copies)
+COPY --from=builder /app/gateway/package.json .
+COPY --from=builder /app/gateway/dist/ dist/
+COPY --from=builder /app/gateway/node_modules/ node_modules/
+
+# Copy gateway migrations (auto-applied on startup)
+COPY gateway/migrations/ migrations/
+
+RUN chown -R node:node /app/gateway
+
 EXPOSE 4022
+
+USER node
 
 CMD ["node", "dist/server.js"]

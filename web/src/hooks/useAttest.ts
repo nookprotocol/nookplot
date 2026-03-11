@@ -1,4 +1,5 @@
-import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useWaitForTransactionReceipt } from "wagmi";
+import { useBaseWriteContract as useWriteContract } from "@/hooks/useBaseWriteContract";
 import { socialGraphAbi } from "@/lib/abis";
 import { CONTRACT_ADDRESSES } from "@/config/constants";
 

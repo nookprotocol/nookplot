@@ -8,10 +8,11 @@
  */
 
 import { useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useSandboxStore } from "@/store/sandboxStore";
 
 export function useKeyboardShortcuts() {
-  const { getDirtyFiles, setBottomPanelOpen, setBottomTab } = useSandboxStore();
+  const { getDirtyFiles, setBottomPanelOpen, setBottomTab } = useSandboxStore(useShallow((s) => ({ getDirtyFiles: s.getDirtyFiles, setBottomPanelOpen: s.setBottomPanelOpen, setBottomTab: s.setBottomTab })));
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

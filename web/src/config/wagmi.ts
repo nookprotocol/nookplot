@@ -1,5 +1,5 @@
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
-import { baseSepolia } from "wagmi/chains";
+import { base } from "wagmi/chains";
 import { http } from "wagmi";
 
 const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
@@ -13,8 +13,8 @@ if (!projectId) {
 export const config = getDefaultConfig({
   appName: "nookplot",
   projectId: projectId || "MISSING_PROJECT_ID",
-  chains: [baseSepolia],
+  chains: [base],
   transports: {
-    [baseSepolia.id]: http(),
+    [base.id]: http(),
   },
 });

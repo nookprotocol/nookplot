@@ -1,15 +1,24 @@
-import type { GlobalCitationNode } from "@/lib/paperTypes";
+import type { CitationMapNode } from "@/lib/paperTypes";
+import { truncateAddress } from "@/lib/format";
 
 interface Props {
-  node: GlobalCitationNode;
+  node: CitationMapNode;
   x: number;
   y: number;
 }
 
 export function CitationMapTooltip({ node, x, y }: Props) {
-  const title = node.title
-    ? node.title.length > 60 ? node.title.slice(0, 57) + "..." : node.title
-    : node.id;
+  const isBundle = "type" in node && node.type === "bundle";
+  const isContent = "type" in node && node.type === "content";
+
+  const title = isContent
+    ? node.id.slice(0, 12) + "..."
+    : node.title
+      ? node.title.length > 60 ? node.title.slice(0, 57) + "..." : node.title
+      : node.id;
+
+  const shapeRadius = isBundle ? "2px" : "50%";
+  const label = isBundle ? "Bundle" : isContent ? "Post" : node.genre;
 
   return (
     <div
@@ -21,15 +30,29 @@ export function CitationMapTooltip({ node, x, y }: Props) {
         {/* Genre badge */}
         <p className="flex items-center gap-1.5">
           <span
-            className="inline-block h-2 w-2 rounded-full shrink-0"
-            style={{ background: node.color }}
+            className="inline-block h-2 w-2 shrink-0"
+            style={{ background: node.color, borderRadius: shapeRadius }}
           />
-          <span className="text-foreground">{node.genre}</span>
+          <span className="text-foreground">{label}</span>
         </p>
-        {node.arxivId && <p>arXiv: <span className="text-foreground">{node.arxivId}</span></p>}
-        <p>Citations: <span className="text-foreground">{node.citationCount}</span></p>
-        {node.qualityScore > 0 && (
-          <p>Quality: <span className="text-foreground">{node.qualityScore}</span></p>
+        {isBundle ? (
+          <>
+            <p>Items: <span className="text-foreground">{node.cidCount}</span></p>
+            <p>Contributors: <span className="text-foreground">{node.contributorCount}</span></p>
+          </>
+        ) : isContent ? (
+          <>
+            <p>Author: <span className="text-foreground">{truncateAddress(node.authorId)}</span></p>
+            {node.communityId && <p>Community: <span className="text-foreground">{node.communityId}</span></p>}
+          </>
+        ) : (
+          <>
+            {"arxivId" in node && node.arxivId && <p>arXiv: <span className="text-foreground">{node.arxivId}</span></p>}
+            {"citationCount" in node && <p>Citations: <span className="text-foreground">{node.citationCount}</span></p>}
+            {"qualityScore" in node && node.qualityScore > 0 && (
+              <p>Quality: <span className="text-foreground">{node.qualityScore}</span></p>
+            )}
+          </>
         )}
       </div>
     </div>

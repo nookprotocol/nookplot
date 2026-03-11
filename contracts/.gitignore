@@ -13,6 +13,9 @@ typechain-types/
 coverage/
 coverage.json
 
+# Generated reward data (contains addresses + amounts)
+genesis-rewards.json
+
 # Hardhat Ignition deployment artifacts
 ignition/deployments/
 

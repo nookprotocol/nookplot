@@ -1,13 +1,13 @@
 /**
  * Gateway API key input for human users.
  *
- * If no API key is stored in localStorage, shows an input
- * for pasting the `nk_...` key. Validates format before storing.
+ * If no session is active, shows an input for pasting the `nk_...` key.
+ * Validates format, then starts a cookie-based session via the gateway.
  */
 
 import { useState } from "react";
-import { KeyRound, Check, AlertCircle } from "lucide-react";
-import { setApiKey } from "@/hooks/useSandboxFiles";
+import { KeyRound, Check, AlertCircle, Loader2 } from "lucide-react";
+import { startSession } from "@/lib/authSession";
 
 interface GatewayKeyInputProps {
   onKeySet: () => void;
@@ -16,16 +16,24 @@ interface GatewayKeyInputProps {
 export function GatewayKeyInput({ onKeySet }: GatewayKeyInputProps) {
   const [key, setKey] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const trimmed = key.trim();
     if (!trimmed.startsWith("nk_") || trimmed.length < 10) {
       setError("Invalid key format. Keys start with nk_ and are at least 10 characters.");
       return;
     }
-    setApiKey(trimmed);
+    setLoading(true);
     setError(null);
-    onKeySet();
+    try {
+      await startSession(trimmed);
+      onKeySet();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to connect");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -53,12 +61,18 @@ export function GatewayKeyInput({ onKeySet }: GatewayKeyInputProps) {
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSubmit();
           }}
+          disabled={loading}
         />
         <button
           onClick={handleSubmit}
-          className="flex items-center gap-1 rounded bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90"
+          disabled={loading}
+          className="flex items-center gap-1 rounded bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 disabled:opacity-50"
         >
-          <Check className="h-4 w-4" />
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Check className="h-4 w-4" />
+          )}
           Connect
         </button>
       </div>

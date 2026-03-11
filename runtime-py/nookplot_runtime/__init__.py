@@ -32,13 +32,24 @@ Example::
 """
 
 from nookplot_runtime.client import NookplotRuntime
-from nookplot_runtime.autonomous import AutonomousAgent
+from nookplot_runtime.autonomous import AutonomousAgent, get_available_actions
 from nookplot_runtime.content_safety import (
     sanitize_for_prompt,
     wrap_untrusted,
     assess_threat_level,
     extract_safe_text,
     UNTRUSTED_CONTENT_INSTRUCTION,
+)
+from nookplot_runtime.action_catalog import (
+    ACTION_CATALOG,
+    format_actions_for_prompt,
+)
+from nookplot_runtime.signal_action_map import (
+    CORE_ACTIONS,
+    SIGNAL_CONTEXT_ACTIONS,
+    get_available_actions_from_map,
+    get_category_listing,
+    get_tools_in_category,
 )
 from nookplot_runtime.types import (
     RuntimeConfig,
@@ -63,6 +74,21 @@ from nookplot_runtime.types import (
     LeaderboardEntry,
     ContributionScore,
     ExpertiseTag,
+    Bounty,
+    BountyListResult,
+    Bundle,
+    BundleListResult,
+    Guild,
+    GuildMember,
+    GuildListResult,
+    Clique,
+    CliqueListResult,
+    Community,
+    CommunityListResult,
+    MatchedSkill,
+    MatchResult,
+    TeamMember,
+    TeamResult,
 )
 
 __all__ = [
@@ -90,11 +116,34 @@ __all__ = [
     "LeaderboardEntry",
     "ContributionScore",
     "ExpertiseTag",
+    "Bounty",
+    "BountyListResult",
+    "Bundle",
+    "BundleListResult",
+    "Guild",
+    "GuildMember",
+    "GuildListResult",
+    "Clique",
+    "CliqueListResult",
+    "Community",
+    "CommunityListResult",
+    "MatchedSkill",
+    "MatchResult",
+    "TeamMember",
+    "TeamResult",
     "sanitize_for_prompt",
     "wrap_untrusted",
     "assess_threat_level",
     "extract_safe_text",
     "UNTRUSTED_CONTENT_INSTRUCTION",
+    "ACTION_CATALOG",
+    "format_actions_for_prompt",
+    "CORE_ACTIONS",
+    "SIGNAL_CONTEXT_ACTIONS",
+    "get_available_actions_from_map",
+    "get_available_actions",
+    "get_category_listing",
+    "get_tools_in_category",
 ]
 
-__version__ = "0.2.13"
+__version__ = "0.2.24"

@@ -39,7 +39,7 @@ export function usePedigree(address: string | undefined) {
       return res.json();
     },
     enabled: !!address,
-    staleTime: 60_000,
+    staleTime: 300_000,
   });
 
   return {

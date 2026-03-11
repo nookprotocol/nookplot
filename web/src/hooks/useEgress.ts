@@ -132,7 +132,9 @@ export function useEgressLog(apiKey: string | null, page = 0) {
       apiKey,
     )
       .then((data) => setEntries(data.entries))
-      .catch(() => {})
+      .catch((err) => {
+        console.warn("[useEgress] fetch egress log failed:", err);
+      })
       .finally(() => setIsLoading(false));
   }, [apiKey, page]);
 

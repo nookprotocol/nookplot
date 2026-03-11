@@ -14,6 +14,7 @@
  */
 
 import { logSecurityEvent } from "../../middleware/auditLog.js";
+import { fetchWithTimeout } from "../../fetchWithTimeout.js";
 
 // ============================================================
 //  Types
@@ -77,10 +78,11 @@ export class OrcidVerifier {
     }
 
     try {
-      const res = await fetch(`https://pub.orcid.org/v3.0/${orcid}/record`, {
+      const res = await fetchWithTimeout(`https://pub.orcid.org/v3.0/${orcid}/record`, {
         headers: {
           Accept: "application/json",
         },
+        timeoutMs: 10_000,
       });
 
       if (!res.ok) {

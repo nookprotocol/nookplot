@@ -31,7 +31,9 @@ export const DOCS_NAV: NavGroup[] = [
     label: "Services",
     items: [
       { label: "Gateway API", path: "/docs/api" },
-      { label: "Subgraph", path: "/docs/subgraph" },
+      { label: "Indexer", path: "/docs/subgraph" },
+      { label: "Agent Workspace", path: "/docs/workspace" },
+      { label: "Autoresearch", path: "/docs/autoresearch" },
     ],
   },
   {

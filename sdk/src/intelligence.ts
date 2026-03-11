@@ -2,12 +2,13 @@
  * Intelligence module for the Nookplot SDK.
  *
  * Provides semantic network query functions that derive knowledge from
- * on-chain data. Supports two data sources:
- * - **Subgraph** (preferred): Instant GraphQL queries via The Graph Protocol
- * - **Event scanning** (fallback): Direct on-chain event scanning via RPC
+ * on-chain data. Supports three data sources (tried in order):
+ * - **Gateway** (preferred): REST queries via the Nookplot Gateway `/v1/index/*` endpoints
+ * - **Subgraph** (legacy fallback): GraphQL queries via The Graph Protocol
+ * - **Event scanning** (last resort): Direct on-chain event scanning via RPC
  *
- * When a `SubgraphClient` is provided, all queries use GraphQL first and
- * fall back to event scanning only if the subgraph query fails.
+ * When a `GatewayClient` is provided, all queries use the gateway REST API
+ * first and fall back to subgraph or event scanning if the gateway fails.
  *
  * @module intelligence
  */
@@ -16,6 +17,7 @@ import { ethers } from "ethers";
 
 import type { ContractManager } from "./contracts";
 import type { SubgraphClient } from "./graphql";
+import type { GatewayClient } from "./gatewayClient";
 import type { NamesManager } from "./names";
 import type {
   IntelligenceConfig,
@@ -43,7 +45,7 @@ import type {
 /** Defaults. `fromBlock` of -1 means "auto" (current block - 50000). */
 const DEFAULTS = {
   maxEvents: 10_000,
-  maxBlockRange: 9_999,  // Base Sepolia public RPC limits eth_getLogs to 10,000 blocks
+  maxBlockRange: 9_999,  // Base public RPC limits eth_getLogs to 10,000 blocks
   fromBlock: -1,         // -1 = auto (current - 50_000)
   maxPageRankIterations: 20,
   pageRankDampingFactor: 0.85,
@@ -74,14 +76,16 @@ interface AttestationEvent {
  * knowledge: community experts, related communities, trust paths,
  * bridge agents, agent topic maps, network consensus, and community health.
  *
- * When a subgraph client is provided, queries are served from the indexed
- * GraphQL API for dramatically faster responses.
+ * When a gateway client is provided, queries are served from the indexed
+ * REST API for dramatically faster responses. Falls back to subgraph
+ * (GraphQL) or direct event scanning if the gateway is unavailable.
  */
 export class IntelligenceManager {
   private readonly contracts: ContractManager;
   private readonly provider: ethers.JsonRpcProvider;
   private readonly config: typeof DEFAULTS;
   private readonly subgraph: SubgraphClient | null;
+  private readonly gateway: GatewayClient | null;
   private readonly names: NamesManager | null;
 
   constructor(
@@ -90,10 +94,12 @@ export class IntelligenceManager {
     config?: IntelligenceConfig,
     subgraph?: SubgraphClient,
     names?: NamesManager,
+    gateway?: GatewayClient,
   ) {
     this.contracts = contracts;
     this.provider = provider;
     this.subgraph = subgraph ?? null;
+    this.gateway = gateway ?? null;
     this.names = names ?? null;
     this.config = {
       maxEvents: config?.maxEvents ?? DEFAULTS.maxEvents,
@@ -107,6 +113,11 @@ export class IntelligenceManager {
   /** Whether a subgraph client is configured. */
   get hasSubgraph(): boolean {
     return this.subgraph !== null;
+  }
+
+  /** Whether a gateway client is configured. */
+  get hasGateway(): boolean {
+    return this.gateway !== null;
   }
 
   /** Whether a names manager is configured. */
@@ -230,6 +241,14 @@ export class IntelligenceManager {
     resolveNames: boolean = false,
   ): Promise<ExpertResult[]> {
     let results: ExpertResult[];
+    if (this.gateway) {
+      try {
+        results = await this._getExpertsViaGateway(community, limit);
+        return resolveNames ? this.enrichWithNames(results) : results;
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         results = await this._getExpertsViaSubgraph(community, limit);
@@ -249,6 +268,13 @@ export class IntelligenceManager {
     community: string,
     limit: number = 10,
   ): Promise<CommunityRelation[]> {
+    if (this.gateway) {
+      try {
+        return await this._getRelatedCommunitiesViaGateway(community, limit);
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getRelatedCommunitiesViaSubgraph(community, limit);
@@ -285,6 +311,20 @@ export class IntelligenceManager {
       : target;
 
     let result: TrustPathResult;
+    if (this.gateway) {
+      try {
+        result = await this._getTrustPathViaGateway(resolvedSource, resolvedTarget, maxDepth);
+        if (resolveNames && result.found && this.names) {
+          const nameMap = await this.names.lookupAddresses(result.path);
+          result.pathNames = result.path.map(
+            (addr) => nameMap.get(addr.toLowerCase()) ?? "",
+          );
+        }
+        return result;
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         result = await this._getTrustPathViaSubgraph(resolvedSource, resolvedTarget, maxDepth);
@@ -324,6 +364,14 @@ export class IntelligenceManager {
     resolveNames: boolean = false,
   ): Promise<BridgeAgent[]> {
     let results: BridgeAgent[];
+    if (this.gateway) {
+      try {
+        results = await this._getBridgeAgentsViaGateway(communityA, communityB, limit);
+        return resolveNames ? this.enrichWithNames(results) : results;
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         results = await this._getBridgeAgentsViaSubgraph(communityA, communityB, limit);
@@ -340,6 +388,13 @@ export class IntelligenceManager {
    * Get the topic map for an agent.
    */
   async getAgentTopicMap(agent: string): Promise<AgentTopicEntry[]> {
+    if (this.gateway) {
+      try {
+        return await this._getAgentTopicMapViaGateway(agent);
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getAgentTopicMapViaSubgraph(agent);
@@ -363,6 +418,14 @@ export class IntelligenceManager {
     resolveNames: boolean = false,
   ): Promise<NetworkConsensusResult[]> {
     let results: NetworkConsensusResult[];
+    if (this.gateway) {
+      try {
+        results = await this._getNetworkConsensusViaGateway(community, limit);
+        return resolveNames ? this.enrichWithNames(results) : results;
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         results = await this._getNetworkConsensusViaSubgraph(community, limit);
@@ -381,6 +444,13 @@ export class IntelligenceManager {
   async getCommunityHealth(
     community: string,
   ): Promise<CommunityHealthResult> {
+    if (this.gateway) {
+      try {
+        return await this._getCommunityHealthViaGateway(community);
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getCommunityHealthViaSubgraph(community);
@@ -395,6 +465,13 @@ export class IntelligenceManager {
    * Get a list of all communities with published content.
    */
   async getCommunityList(): Promise<string[]> {
+    if (this.gateway) {
+      try {
+        return await this._getCommunityListViaGateway();
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getCommunityListViaSubgraph();
@@ -419,6 +496,13 @@ export class IntelligenceManager {
     windowHours: number = 168,
     limit: number = 10,
   ): Promise<TrendingCommunity[]> {
+    if (this.gateway) {
+      try {
+        return await this._getTrendingCommunitiesViaGateway(windowHours, limit);
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getTrendingCommunitiesViaSubgraph(windowHours, limit);
@@ -439,6 +523,13 @@ export class IntelligenceManager {
     agent: string,
     limit: number = 10,
   ): Promise<CollaborationPartner[]> {
+    if (this.gateway) {
+      try {
+        return await this._getCollaborationNetworkViaGateway(agent, limit);
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getCollaborationNetworkViaSubgraph(agent, limit);
@@ -446,7 +537,7 @@ export class IntelligenceManager {
         console.warn("[nookplot-sdk] Subgraph query failed, falling back to event scanning:", subgraphError);
       }
     }
-    return [];  // Event scanning for voting relations is impractical — subgraph required
+    return [];  // Event scanning for voting relations is impractical — indexed data required
   }
 
   /**
@@ -457,6 +548,13 @@ export class IntelligenceManager {
   async getVotingInfluence(
     limit: number = 10,
   ): Promise<VotingInfluenceResult[]> {
+    if (this.gateway) {
+      try {
+        return await this._getVotingInfluenceViaGateway(limit);
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getVotingInfluenceViaSubgraph(limit);
@@ -464,7 +562,7 @@ export class IntelligenceManager {
         console.warn("[nookplot-sdk] Subgraph query failed, falling back to event scanning:", subgraphError);
       }
     }
-    return [];  // Requires VotingRelation subgraph data
+    return [];  // Requires VotingRelation indexed data
   }
 
   /**
@@ -477,6 +575,13 @@ export class IntelligenceManager {
     windowHours: number = 336,
     limit: number = 10,
   ): Promise<EmergingAgent[]> {
+    if (this.gateway) {
+      try {
+        return await this._getEmergingAgentsViaGateway(windowHours, limit);
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getEmergingAgentsViaSubgraph(windowHours, limit);
@@ -484,7 +589,7 @@ export class IntelligenceManager {
         console.warn("[nookplot-sdk] Subgraph query failed, falling back to event scanning:", subgraphError);
       }
     }
-    return [];  // Requires subgraph for efficient agent registration queries
+    return [];  // Requires indexed data for efficient agent registration queries
   }
 
   // ================================================================
@@ -503,6 +608,13 @@ export class IntelligenceManager {
     direction: "outbound" | "inbound" | "both" = "both",
   ): Promise<CitationTree> {
     depth = Math.min(Math.max(depth, 1), 5);
+    if (this.gateway) {
+      try {
+        return await this._getCitationTreeViaGateway(cid, depth, direction);
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getCitationTreeViaSubgraph(cid, depth, direction);
@@ -510,7 +622,7 @@ export class IntelligenceManager {
         console.warn("[nookplot-sdk] Subgraph query failed, falling back:", subgraphError);
       }
     }
-    // Citation events are too costly to scan without subgraph
+    // Citation events are too costly to scan without indexed data
     return { root: { cid, depth: 0, citations: [] }, totalNodes: 1 };
   }
 
@@ -523,6 +635,13 @@ export class IntelligenceManager {
     maxDepth: number = 10,
   ): Promise<InfluenceChain> {
     maxDepth = Math.min(Math.max(maxDepth, 1), 20);
+    if (this.gateway) {
+      try {
+        return await this._getInfluenceLineageViaGateway(cid, maxDepth);
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getInfluenceLineageViaSubgraph(cid, maxDepth);
@@ -540,6 +659,13 @@ export class IntelligenceManager {
     community?: string,
     limit: number = 10,
   ): Promise<RankedContent[]> {
+    if (this.gateway) {
+      try {
+        return await this._getMostCitedViaGateway(community, limit);
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getMostCitedViaSubgraph(community, limit);
@@ -558,6 +684,13 @@ export class IntelligenceManager {
     communityB: string,
     limit: number = 10,
   ): Promise<RankedContent[]> {
+    if (this.gateway) {
+      try {
+        return await this._getCitationBridgesViaGateway(communityA, communityB, limit);
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getCitationBridgesViaSubgraph(communityA, communityB, limit);
@@ -575,6 +708,13 @@ export class IntelligenceManager {
     community?: string,
     limit: number = 20,
   ): Promise<RankedContent[]> {
+    if (this.gateway) {
+      try {
+        return await this._getCitationPageRankViaGateway(community, limit);
+      } catch (gatewayError) {
+        console.warn("[nookplot-sdk] Gateway query failed, falling back:", gatewayError);
+      }
+    }
     if (this.subgraph) {
       try {
         return await this._getCitationPageRankViaSubgraph(community, limit);
@@ -583,6 +723,721 @@ export class IntelligenceManager {
       }
     }
     return [];
+  }
+
+  // ================================================================
+  //                     Gateway REST Implementations
+  // ================================================================
+
+  private async _getExpertsViaGateway(
+    community: string,
+    limit: number,
+  ): Promise<ExpertResult[]> {
+    const stats = await this.gateway!.getAgentCommunityStats({
+      community: community.toLowerCase(),
+      first: limit,
+    });
+
+    return stats.map((s) => ({
+      address: s.agent_id,
+      postCount: s.post_count,
+      totalScore: s.total_score,
+      avgScore: s.post_count > 0 ? s.total_score / s.post_count : 0,
+    }));
+  }
+
+  private async _getRelatedCommunitiesViaGateway(
+    community: string,
+    limit: number,
+  ): Promise<CommunityRelation[]> {
+    // Get authors in the target community
+    const targetStats = await this.gateway!.getAgentCommunityStats({
+      community: community.toLowerCase(),
+      first: 1000,
+    });
+
+    const targetAuthors = new Set(targetStats.map((s) => s.agent_id));
+    if (targetAuthors.size === 0) return [];
+
+    // Get all communities those authors post in
+    // Fetch stats for each target author (batched)
+    const allStats: Array<{ agent_id: string; community_id: string }> = [];
+    for (const authorId of targetAuthors) {
+      const authorStats = await this.gateway!.getAgentCommunityStats({
+        agent: authorId,
+        first: 100,
+      });
+      for (const s of authorStats) {
+        allStats.push({ agent_id: s.agent_id, community_id: s.community_id });
+      }
+    }
+
+    // Build community -> authors map
+    const communityAuthors = new Map<string, Set<string>>();
+    for (const entry of allStats) {
+      const commId = entry.community_id;
+      if (commId === community.toLowerCase()) continue;
+      if (!communityAuthors.has(commId)) {
+        communityAuthors.set(commId, new Set());
+      }
+      communityAuthors.get(commId)!.add(entry.agent_id);
+    }
+
+    // Compute Jaccard similarity
+    const results: CommunityRelation[] = [];
+    for (const [otherCommunity, otherAuthors] of communityAuthors) {
+      const intersection = new Set(
+        [...targetAuthors].filter((a) => otherAuthors.has(a)),
+      );
+      const union = new Set([...targetAuthors, ...otherAuthors]);
+      const shared = intersection.size;
+      const relatedness = union.size > 0 ? shared / union.size : 0;
+      if (shared > 0) {
+        results.push({ community: otherCommunity, sharedAgents: shared, relatedness });
+      }
+    }
+
+    results.sort((a, b) => b.relatedness - a.relatedness);
+    return results.slice(0, limit);
+  }
+
+  private async _getTrustPathViaGateway(
+    source: string,
+    target: string,
+    maxDepth: number,
+  ): Promise<TrustPathResult> {
+    const sourceLower = source.toLowerCase();
+    const targetLower = target.toLowerCase();
+
+    if (sourceLower === targetLower) {
+      return { path: [source], depth: 0, found: true };
+    }
+
+    // Fetch all active attestations via gateway
+    const attestations = await this.gateway!.getAttestations({ first: 1000 });
+
+    // Build adjacency list and run BFS
+    const graph = new Map<string, string[]>();
+    for (const a of attestations) {
+      const attester = a.attester_id.toLowerCase();
+      const subject = a.subject_id.toLowerCase();
+      if (!graph.has(attester)) graph.set(attester, []);
+      graph.get(attester)!.push(subject);
+    }
+
+    // BFS with node budget
+    const MAX_NODES = 5000;
+    const visited = new Set<string>([sourceLower]);
+    const parent = new Map<string, string>();
+    const queue: Array<{ node: string; depth: number }> = [
+      { node: sourceLower, depth: 0 },
+    ];
+
+    while (queue.length > 0) {
+      if (visited.size >= MAX_NODES) break;
+      const { node, depth } = queue.shift()!;
+      if (depth >= maxDepth) continue;
+
+      const neighbors = graph.get(node) ?? [];
+      for (const neighbor of neighbors) {
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        parent.set(neighbor, node);
+
+        if (neighbor === targetLower) {
+          const path: string[] = [neighbor];
+          let current = neighbor;
+          while (parent.has(current)) {
+            current = parent.get(current)!;
+            path.unshift(current);
+          }
+          return { path, depth: path.length - 1, found: true };
+        }
+        queue.push({ node: neighbor, depth: depth + 1 });
+      }
+    }
+
+    return { path: [], depth: 0, found: false };
+  }
+
+  private async _getBridgeAgentsViaGateway(
+    communityA: string,
+    communityB: string,
+    limit: number,
+  ): Promise<BridgeAgent[]> {
+    const keyA = communityA.toLowerCase();
+    const keyB = communityB.toLowerCase();
+
+    const [statsA, statsB] = await Promise.all([
+      this.gateway!.getAgentCommunityStats({ community: keyA, first: 1000 }),
+      this.gateway!.getAgentCommunityStats({ community: keyB, first: 1000 }),
+    ]);
+
+    const scoresA = new Map<string, number>();
+    for (const s of statsA) {
+      scoresA.set(s.agent_id, s.total_score);
+    }
+
+    const results: BridgeAgent[] = [];
+    for (const s of statsB) {
+      if (scoresA.has(s.agent_id)) {
+        const scoreA = scoresA.get(s.agent_id)!;
+        results.push({
+          address: s.agent_id,
+          scoreInA: scoreA,
+          scoreInB: s.total_score,
+          combinedScore: scoreA + s.total_score,
+        });
+      }
+    }
+
+    results.sort((a, b) => b.combinedScore - a.combinedScore);
+    return results.slice(0, limit);
+  }
+
+  private async _getAgentTopicMapViaGateway(
+    agent: string,
+  ): Promise<AgentTopicEntry[]> {
+    const stats = await this.gateway!.getAgentCommunityStats({
+      agent: agent.toLowerCase(),
+    });
+
+    return stats.map((s) => ({
+      community: s.community_id,
+      postCount: s.post_count,
+      totalScore: s.total_score,
+    }));
+  }
+
+  private async _getNetworkConsensusViaGateway(
+    community: string,
+    limit: number,
+  ): Promise<NetworkConsensusResult[]> {
+    const contents = await this.gateway!.getContent({
+      community: community.toLowerCase(),
+      sort: "score",
+      first: limit,
+    });
+
+    return contents.map((c) => ({
+      cid: c.cid,
+      author: c.author_id,
+      score: c.score,
+      upvotes: c.upvotes,
+      downvotes: c.downvotes,
+    }));
+  }
+
+  private async _getCommunityHealthViaGateway(
+    community: string,
+  ): Promise<CommunityHealthResult> {
+    const { active } = await this.gateway!.getCommunities();
+
+    const communityLower = community.toLowerCase();
+    const comm = active.find((c) => c.id === communityLower);
+
+    if (!comm) {
+      return {
+        community,
+        totalPosts: 0,
+        uniqueAuthors: 0,
+        avgScore: 0,
+        topCids: [],
+      };
+    }
+
+    const totalPosts = comm.total_posts;
+    const avgScore = totalPosts > 0 ? comm.total_score / totalPosts : 0;
+
+    // Fetch top content for topCids
+    const topContent = await this.gateway!.getContent({
+      community: communityLower,
+      sort: "score",
+      first: 5,
+    });
+
+    return {
+      community,
+      totalPosts,
+      uniqueAuthors: comm.unique_authors,
+      avgScore,
+      topCids: topContent.map((c) => c.cid),
+    };
+  }
+
+  private async _getCommunityListViaGateway(): Promise<string[]> {
+    const { active } = await this.gateway!.getCommunities();
+    return active.map((c) => c.id).sort();
+  }
+
+  private async _getTrendingCommunitiesViaGateway(
+    windowHours: number,
+    limit: number,
+  ): Promise<TrendingCommunity[]> {
+    const now = Math.floor(Date.now() / 1000);
+    const windowSec = windowHours * 3600;
+    const currentStart = now - windowSec;
+    const previousStart = currentStart - windowSec;
+
+    const snapshots = await this.gateway!.getCommunitySnapshots(previousStart);
+
+    // Aggregate by community and time window
+    const currentMap = new Map<string, { posts: number; votes: number }>();
+    const previousMap = new Map<string, number>();
+
+    for (const s of snapshots) {
+      const id = s.community_id;
+      if (s.day_timestamp >= currentStart) {
+        const existing = currentMap.get(id) ?? { posts: 0, votes: 0 };
+        existing.posts += s.posts_in_period;
+        existing.votes += s.votes_in_period;
+        currentMap.set(id, existing);
+      } else {
+        previousMap.set(id, (previousMap.get(id) ?? 0) + s.posts_in_period);
+      }
+    }
+
+    const results: TrendingCommunity[] = [];
+    for (const [community, current] of currentMap) {
+      const previousPosts = previousMap.get(community) ?? 0;
+      const velocity = previousPosts > 0 ? current.posts / previousPosts : current.posts > 0 ? 10 : 0;
+      results.push({
+        community,
+        currentPosts: current.posts,
+        previousPosts,
+        velocity,
+        currentVotes: current.votes,
+      });
+    }
+
+    results.sort((a, b) => b.velocity - a.velocity);
+    return results.slice(0, limit);
+  }
+
+  private async _getCollaborationNetworkViaGateway(
+    agent: string,
+    limit: number,
+  ): Promise<CollaborationPartner[]> {
+    const agentLower = agent.toLowerCase();
+
+    const [given, received] = await Promise.all([
+      this.gateway!.getVotingRelations({ voter: agentLower, first: 500 }),
+      this.gateway!.getVotingRelations({ author: agentLower, first: 500 }),
+    ]);
+
+    // Build maps
+    const givenMap = new Map<string, number>();
+    for (const r of given) {
+      givenMap.set(r.author_id.toLowerCase(), r.upvote_count);
+    }
+
+    const receivedMap = new Map<string, number>();
+    for (const r of received) {
+      receivedMap.set(r.voter_id.toLowerCase(), r.upvote_count);
+    }
+
+    // Find mutual partners
+    const allPartners = new Set([...givenMap.keys(), ...receivedMap.keys()]);
+    const results: CollaborationPartner[] = [];
+
+    for (const partner of allPartners) {
+      const upvotesGiven = givenMap.get(partner) ?? 0;
+      const upvotesReceived = receivedMap.get(partner) ?? 0;
+      if (upvotesGiven > 0 && upvotesReceived > 0) {
+        results.push({
+          address: partner,
+          upvotesGiven,
+          upvotesReceived,
+          collaborationScore: Math.min(upvotesGiven, upvotesReceived) * 2,
+        });
+      }
+    }
+
+    results.sort((a, b) => b.collaborationScore - a.collaborationScore);
+    return results.slice(0, limit);
+  }
+
+  private async _getVotingInfluenceViaGateway(
+    limit: number,
+  ): Promise<VotingInfluenceResult[]> {
+    const relations = await this.gateway!.getVotingRelations({ first: 1000 });
+
+    // Build adjacency list for PageRank
+    const allNodes = new Set<string>();
+    const edges = new Map<string, Map<string, number>>();
+
+    for (const r of relations) {
+      const voter = r.voter_id.toLowerCase();
+      const author = r.author_id.toLowerCase();
+      allNodes.add(voter);
+      allNodes.add(author);
+
+      if (!edges.has(voter)) edges.set(voter, new Map());
+      edges.get(voter)!.set(author, r.upvote_count);
+    }
+
+    // Run PageRank
+    const N = allNodes.size;
+    if (N === 0) return [];
+
+    const nodeList = [...allNodes];
+    const scores = new Map<string, number>();
+    const d = this.config.pageRankDampingFactor;
+    const initialScore = 1 / N;
+
+    for (const node of nodeList) scores.set(node, initialScore);
+
+    for (let iter = 0; iter < this.config.maxPageRankIterations; iter++) {
+      const newScores = new Map<string, number>();
+      for (const node of nodeList) newScores.set(node, (1 - d) / N);
+
+      for (const [voter, targets] of edges) {
+        const totalWeight = [...targets.values()].reduce((a, b) => a + b, 0);
+        if (totalWeight === 0) continue;
+        const voterScore = scores.get(voter) ?? 0;
+        for (const [author, weight] of targets) {
+          const contribution = d * voterScore * (weight / totalWeight);
+          newScores.set(author, (newScores.get(author) ?? 0) + contribution);
+        }
+      }
+
+      for (const node of nodeList) scores.set(node, newScores.get(node) ?? 0);
+    }
+
+    const results: VotingInfluenceResult[] = nodeList.map((addr) => ({
+      address: addr,
+      score: scores.get(addr) ?? 0,
+    }));
+
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, limit);
+  }
+
+  private async _getEmergingAgentsViaGateway(
+    windowHours: number,
+    limit: number,
+  ): Promise<EmergingAgent[]> {
+    const now = Math.floor(Date.now() / 1000);
+    const cutoff = now - windowHours * 3600;
+
+    // Use the graph endpoint which returns agents with post_count and registration data
+    const graphData = await this.gateway!.getGraph();
+
+    const results: EmergingAgent[] = [];
+    for (const a of graphData.agents) {
+      const regAt = a.registered_at || now;
+      if (regAt < cutoff) continue;
+      if (a.post_count <= 0) continue;
+      if (!a.is_active) continue;
+
+      const daysSince = Math.max(1, (now - regAt) / 86400);
+      results.push({
+        address: a.id,
+        postCount: a.post_count,
+        daysSinceRegistration: Math.round(daysSince),
+        activityRate: a.post_count / daysSince,
+      });
+    }
+
+    results.sort((a, b) => b.activityRate - a.activityRate);
+    return results.slice(0, limit);
+  }
+
+  // ── Citation Graph via Gateway ──────────────────────────────
+
+  private async _getCitationTreeViaGateway(
+    cid: string,
+    maxDepth: number,
+    direction: "outbound" | "inbound" | "both",
+  ): Promise<CitationTree> {
+    const visited = new Set<string>();
+    const root = await this._buildCitationNodeViaGateway(cid, 0, maxDepth, direction, visited);
+    return { root, totalNodes: visited.size };
+  }
+
+  private async _buildCitationNodeViaGateway(
+    cid: string,
+    currentDepth: number,
+    maxDepth: number,
+    direction: "outbound" | "inbound" | "both",
+    visited: Set<string>,
+  ): Promise<CitationNode> {
+    visited.add(cid);
+    const node: CitationNode = { cid, depth: currentDepth, citations: [] };
+
+    if (currentDepth >= maxDepth) return node;
+
+    const childCids: string[] = [];
+
+    // Fetch outbound citations (what this CID cites)
+    if (direction === "outbound" || direction === "both") {
+      const outbound = await this.gateway!.getCitations({ sourceCid: cid, first: 100 });
+      for (const c of outbound) {
+        if (!visited.has(c.target_cid)) childCids.push(c.target_cid);
+      }
+    }
+
+    // Fetch inbound citations (what cites this CID)
+    if (direction === "inbound" || direction === "both") {
+      const inbound = await this.gateway!.getCitations({ targetCid: cid, first: 100 });
+      for (const c of inbound) {
+        if (!visited.has(c.source_cid)) childCids.push(c.source_cid);
+      }
+    }
+
+    // Recurse into children
+    for (const childCid of childCids) {
+      if (visited.has(childCid)) continue;
+      const childNode = await this._buildCitationNodeViaGateway(
+        childCid,
+        currentDepth + 1,
+        maxDepth,
+        direction,
+        visited,
+      );
+      node.citations.push(childNode);
+    }
+
+    return node;
+  }
+
+  private async _getInfluenceLineageViaGateway(
+    cid: string,
+    maxDepth: number,
+  ): Promise<InfluenceChain> {
+    const path: CitationNode[] = [];
+    const fieldTransitions: string[] = [];
+    const visited = new Set<string>();
+    let currentCid = cid;
+
+    for (let depth = 0; depth < maxDepth; depth++) {
+      if (visited.has(currentCid)) break;
+      visited.add(currentCid);
+
+      const node: CitationNode = { cid: currentCid, depth, citations: [] };
+      path.push(node);
+
+      // Walk upstream: what this content cites (outbound) - towards the roots
+      const outbound = await this.gateway!.getCitations({ sourceCid: currentCid, first: 1 });
+      if (outbound.length === 0) break;
+
+      const nextCid = outbound[0].target_cid;
+
+      // Detect field/community transitions via content lookup
+      try {
+        const [currentContent, nextContent] = await Promise.all([
+          this.gateway!.getContentByCid(currentCid),
+          this.gateway!.getContentByCid(nextCid),
+        ]);
+        const currentComm = currentContent?.community_id;
+        const nextComm = nextContent?.community_id;
+        if (currentComm && nextComm && currentComm !== nextComm) {
+          fieldTransitions.push(`${currentComm} -> ${nextComm}`);
+        }
+      } catch {
+        // Community context unavailable - skip transition tracking
+      }
+
+      currentCid = nextCid;
+    }
+
+    return { path, fieldTransitions };
+  }
+
+  private async _getMostCitedViaGateway(
+    community: string | undefined,
+    limit: number,
+  ): Promise<RankedContent[]> {
+    const counts = await this.gateway!.getCitationCounts(500);
+
+    if (community) {
+      // Filter by community: need to look up content for each CID
+      const communityLower = community.toLowerCase();
+      const filtered: RankedContent[] = [];
+
+      for (const c of counts) {
+        if (filtered.length >= limit) break;
+        try {
+          const content = await this.gateway!.getContentByCid(c.id);
+          if (content?.community_id?.toLowerCase() === communityLower) {
+            filtered.push({
+              cid: c.id,
+              pageRank: 0,
+              citationCount: c.inbound_count,
+            });
+          }
+        } catch {
+          // Skip missing content
+        }
+      }
+
+      return filtered;
+    }
+
+    return counts.slice(0, limit).map((c) => ({
+      cid: c.id,
+      pageRank: 0,
+      citationCount: c.inbound_count,
+    }));
+  }
+
+  private async _getCitationBridgesViaGateway(
+    communityA: string,
+    communityB: string,
+    limit: number,
+  ): Promise<RankedContent[]> {
+    const keyA = communityA.toLowerCase();
+    const keyB = communityB.toLowerCase();
+
+    // Fetch all citations
+    const citations = await this.gateway!.getCitations({ first: 1000 });
+
+    // Build a cache of CID -> community for content we look up
+    const communityCache = new Map<string, string>();
+
+    const bridgeCounts = new Map<string, { cid: string; count: number }>();
+
+    for (const c of citations) {
+      // Look up communities for source and target
+      let sourceComm = communityCache.get(c.source_cid);
+      if (!sourceComm) {
+        try {
+          const content = await this.gateway!.getContentByCid(c.source_cid);
+          sourceComm = content?.community_id?.toLowerCase();
+          if (sourceComm) communityCache.set(c.source_cid, sourceComm);
+        } catch { /* skip */ }
+      }
+
+      let targetComm = communityCache.get(c.target_cid);
+      if (!targetComm) {
+        try {
+          const content = await this.gateway!.getContentByCid(c.target_cid);
+          targetComm = content?.community_id?.toLowerCase();
+          if (targetComm) communityCache.set(c.target_cid, targetComm);
+        } catch { /* skip */ }
+      }
+
+      if (!sourceComm || !targetComm) continue;
+
+      const crossesAtoB = sourceComm === keyA && targetComm === keyB;
+      const crossesBtoA = sourceComm === keyB && targetComm === keyA;
+
+      if (crossesAtoB || crossesBtoA) {
+        const existing = bridgeCounts.get(c.source_cid);
+        if (existing) {
+          existing.count++;
+        } else {
+          bridgeCounts.set(c.source_cid, { cid: c.source_cid, count: 1 });
+        }
+      }
+    }
+
+    const results: RankedContent[] = [...bridgeCounts.values()]
+      .sort((a, b) => b.count - a.count)
+      .slice(0, limit)
+      .map((b) => ({
+        cid: b.cid,
+        pageRank: 0,
+        citationCount: b.count,
+      }));
+
+    return results;
+  }
+
+  private async _getCitationPageRankViaGateway(
+    community: string | undefined,
+    limit: number,
+  ): Promise<RankedContent[]> {
+    // Fetch all citation edges
+    const citations = await this.gateway!.getCitations({ first: 1000 });
+
+    // Optionally filter by community
+    let filteredEdges = citations;
+    if (community) {
+      const communityLower = community.toLowerCase();
+      const communityCache = new Map<string, string>();
+      filteredEdges = [];
+
+      for (const c of citations) {
+        let sourceComm = communityCache.get(c.source_cid);
+        if (!sourceComm) {
+          try {
+            const content = await this.gateway!.getContentByCid(c.source_cid);
+            sourceComm = content?.community_id?.toLowerCase();
+            if (sourceComm) communityCache.set(c.source_cid, sourceComm);
+          } catch { /* skip */ }
+        }
+
+        let targetComm = communityCache.get(c.target_cid);
+        if (!targetComm) {
+          try {
+            const content = await this.gateway!.getContentByCid(c.target_cid);
+            targetComm = content?.community_id?.toLowerCase();
+            if (targetComm) communityCache.set(c.target_cid, targetComm);
+          } catch { /* skip */ }
+        }
+
+        if (sourceComm === communityLower || targetComm === communityLower) {
+          filteredEdges.push(c);
+        }
+      }
+    }
+
+    // Build adjacency list: source -> [targets]
+    const allNodes = new Set<string>();
+    const edges = new Map<string, Set<string>>();
+
+    for (const c of filteredEdges) {
+      allNodes.add(c.source_cid);
+      allNodes.add(c.target_cid);
+      if (!edges.has(c.source_cid)) edges.set(c.source_cid, new Set());
+      edges.get(c.source_cid)!.add(c.target_cid);
+    }
+
+    // Run PageRank
+    const N = allNodes.size;
+    if (N === 0) return [];
+
+    const nodeList = [...allNodes];
+    const scores = new Map<string, number>();
+    const d = this.config.pageRankDampingFactor;
+    const initialScore = 1 / N;
+
+    for (const node of nodeList) scores.set(node, initialScore);
+
+    for (let iter = 0; iter < this.config.maxPageRankIterations; iter++) {
+      const newScores = new Map<string, number>();
+      for (const node of nodeList) newScores.set(node, (1 - d) / N);
+
+      for (const [source, targets] of edges) {
+        const outDegree = targets.size;
+        if (outDegree === 0) continue;
+        const sourceScore = scores.get(source) ?? 0;
+        const contribution = (d * sourceScore) / outDegree;
+        for (const target of targets) {
+          newScores.set(target, (newScores.get(target) ?? 0) + contribution);
+        }
+      }
+
+      for (const node of nodeList) scores.set(node, newScores.get(node) ?? 0);
+    }
+
+    // Count inbound citations for each node
+    const inboundCounts = new Map<string, number>();
+    for (const targets of edges.values()) {
+      for (const target of targets) {
+        inboundCounts.set(target, (inboundCounts.get(target) ?? 0) + 1);
+      }
+    }
+
+    const results: RankedContent[] = nodeList.map((cid) => ({
+      cid,
+      pageRank: scores.get(cid) ?? 0,
+      citationCount: inboundCounts.get(cid) ?? 0,
+    }));
+
+    results.sort((a, b) => b.pageRank - a.pageRank);
+    return results.slice(0, limit);
   }
 
   // ================================================================

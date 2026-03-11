@@ -7,13 +7,14 @@
 
 import { useState, useRef, useEffect } from "react";
 import { ChevronDown, Check } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useSandboxStore } from "@/store/sandboxStore";
 import { RUNTIME_OPTIONS } from "@/lib/sandboxTypes";
 
 export function RuntimeSelector() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const { runtimeId, setRuntimeId, setBottomTab } = useSandboxStore();
+  const { runtimeId, setRuntimeId, setBottomTab } = useSandboxStore(useShallow((s) => ({ runtimeId: s.runtimeId, setRuntimeId: s.setRuntimeId, setBottomTab: s.setBottomTab })));
 
   const selected = RUNTIME_OPTIONS.find((r) => r.id === runtimeId) ?? RUNTIME_OPTIONS[0];
 
@@ -57,50 +58,50 @@ export function RuntimeSelector() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 rounded bg-white/5 px-2 py-1 text-xs text-gray-300 hover:bg-white/10"
+        className="flex items-center gap-1.5 rounded bg-accent-soft px-2 py-1 text-xs text-fg-dim hover:bg-bg-surface"
       >
-        <span className="rounded bg-white/10 px-1 py-0.5 text-[10px] font-bold leading-none text-gray-400">
+        <span className="rounded bg-bg-surface px-1 py-0.5 text-[10px] font-bold leading-none text-fg-dim">
           {selected.icon}
         </span>
         <span className="max-w-28 truncate">{selected.label}</span>
-        <ChevronDown className="h-3 w-3 text-gray-500" />
+        <ChevronDown className="h-3 w-3 text-muted" />
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-56 rounded-lg border border-white/10 bg-gray-900 py-1 shadow-xl">
+        <div className="absolute left-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-card py-1 shadow-xl">
           {/* In-Browser group */}
-          <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+          <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
             In-Browser
           </div>
           {browserOptions.map((opt) => (
             <button
               key={opt.id}
               onClick={() => handleSelect(opt.id)}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-fg-dim hover:bg-accent-soft"
             >
-              <span className="w-6 rounded bg-white/10 px-1 py-0.5 text-center text-[10px] font-bold leading-none text-gray-400">
+              <span className="w-6 rounded bg-bg-surface px-1 py-0.5 text-center text-[10px] font-bold leading-none text-fg-dim">
                 {opt.icon}
               </span>
               <span className="flex-1 text-left">{opt.label}</span>
-              {opt.id === runtimeId && <Check className="h-3.5 w-3.5 text-green-400" />}
+              {opt.id === runtimeId && <Check className="h-3.5 w-3.5 text-accent" />}
             </button>
           ))}
 
           {/* Docker group */}
-          <div className="mt-1 border-t border-white/5 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+          <div className="mt-1 border-t border-border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
             Server-Side (Docker)
           </div>
           {dockerOptions.map((opt) => (
             <button
               key={opt.id}
               onClick={() => handleSelect(opt.id)}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-fg-dim hover:bg-accent-soft"
             >
-              <span className="w-6 rounded bg-white/10 px-1 py-0.5 text-center text-[10px] font-bold leading-none text-gray-400">
+              <span className="w-6 rounded bg-bg-surface px-1 py-0.5 text-center text-[10px] font-bold leading-none text-fg-dim">
                 {opt.icon}
               </span>
               <span className="flex-1 text-left">{opt.label}</span>
-              {opt.id === runtimeId && <Check className="h-3.5 w-3.5 text-green-400" />}
+              {opt.id === runtimeId && <Check className="h-3.5 w-3.5 text-accent" />}
             </button>
           ))}
         </div>

@@ -1,7 +1,6 @@
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { DocSection } from "./components/DocSection";
 import { Callout } from "./components/Callout";
-import { PropsTable } from "./components/PropsTable";
 
 export function SecurityPage() {
   usePageMeta({
@@ -77,26 +76,50 @@ export function SecurityPage() {
         </ul>
       </DocSection>
 
-      <DocSection id="relay-protection" title="Relay Protection (RelayGuard)">
+      <DocSection id="session-security" title="Session Security">
         <p className="text-fg-dim leading-relaxed">
-          The{" "}
-          <strong className="text-foreground">RelayGuard</strong> service
-          implements a 3-tier anti-abuse system for meta-transaction relays.
-          Tiers are computed on every request based on the agent's registration
-          status and credit purchase history.
+          Browser sessions use{" "}
+          <strong className="text-foreground">HttpOnly cookies</strong> for API
+          key storage — JavaScript cannot read the cookie, eliminating
+          XSS-based token theft. Session metadata (non-sensitive display
+          information) is stored separately in localStorage for instant
+          session restoration on page load.
         </p>
-        <PropsTable
-          columns={[
-            { key: "tier", label: "Tier" },
-            { key: "name", label: "Name" },
-            { key: "criteria", label: "Criteria" },
-          ]}
-          rows={[
-            { tier: "0", name: "New", criteria: "Unregistered agents — most restricted" },
-            { tier: "1", name: "Registered", criteria: "Registered agents — moderate limits" },
-            { tier: "2", name: "Purchased", criteria: "Purchased credits — highest allowance" },
-          ]}
-        />
+        <ul className="list-disc list-inside space-y-2 text-fg-dim leading-relaxed ml-2">
+          <li>
+            <strong className="text-foreground">Timestamped sign-in:</strong>{" "}
+            Wallet-based login requires signing a message that includes the
+            current timestamp. The gateway rejects signatures older than
+            5 minutes, preventing replay attacks.
+          </li>
+          <li>
+            <strong className="text-foreground">Key rotation on login:</strong>{" "}
+            Each wallet-based sign-in generates a fresh API key and invalidates
+            the previous one. Compromised sessions cannot persist after the
+            user signs in again.
+          </li>
+          <li>
+            <strong className="text-foreground">Persistent but bounded:</strong>{" "}
+            Session cookies have a 7-day lifetime. After expiry, users
+            re-authenticate with a single wallet signature — no API key
+            exposure, no stored passwords.
+          </li>
+          <li>
+            <strong className="text-foreground">Rate-limited auth:</strong>{" "}
+            All authentication endpoints share a tight rate limiter
+            (5 requests per 10 minutes per IP) to prevent brute-force and
+            credential-stuffing attacks.
+          </li>
+        </ul>
+      </DocSection>
+
+      <DocSection id="relay-protection" title="Relay Protection">
+        <p className="text-fg-dim leading-relaxed">
+          Meta-transaction relays are protected by a multi-layered anti-abuse
+          system. The gateway evaluates each relay request against multiple
+          signals to prevent spam and resource exhaustion. Agents with
+          established history on the network receive higher relay allowances.
+        </p>
       </DocSection>
 
       <DocSection id="best-practices" title="Agent Best Practices">
@@ -118,7 +141,7 @@ export function SecurityPage() {
           </li>
           <li>
             <strong className="text-foreground">Monitor credit balance:</strong>{" "}
-            Check your centricredits balance before expensive operations.
+            Check your credits balance before expensive operations.
             Running out of credits mid-operation can leave state partially
             updated.
           </li>

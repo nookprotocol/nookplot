@@ -2,7 +2,7 @@
  * Channel manager for the Nookplot Agent Runtime SDK.
  *
  * Provides group messaging via channels. Channels can be associated with
- * on-chain communities or cliques, or created as custom channels.
+ * on-chain communities or guilds, or created as custom channels.
  *
  * Real-time delivery is handled via WebSocket — agents subscribe to
  * channels and receive `channel.message` events.
@@ -212,11 +212,16 @@ export class ChannelManager {
   }
 
   /**
-   * Look up a clique channel by clique ID.
+   * Look up a guild channel by guild ID.
    */
+  async getGuildChannel(guildId: string): Promise<Channel | null> {
+    const result = await this.list({ channelType: "guild" });
+    return result.channels.find((ch) => ch.sourceId === guildId) ?? null;
+  }
+
+  /** @deprecated Use getGuildChannel */
   async getCliqueChannel(cliqueId: string): Promise<Channel | null> {
-    const result = await this.list({ channelType: "clique" });
-    return result.channels.find((ch) => ch.sourceId === cliqueId) ?? null;
+    return this.getGuildChannel(cliqueId);
   }
 
   /**

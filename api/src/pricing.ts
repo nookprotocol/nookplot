@@ -6,9 +6,6 @@
  * - Standard: aggregated queries ($0.005–$0.02)
  * - Advanced: graph traversals ($0.02–$0.05)
  *
- * These are preliminary — will be adjusted based on compute costs
- * and market feedback.
- *
  * @module pricing
  */
 

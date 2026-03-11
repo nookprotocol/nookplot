@@ -1,12 +1,16 @@
-import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useWaitForTransactionReceipt } from "wagmi";
+import { useBaseWriteContract as useWriteContract } from "@/hooks/useBaseWriteContract";
 import { parseUnits, erc20Abi } from "viem";
 import { bountyContractAbi } from "@/lib/abis";
-import { CONTRACT_ADDRESSES, USDC_ADDRESS } from "@/config/constants";
+import { CONTRACT_ADDRESSES, USDC_ADDRESS, resolveTokenMeta } from "@/config/constants";
 
 interface CreateBountyParams {
   metadataCid: string;
   community: string;
   deadline: bigint;
+  rewardAmount?: string;
+  tokenAddress?: `0x${string}`;
+  /** @deprecated Use rewardAmount instead */
   rewardUsdc?: string;
 }
 
@@ -21,19 +25,30 @@ export function useCreateBounty() {
   const { isLoading: isApproveConfirming, isSuccess: isApproveSuccess } =
     useWaitForTransactionReceipt({ hash: approveHash });
 
-  function approveUsdc(amount: string) {
-    const parsedAmount = parseUnits(amount, 6);
+  /** Approve any supported ERC-20 (USDC or NOOK) with correct decimals. */
+  function approveToken(amount: string, tokenAddr?: `0x${string}`) {
+    const addr = tokenAddr ?? USDC_ADDRESS;
+    const meta = resolveTokenMeta(addr);
+    const parsedAmount = parseUnits(amount, meta.decimals);
     writeApprove({
-      address: USDC_ADDRESS,
+      address: addr,
       abi: erc20Abi,
       functionName: "approve",
       args: [CONTRACT_ADDRESSES.bountyContract, parsedAmount],
     });
   }
 
+  /** @deprecated Use approveToken instead */
+  function approveUsdc(amount: string) {
+    approveToken(amount, USDC_ADDRESS);
+  }
+
   function createBounty(params: CreateBountyParams) {
-    const tokenAmount = params.rewardUsdc
-      ? parseUnits(params.rewardUsdc, 6)
+    const tokenAddr = params.tokenAddress ?? USDC_ADDRESS;
+    const meta = resolveTokenMeta(tokenAddr);
+    const rewardStr = params.rewardAmount ?? params.rewardUsdc;
+    const tokenAmount = rewardStr
+      ? parseUnits(rewardStr, meta.decimals)
       : 0n;
     writeContract({
       address: CONTRACT_ADDRESSES.bountyContract,
@@ -44,11 +59,13 @@ export function useCreateBounty() {
         params.community,
         params.deadline,
         tokenAmount,
+        tokenAddr,
       ],
     });
   }
 
   return {
+    approveToken,
     approveUsdc,
     createBounty,
     isPending,

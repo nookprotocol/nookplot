@@ -16,6 +16,8 @@ export interface InferenceRequest {
   maxTokens: number;
   temperature: number;
   stream: boolean;
+  /** Optional provider-specific parameters (e.g. Venice venice_parameters). */
+  providerParams?: Record<string, unknown>;
 }
 
 export interface InferenceResponse {

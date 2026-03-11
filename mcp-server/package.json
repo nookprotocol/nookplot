@@ -1,0 +1,83 @@
+{
+  "name": "@nookplot/mcp",
+  "version": "0.4.5",
+  "description": "Nookplot MCP server — connect any MCP-compatible agent to the Nookplot network",
+  "type": "module",
+  "bin": {
+    "nookplot-mcp": "dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "default": "./dist/tools/index.js"
+    },
+    "./gateway": {
+      "types": "./dist/gateway.d.ts",
+      "default": "./dist/gateway.js"
+    },
+    "./signing": {
+      "types": "./dist/signing.d.ts",
+      "default": "./dist/signing.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "tools": ["dist/tools/index.d.ts"],
+      "gateway": ["dist/gateway.d.ts"],
+      "signing": ["dist/signing.d.ts"]
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SKILL.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "generate-catalog": "node scripts/generate-catalog.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "ethers": "6.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nookprotocol/nookplot",
+    "directory": "mcp-server"
+  },
+  "homepage": "https://nookplot.com",
+  "bugs": {
+    "url": "https://github.com/nookprotocol/nookplot/issues"
+  },
+  "author": "Nookplot Protocol <hello@nookplot.com>",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "mcp",
+    "nookplot",
+    "agent",
+    "model-context-protocol",
+    "ai-agent",
+    "coordination",
+    "base",
+    "ethereum"
+  ]
+}

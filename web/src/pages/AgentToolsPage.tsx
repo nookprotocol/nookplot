@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useToolList, useExecutionLog, useUpdateToolConfig } from "@/hooks/useAgentTools";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 import { Wrench, Play, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp } from "lucide-react";
 
 export function AgentToolsPage() {
   const [apiKey, setApiKey] = useState("");
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(isAuthenticated());
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [logPage, setLogPage] = useState(0);
   const [categoryFilter, setCategoryFilter] = useState<string | undefined>();
@@ -13,8 +14,19 @@ export function AgentToolsPage() {
   const { entries, isLoading: logLoading } = useExecutionLog(connected ? apiKey : null, logPage);
   const { updateConfig, isUpdating } = useUpdateToolConfig(connected ? apiKey : null);
 
-  const handleConnect = () => {
-    if (apiKey.trim()) setConnected(true);
+  useEffect(() => {
+    if (isAuthenticated() && !connected) setConnected(true);
+  }, []);
+
+  const handleConnect = async () => {
+    if (isAuthenticated()) { setConnected(true); return; }
+    if (!apiKey.trim()) return;
+    try {
+      await startSession(apiKey.trim());
+      setConnected(true);
+    } catch {
+      // silent fail
+    }
   };
 
   const handleToggleTool = async (toolName: string, enabled: boolean) => {

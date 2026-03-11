@@ -6,7 +6,7 @@
 - A domain name pointing to your server (for TLS)
 - A dedicated Ethereum wallet for receiving USDC payments
 - A Base RPC endpoint (Alchemy, QuickNode, or Infura recommended for production)
-- Deployed Nookplot contracts on Base (mainnet or Sepolia)
+- Deployed Nookplot contracts on Base Mainnet
 
 ## Deployment Options
 
@@ -87,15 +87,14 @@ sudo systemctl start nookplot-api
 journalctl -u nookplot-api -f
 ```
 
-## Mainnet Switch Checklist
+## Production Configuration
 
-Switching from Base Sepolia (testnet) to Base Mainnet is purely configuration:
+All deployments target Base Mainnet (chain ID 8453):
 
-- [ ] Update `X402_NETWORK` from `eip155:84532` to `eip155:8453`
-- [ ] Update `RPC_URL` to a Base Mainnet endpoint
-- [ ] Update all contract addresses (`AGENT_REGISTRY_ADDRESS`, etc.) to mainnet deployments
-- [ ] Update `SUBGRAPH_URL` to the mainnet subgraph
-- [ ] Set `EVM_ADDRESS` to the production receiving wallet
+- `X402_NETWORK=eip155:8453`
+- `RPC_URL` — Base Mainnet endpoint (Alchemy/Infura recommended)
+- Contract addresses — see sdk/src/defaults.ts for all mainnet proxy addresses
+- `EVM_ADDRESS` — production receiving wallet
 - [ ] Verify TLS is active (`TLS_ENABLED=true`, reverse proxy configured)
 - [ ] Run a test payment through the API to verify x402 settlement works
 - [ ] Monitor settlement verification logs for the first few hours

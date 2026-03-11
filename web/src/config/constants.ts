@@ -1,33 +1,49 @@
 export const CONTRACT_ADDRESSES = {
   agentRegistry: (import.meta.env.VITE_AGENT_REGISTRY_ADDRESS ??
-    "0x8dC9E1e6E3eED7c38e89ca57D3B444f062d8a1c9") as `0x${string}`,
+    "0xE99774eeC4F08d219ff3F5DE1FDC01d181b93711") as `0x${string}`,
   contentIndex: (import.meta.env.VITE_CONTENT_INDEX_ADDRESS ??
-    "0xEA95971b593e5d7f531A332De1F05dD1A6582Bb9") as `0x${string}`,
+    "0xe853B16d481bF58fD362d7c165d17b9447Ea5527") as `0x${string}`,
   interactionContract: (import.meta.env.VITE_INTERACTION_CONTRACT_ADDRESS ??
-    "0xB1E8029179Cd612A6D1559607415106C818CED88") as `0x${string}`,
+    "0x9F2B9ee5898c667840E50b3a531a8ac961CaEf23") as `0x${string}`,
   socialGraph: (import.meta.env.VITE_SOCIAL_GRAPH_ADDRESS ??
-    "0x8f4718a6922a1200c5f40074051b1dE44E2DeBC7") as `0x${string}`,
+    "0x1eB7094b24aA1D374cabdA6E6C9fC17beC7e0092") as `0x${string}`,
   contributionRegistry: (import.meta.env.VITE_CONTRIBUTION_REGISTRY_ADDRESS ??
-    "0xbee054175909797B0AB6F14A3F7ce42C98bF88EA") as `0x${string}`,
+    "0x20b59854ab669dBaCEe1FAb8C0464C0758Da1485") as `0x${string}`,
   bountyContract: (import.meta.env.VITE_BOUNTY_CONTRACT_ADDRESS ??
-    "0xC9a5d1595BcF5fDC90067C9b907e5d80cB8Dc8bE") as `0x${string}`,
+    "0xbA9650e70b4307C07053023B724D1D3a24F6FF2b") as `0x${string}`,
   serviceMarketplace: (import.meta.env.VITE_SERVICE_MARKETPLACE_ADDRESS ??
-    "0xe43FFb5bB520EfBFa85C0FE28ae2B4d474668054") as `0x${string}`,
+    "0xEB37D884e0420Adf34010f794935F32578B03808") as `0x${string}`,
 } as const;
 
-/** USDC token address on Base Sepolia */
+/** USDC token address on Base */
 export const USDC_ADDRESS = (import.meta.env.VITE_USDC_ADDRESS ??
-  "0x036CbD53842c5426634e7929541eC2318f3dCF7e") as `0x${string}`;
+  "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") as `0x${string}`;
+
+/** NOOK token address on Base */
+export const NOOK_ADDRESS = (import.meta.env.VITE_NOOK_ADDRESS ??
+  "0xb233BDFFD437E60fA451F62c6c09D3804d285Ba3") as `0x${string}`;
+
+/** Token metadata lookup by address (lowercase) */
+export const TOKEN_META: Record<string, { symbol: string; decimals: number; address: `0x${string}` }> = {
+  [USDC_ADDRESS.toLowerCase()]: { symbol: "USDC", decimals: 6, address: USDC_ADDRESS },
+  [NOOK_ADDRESS.toLowerCase()]: { symbol: "NOOK", decimals: 18, address: NOOK_ADDRESS },
+};
+
+/** Resolve token symbol and decimals from address */
+export function resolveTokenMeta(addr: string | null | undefined) {
+  if (!addr) return TOKEN_META[USDC_ADDRESS.toLowerCase()];
+  return TOKEN_META[addr.toLowerCase()] ?? TOKEN_META[USDC_ADDRESS.toLowerCase()];
+}
 
 export const IPFS_GATEWAY =
-  import.meta.env.VITE_IPFS_GATEWAY ?? "https://gateway.pinata.cloud/ipfs/";
+  import.meta.env.VITE_IPFS_GATEWAY ?? "https://ipfs.io/ipfs/";
 
-export const BASE_SEPOLIA_CHAIN_ID = 84532;
+export const BASE_CHAIN_ID = 8453;
 
 export const EIP712_DOMAIN = {
   name: "Nookplot",
   version: "1",
-  chainId: BASE_SEPOLIA_CHAIN_ID,
+  chainId: BASE_CHAIN_ID,
 } as const;
 
 export const POST_CONTENT_TYPES = {
@@ -56,4 +72,4 @@ export const GATEWAY_WS_URL =
 
 /** CreditPurchase contract address (on-chain credit pack purchases) */
 export const CREDIT_PURCHASE_ADDRESS = (import.meta.env.VITE_CREDIT_PURCHASE_ADDRESS ??
-  "0x9d83B6362F98038D8ae01e6027fdb8C6b0092cbb") as `0x${string}`;
+  "0x1A8C121e5C79623986f85F74C66d9cAd086B2358") as `0x${string}`;

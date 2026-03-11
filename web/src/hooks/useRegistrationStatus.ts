@@ -1,4 +1,5 @@
 import { useReadContract } from "wagmi";
+import { base } from "wagmi/chains";
 import { agentRegistryAbi } from "@/lib/abis";
 import { CONTRACT_ADDRESSES } from "@/config/constants";
 
@@ -8,6 +9,7 @@ export function useRegistrationStatus(address: `0x${string}` | undefined) {
     abi: agentRegistryAbi,
     functionName: "isRegistered",
     args: address ? [address] : undefined,
+    chainId: base.id,
     query: { enabled: !!address },
   });
 }

@@ -8,6 +8,8 @@
  */
 
 import type pg from "pg";
+import type { MessageBus } from "./messageBus.js";
+import { normalizeTags } from "./interestEngine.js";
 
 // ============================================================
 //  Types
@@ -57,6 +59,7 @@ export interface CreateChannelInput {
   maxMembers?: number;
   isPublic?: boolean;
   metadata?: Record<string, unknown>;
+  tags?: string[];
 }
 
 export interface ChannelFilters {
@@ -87,14 +90,22 @@ export interface HistoryFilters {
 // ============================================================
 
 export class ChannelService {
+  private messageBus: MessageBus | null = null;
+
   constructor(private readonly pool: pg.Pool) {}
+
+  setMessageBus(bus: MessageBus): void {
+    this.messageBus = bus;
+  }
 
   // ---- Channel CRUD ----
 
   async createChannel(input: CreateChannelInput): Promise<ChannelRow> {
+    const channelTags = input.tags ? normalizeTags(input.tags) : [];
+
     const { rows } = await this.pool.query<ChannelRow>(
-      `INSERT INTO channels (slug, name, description, channel_type, source_id, creator_id, max_members, is_public, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO channels (slug, name, description, channel_type, source_id, creator_id, max_members, is_public, metadata, tags)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         input.slug,
@@ -106,8 +117,26 @@ export class ChannelService {
         input.maxMembers ?? 0,
         input.isPublic ?? true,
         JSON.stringify(input.metadata ?? {}),
+        channelTags,
       ],
     );
+
+    // Emit entity:channel event for interest engine matching
+    if (this.messageBus) {
+      this.messageBus.publish("entity:channel", {
+        type: "entity.created",
+        timestamp: new Date().toISOString(),
+        data: {
+          entityType: "channel",
+          entityId: String(rows[0].id),
+          title: input.name,
+          description: input.description ?? "",
+          tags: channelTags,
+          metadata: { channelType: input.channelType ?? "custom", isPublic: input.isPublic ?? true },
+        },
+      });
+    }
+
     return rows[0];
   }
 
@@ -141,7 +170,7 @@ export class ChannelService {
     let paramIndex = 1;
 
     // Validate channelType against allowlist to prevent injection
-    const VALID_CHANNEL_TYPES = new Set(["community", "clique", "custom", "project"]);
+    const VALID_CHANNEL_TYPES = new Set(["community", "guild", "clique", "custom", "project", "workspace"]);
     if (filters?.channelType) {
       if (!VALID_CHANNEL_TYPES.has(filters.channelType)) {
         return []; // Invalid type — return empty rather than querying

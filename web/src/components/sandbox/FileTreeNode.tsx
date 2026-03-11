@@ -8,7 +8,8 @@
 import { useState, useCallback } from "react";
 import { ChevronRight, ChevronDown, File, Folder, FolderOpen, Loader2 } from "lucide-react";
 import type { FileNode } from "@/lib/sandboxTypes";
-import { fetchFileContent, getApiKey } from "@/hooks/useSandboxFiles";
+import { fetchFileContent } from "@/hooks/useSandboxFiles";
+import { useShallow } from "zustand/react/shallow";
 import { useSandboxStore } from "@/store/sandboxStore";
 import { GATEWAY_URL } from "@/config/constants";
 import { InlineRenameInput } from "./InlineRenameInput";
@@ -27,7 +28,7 @@ interface FileTreeNodeProps {
 export function FileTreeNode({ node, projectId, branch, depth, renamingPath, onContextMenu, onRenameCommit, onRenameCancel }: FileTreeNodeProps) {
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { openFile, activeFilePath, updateSubtree } = useSandboxStore();
+  const { openFile, activeFilePath, updateSubtree } = useSandboxStore(useShallow((s) => ({ openFile: s.openFile, activeFilePath: s.activeFilePath, updateSubtree: s.updateSubtree })));
 
   const isActive = node.type === "file" && node.path === activeFilePath;
 
@@ -39,7 +40,7 @@ export function FileTreeNode({ node, projectId, branch, depth, renamingPath, onC
           const params = new URLSearchParams({ path: node.path, ref: branch });
           const res = await fetch(
             `${GATEWAY_URL}/v1/projects/${encodeURIComponent(projectId)}/files?${params}`,
-            { headers: { Authorization: `Bearer ${getApiKey()}` } },
+            { credentials: "include" },
           );
           if (res.ok) {
             const data = await res.json();
@@ -79,19 +80,19 @@ export function FileTreeNode({ node, projectId, branch, depth, renamingPath, onC
           e.preventDefault();
           onContextMenu?.(e, node);
         }}
-        className={`flex w-full items-center gap-1 py-1 text-left text-sm hover:bg-white/5 ${
-          isActive ? "bg-white/10 text-indigo-300" : "text-gray-300"
+        className={`flex w-full items-center gap-1 py-1 text-left text-sm hover:bg-accent-soft ${
+          isActive ? "bg-accent-soft text-accent" : "text-fg-dim"
         }`}
         style={{ paddingLeft }}
       >
         {node.type === "dir" ? (
           <>
             {loading ? (
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-gray-500" />
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted" />
             ) : expanded ? (
-              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" />
             ) : (
-              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />
             )}
             {expanded ? (
               <FolderOpen className="h-4 w-4 shrink-0 text-amber-400" />
@@ -103,9 +104,9 @@ export function FileTreeNode({ node, projectId, branch, depth, renamingPath, onC
           <>
             <span className="h-3.5 w-3.5 shrink-0" />
             {loading ? (
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-gray-500" />
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted" />
             ) : (
-              <File className="h-4 w-4 shrink-0 text-gray-500" />
+              <File className="h-4 w-4 shrink-0 text-muted" />
             )}
           </>
         )}

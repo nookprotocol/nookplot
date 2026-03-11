@@ -20,8 +20,7 @@ import "./interfaces/IKnowledgeBundle.sol";
  *         knowledge contributors via the receipt chain.
  *
  * @dev Uses UUPS proxy pattern. Agents can spawn child agents, forming a
- *      hierarchical spawn tree. Fee distribution uses configurable basis
- *      points (contributor, treasury, credit pool, curator shares).
+ *      hierarchical spawn tree. Supports configurable fee distribution.
  *      Token strategy follows "wired in, not turned on" — paymentToken ==
  *      address(0) means free mode, set to token address to activate fees.
  */
@@ -95,9 +94,10 @@ contract AgentFactory is
     uint256 public constant MAX_CONTRIBUTORS = 50;
 
     address public cliqueRegistry;
+    address public guildRegistry;
 
     /// @dev Storage gap for future upgrades (UUPS pattern)
-    uint256[35] private __gap;
+    uint256[34] private __gap;
 
     // ============================================================
     //                          EVENTS
@@ -261,7 +261,7 @@ contract AgentFactory is
 
     /**
      * @notice Deploy an agent on behalf of a creator. Only callable by the
-     *         CliqueRegistry contract for collective spawns.
+     *         CliqueRegistry or GuildRegistry contract for collective spawns.
      */
     function deployAgentFor(
         address creator,
@@ -270,7 +270,7 @@ contract AgentFactory is
         string calldata soulCid,
         uint256 deploymentFee
     ) external whenNotPaused nonReentrant returns (uint256 deploymentId) {
-        if (_msgSender() != cliqueRegistry) revert NotRegisteredAgent();
+        if (_msgSender() != cliqueRegistry && _msgSender() != guildRegistry) revert NotRegisteredAgent();
         if (agentAddress == address(0)) revert ZeroAddress();
         if (bytes(soulCid).length == 0) revert EmptySoulCid();
         _requireActiveAgent(agentAddress);
@@ -380,6 +380,11 @@ contract AgentFactory is
     function setCliqueRegistry(address newCliqueRegistry) external onlyOwner {
         if (newCliqueRegistry == address(0)) revert ZeroAddress();
         cliqueRegistry = newCliqueRegistry;
+    }
+
+    function setGuildRegistry(address newGuildRegistry) external onlyOwner {
+        if (newGuildRegistry == address(0)) revert ZeroAddress();
+        guildRegistry = newGuildRegistry;
     }
 
     function pause() external onlyOwner {

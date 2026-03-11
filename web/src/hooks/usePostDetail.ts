@@ -1,4 +1,4 @@
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useGatewayQuery } from "./useGatewayQuery";
 import { useIpfsContent, type PostDocument } from "./useIpfsContent";
 
 export interface SubgraphPostDetail {
@@ -23,51 +23,68 @@ export interface SubgraphPostDetail {
   score: number;
 }
 
-interface Result {
-  contents: SubgraphPostDetail[];
+/** Shape returned by GET /v1/index/content/:cid */
+interface IndexContentResponse {
+  content: {
+    id: string;
+    cid: string;
+    author_id: string;
+    author_did_cid: string;
+    author_is_verified: boolean;
+    author_post_count: number;
+    author_follower_count: number;
+    author_total_upvotes_received: number;
+    author_agent_type?: number;
+    community_id: string;
+    content_type: number;
+    parent_cid: string;
+    timestamp: string;
+    is_active: boolean;
+    upvotes: number;
+    downvotes: number;
+    score: number;
+  } | null;
 }
 
-const QUERY = `
-  query PostDetail($cid: String!) {
-    contents(where: { cid: $cid }, first: 1) {
-      id
-      cid
-      author {
-        id
-        didCid
-        isVerified
-        postCount
-        followerCount
-        totalUpvotesReceived
-        agentType
-      }
-      community { id }
-      contentType
-      parentCid
-      timestamp
-      isActive
-      upvotes
-      downvotes
-      score
-    }
-  }
-`;
+function toSubgraphPostDetail(raw: IndexContentResponse["content"]): SubgraphPostDetail | null {
+  if (!raw) return null;
+  return {
+    id: raw.id,
+    cid: raw.cid,
+    author: {
+      id: raw.author_id,
+      didCid: raw.author_did_cid,
+      isVerified: raw.author_is_verified,
+      postCount: raw.author_post_count,
+      followerCount: raw.author_follower_count,
+      totalUpvotesReceived: raw.author_total_upvotes_received,
+      agentType: raw.author_agent_type,
+    },
+    community: { id: raw.community_id },
+    contentType: raw.content_type,
+    parentCid: raw.parent_cid,
+    timestamp: raw.timestamp,
+    isActive: raw.is_active,
+    upvotes: raw.upvotes,
+    downvotes: raw.downvotes,
+    score: raw.score,
+  };
+}
 
 export function usePostDetail(cid: string | undefined) {
-  const subgraphResult = useSubgraphQuery<Result>(
+  const indexResult = useGatewayQuery<IndexContentResponse>(
     ["post", cid ?? ""],
-    QUERY,
-    { cid },
-    { enabled: !!cid, staleTime: 15_000 },
+    `/v1/index/content/${cid}`,
+    { enabled: !!cid, staleTime: 120_000 },
   );
 
-  const post = subgraphResult.data?.contents[0] ?? null;
+  const post = toSubgraphPostDetail(indexResult.data?.content ?? null);
   const ipfsResult = useIpfsContent<PostDocument>(cid);
 
   return {
     post,
     ipfsDoc: ipfsResult.data ?? null,
-    isLoading: subgraphResult.isLoading || ipfsResult.isLoading,
-    error: subgraphResult.error || ipfsResult.error,
+    isLoading: indexResult.isLoading || ipfsResult.isLoading,
+    error: indexResult.error || ipfsResult.error,
   };
 }

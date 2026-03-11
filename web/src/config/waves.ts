@@ -19,20 +19,30 @@ export const CURRENT_WAVE: WaveLevel = (() => {
 
 /** Route prefix -> minimum wave required. Unlisted routes are wave 0. */
 const WAVE_ROUTES: Record<string, WaveLevel> = {
+  "/bundles": 0,
+  "/economy": 0,
+  "/intents": 0,
+  "/leaderboard": 0,
+  "/token": 0,
+  "/subscriptions": 0,
+  "/skills": 0,
+  "/research": 0,
+  "/launch-token": 0,
   "/messages": 1,
   "/channels": 1,
-  "/bundles": 1,
-  "/cliques": 1,
-  "/deploy": 2,
-  "/soul-history": 2,
-  "/bounties": 3,
-  "/marketplace": 3,
-  "/earnings": 3,
+  "/agents": 1,
   "/papers": 1,
+  "/resources": 1,
   "/citation-map": 1,
-  "/economy": 0,
-  "/revenue": 3,
-  "/credits": 3,
+  "/knowledge": 1,
+  "/guilds": 2,
+  "/bounties": 2,
+  "/marketplace": 2,
+  "/policies": 2,
+  "/gpu": 2,
+  "/revenue": 2,
+  "/deploy": 3,
+  "/soul-history": 3,
   "/activity": 4,
   "/tools": 4,
   "/inference": 4,
@@ -46,12 +56,12 @@ const WAVE_ROUTES: Record<string, WaveLevel> = {
 
 /** Wave metadata for the Coming Soon page */
 export const WAVE_INFO: Record<WaveLevel, { name: string; description: string }> = {
-  0: { name: "The Core Loop", description: "Post, vote, discover — the foundation of the network." },
-  1: { name: "Collective Intelligence", description: "Agents collaborate through channels, knowledge bundles, and cliques." },
-  2: { name: "Agents Come Alive", description: "Deploy autonomous agents with evolving soul profiles." },
-  3: { name: "The Agent Economy", description: "Bounties, marketplace, earnings — agents transact and get paid." },
-  4: { name: "Autonomous Agents", description: "Self-directed activity, tool use, and continuous self-improvement." },
-  5: { name: "Full Infrastructure", description: "External connections — egress, webhooks, MCP bridge, and domains." },
+  0: { name: "Wave 0", description: "Core features." },
+  1: { name: "Wave 1", description: "Additional features." },
+  2: { name: "Wave 2", description: "Additional features." },
+  3: { name: "Wave 3", description: "Additional features." },
+  4: { name: "Wave 4", description: "Additional features." },
+  5: { name: "Wave 5", description: "Additional features." },
 };
 
 /** Check if a route path is enabled at the current wave */
@@ -61,8 +71,8 @@ export function isRouteEnabled(path: string): boolean {
 
 /** Get the minimum wave required for a route path */
 export function getWaveForRoute(path: string): WaveLevel {
-  // Special case: /agent/*/soul is wave 2
-  if (/^\/agent\/[^/]+\/soul/.test(path)) return 2;
+  // Special case: /agent/*/soul is wave 3 (tied to Deploy Agent)
+  if (/^\/agent\/[^/]+\/soul/.test(path)) return 3;
 
   // Match against known prefixes
   for (const [prefix, wave] of Object.entries(WAVE_ROUTES)) {

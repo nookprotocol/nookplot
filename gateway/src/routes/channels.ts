@@ -17,6 +17,7 @@
 import { Router } from "express";
 import type { Response } from "express";
 import type pg from "pg";
+import { LRUCache } from "lru-cache";
 import type { AuthenticatedRequest } from "../types.js";
 import type { ChannelService } from "../services/channelService.js";
 import type { RuntimeEventBroadcaster } from "../services/runtimeEventBroadcaster.js";
@@ -25,7 +26,11 @@ import type { MessageBus } from "../services/messageBus.js";
 import type { ProactiveScheduler } from "../services/proactiveScheduler.js";
 import type { ContentScanner } from "../services/contentScanner.js";
 import { shouldQuarantine } from "../services/contentScanner.js";
+import type { BundleCitationDetector } from "../services/bundleCitationDetector.js";
+import type { ResourceCitationDetector } from "../services/resourceCitationDetector.js";
+import type { BundleDiscoveryService } from "../services/bundleDiscoveryService.js";
 import { createAuthMiddleware, registeredMiddleware, ownerOnlyMiddleware } from "../middleware/auth.js";
+import { channelMsgRateLimit } from "../middleware/agentRateLimit.js";
 import { logSecurityEvent } from "../middleware/auditLog.js";
 import { verifyMessageSignature, buildSigningPayload } from "../services/messageSigning.js";
 import { gatewayConfig } from "../config.js";
@@ -41,7 +46,7 @@ const ALLOWED_MESSAGE_TYPES = new Set([
 ]);
 
 /** Allowed channel types. */
-const ALLOWED_CHANNEL_TYPES = new Set(["community", "clique", "custom", "project"]);
+const ALLOWED_CHANNEL_TYPES = new Set(["community", "guild", "clique", "custom", "project", "workspace"]);
 
 /** Maximum metadata JSON size in bytes. */
 const MAX_METADATA_SIZE = 4096;
@@ -52,31 +57,23 @@ const MAX_CONTENT_LENGTH = 10_000;
 /** Slug validation regex. */
 const SLUG_REGEX = /^[a-z0-9_-]{1,128}$/;
 
-/** Per-agent per-channel rate limit tracking. */
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+/** Per-agent per-channel rate limit tracking (bounded by LRU eviction). */
 const RATE_LIMIT_WINDOW_MS = 60_000;
 // Configurable per-channel msg rate limit — overridden by factory parameter.
 // Default 60/min (1 msg/sec). Env var: CHANNEL_MSG_RATE_LIMIT.
 let RATE_LIMIT_MAX = 60;
-const RATE_LIMIT_CLEANUP_INTERVAL_MS = 5 * 60_000; // 5 minutes
 
-// Periodically clean up expired rate limit entries to prevent memory leaks
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of rateLimitMap) {
-    if (now > entry.resetAt) {
-      rateLimitMap.delete(key);
-    }
-  }
-}, RATE_LIMIT_CLEANUP_INTERVAL_MS).unref(); // unref() so it doesn't prevent process exit
+const rateLimitCache = new LRUCache<string, { count: number }>({
+  max: 10_000,
+  ttl: RATE_LIMIT_WINDOW_MS,
+});
 
 function checkRateLimit(agentId: string, channelId: string): boolean {
   const key = `${agentId}:${channelId}`;
-  const now = Date.now();
-  const entry = rateLimitMap.get(key);
+  const entry = rateLimitCache.get(key);
 
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+  if (!entry) {
+    rateLimitCache.set(key, { count: 1 });
     return true;
   }
 
@@ -98,6 +95,10 @@ export function createChannelsRouter(
   options?: { channelMsgRateLimit?: number },
   proactiveScheduler?: ProactiveScheduler,
   contentScanner?: ContentScanner,
+  tierGate?: (req: any, res: any, next: any) => void,
+  bundleCitationDetector?: BundleCitationDetector,
+  bundleDiscoveryService?: BundleDiscoveryService,
+  resourceCitationDetector?: ResourceCitationDetector,
 ): Router {
   // Apply configurable per-channel message rate limit
   if (options?.channelMsgRateLimit) {
@@ -158,7 +159,7 @@ export function createChannelsRouter(
           return;
         }
 
-        const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200);
+        const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 500);
         const before = req.query.before ? String(req.query.before) : undefined;
         const messages = await channelService.getHistory(channel.id, { before, limit });
 
@@ -304,11 +305,39 @@ export function createChannelsRouter(
 
         const channels = await channelService.listChannels({ channelType, isPublic, limit, offset });
 
-        // Enrich with member counts
+        // Batch-fetch last message timestamps for all channels
+        const channelIds = channels.map((ch) => ch.id);
+        const lastMsgMap = new Map<string, { content: string; created_at: string; from_name: string | null }>();
+        if (channelIds.length > 0) {
+          const { rows: lastMsgs } = await pool.query<{
+            channel_id: string;
+            content: string;
+            created_at: string;
+            display_name: string | null;
+          }>(
+            `SELECT DISTINCT ON (cm.channel_id)
+               cm.channel_id, cm.content, cm.created_at, a.display_name
+             FROM channel_messages cm
+             LEFT JOIN agents a ON a.id = cm.from_agent_id
+             WHERE cm.channel_id = ANY($1)
+             ORDER BY cm.channel_id, cm.created_at DESC`,
+            [channelIds],
+          );
+          for (const row of lastMsgs) {
+            lastMsgMap.set(row.channel_id, {
+              content: row.content,
+              created_at: row.created_at,
+              from_name: row.display_name,
+            });
+          }
+        }
+
+        // Enrich with member counts + last message info
         const enriched = await Promise.all(
           channels.map(async (ch) => {
             const memberCount = await channelService.getMemberCount(ch.id);
             const isMember = await channelService.isMember(ch.id, agent.id);
+            const lastMsg = lastMsgMap.get(ch.id);
             return {
               id: ch.id,
               slug: ch.slug,
@@ -320,6 +349,9 @@ export function createChannelsRouter(
               memberCount,
               isMember,
               createdAt: ch.created_at,
+              lastMessageAt: lastMsg?.created_at ?? null,
+              lastMessagePreview: lastMsg?.content?.slice(0, 100) ?? null,
+              lastMessageFrom: lastMsg?.from_name ?? null,
             };
           }),
         );
@@ -331,6 +363,109 @@ export function createChannelsRouter(
           error: err instanceof Error ? err.message : String(err),
         });
         res.status(500).json({ error: "Failed to list channels" });
+      }
+    },
+  );
+
+  // -------------------------------------------------------
+  //  GET /v1/channels/mentions — My @mentions across channels
+  //  Must be registered BEFORE /channels/:id to avoid param capture.
+  // -------------------------------------------------------
+  router.get(
+    "/channels/mentions",
+    authMiddleware,
+    registeredMiddleware,
+    async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+      const agent = req.agent!;
+      try {
+        const limit = Math.min(Math.max(parseInt(String(req.query.limit)) || 20, 1), 100);
+        const offset = Math.max(parseInt(String(req.query.offset)) || 0, 0);
+
+        const { rows } = await pool.query<{
+          id: string;
+          channel_id: string;
+          message_id: string;
+          sender_agent_id: string;
+          content_preview: string;
+          read_at: string | null;
+          created_at: string;
+          channel_name: string;
+          channel_slug: string;
+          sender_address: string;
+          sender_name: string | null;
+        }>(
+          `SELECT cm.id, cm.channel_id, cm.message_id, cm.sender_agent_id,
+                  cm.content_preview, cm.read_at, cm.created_at,
+                  ch.name AS channel_name, ch.slug AS channel_slug,
+                  sa.address AS sender_address, sa.display_name AS sender_name
+           FROM channel_mentions cm
+           JOIN channels ch ON ch.id = cm.channel_id
+           JOIN agents sa ON sa.id = cm.sender_agent_id
+           WHERE cm.mentioned_agent_id = $1
+           ORDER BY cm.created_at DESC
+           LIMIT $2 OFFSET $3`,
+          [agent.id, limit, offset],
+        );
+
+        const { rows: [{ count }] } = await pool.query<{ count: string }>(
+          `SELECT COUNT(*) AS count FROM channel_mentions WHERE mentioned_agent_id = $1`,
+          [agent.id],
+        );
+
+        res.json({
+          mentions: rows.map((r) => ({
+            id: r.id,
+            channelId: r.channel_id,
+            channelName: r.channel_name,
+            channelSlug: r.channel_slug,
+            messageId: r.message_id,
+            senderAddress: r.sender_address,
+            senderName: r.sender_name,
+            contentPreview: r.content_preview,
+            readAt: r.read_at,
+            createdAt: r.created_at,
+          })),
+          total: parseInt(count),
+        });
+      } catch (err) {
+        logSecurityEvent("error", "channel-mentions-list-failed", {
+          agentId: agent.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        res.status(500).json({ error: "Failed to list mentions" });
+      }
+    },
+  );
+
+  // -------------------------------------------------------
+  //  POST /v1/channels/mentions/:id/read — Mark mention read
+  // -------------------------------------------------------
+  router.post(
+    "/channels/mentions/:id/read",
+    authMiddleware,
+    registeredMiddleware,
+    async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+      const agent = req.agent!;
+      try {
+        const mentionId = String(req.params.id);
+        const { rowCount } = await pool.query(
+          `UPDATE channel_mentions SET read_at = NOW()
+           WHERE id = $1 AND mentioned_agent_id = $2 AND read_at IS NULL`,
+          [mentionId, agent.id],
+        );
+
+        if (rowCount === 0) {
+          res.status(404).json({ error: "Mention not found or already read" });
+          return;
+        }
+
+        res.json({ ok: true });
+      } catch (err) {
+        logSecurityEvent("error", "channel-mention-read-failed", {
+          agentId: agent.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        res.status(500).json({ error: "Failed to mark mention read" });
       }
     },
   );
@@ -560,8 +695,10 @@ export function createChannelsRouter(
   router.post(
     "/channels/:id/messages",
     authMiddleware,
+    ...(tierGate ? [tierGate] : []),
     registeredMiddleware,
     ownerOnlyMiddleware,
+    channelMsgRateLimit,
     async (req: AuthenticatedRequest, res: Response): Promise<void> => {
       const agent = req.agent!;
 
@@ -663,7 +800,9 @@ export function createChannelsRouter(
             gatewayConfig.contentScanBlockThreshold,
           );
           if (blocked) {
-            contentScanner.recordBlockedContent(agent.id, "channel_message", scanResult).catch(() => {});
+            contentScanner.recordBlockedContent(agent.id, "channel_message", scanResult).catch((err) => {
+              logSecurityEvent("warn", "content-scan-failed", { error: (err as Error).message });
+            });
             logSecurityEvent("warn", "channel-message-blocked", {
               agentId: agent.id,
               channelId,
@@ -692,7 +831,27 @@ export function createChannelsRouter(
 
         // Fire-and-forget content safety scan — flags medium/low threats for admin review
         if (contentScanner) {
-          contentScanner.scanAndRecord(agent.id, "channel_message", message.id, content).catch(() => {});
+          contentScanner.scanAndRecord(agent.id, "channel_message", message.id, content).catch((err) => {
+            logSecurityEvent("warn", "content-scan-failed", { error: (err as Error).message });
+          });
+        }
+
+        // Fire-and-forget bundle citation detection
+        if (bundleCitationDetector) {
+          bundleCitationDetector.detectAndRecord(
+            agent.id, channelId, message.id, content, proactiveScheduler,
+          ).catch((err) => {
+            logSecurityEvent("warn", "citation-detect-failed", { error: (err as Error).message });
+          });
+        }
+
+        // Fire-and-forget resource citation detection (papers, repos)
+        if (resourceCitationDetector) {
+          resourceCitationDetector.detectAndRecord(
+            agent.id, "channel_message", message.id, content, channelId,
+          ).catch((err) => {
+            logSecurityEvent("warn", "resource-citation-detect-failed", { error: (err as Error).message });
+          });
         }
 
         // Publish to message bus for real-time delivery
@@ -716,6 +875,35 @@ export function createChannelsRouter(
           },
         });
 
+        // Fire-and-forget: persist @mentions for unified inbox (all agents, not just proactive)
+        {
+          const mentionPattern = /@(0x[a-fA-F0-9]{6,})/gi;
+          const mentionMatches = [...content.matchAll(mentionPattern)];
+          if (mentionMatches.length > 0) {
+            (async () => {
+              try {
+                for (const match of mentionMatches) {
+                  const prefix = match[1].toLowerCase();
+                  const { rows: matched } = await pool.query<{ id: string }>(
+                    `SELECT id FROM agents WHERE LOWER(address) LIKE $1 AND id != $2 LIMIT 5`,
+                    [`${prefix}%`, agent.id],
+                  );
+                  for (const m of matched) {
+                    await pool.query(
+                      `INSERT INTO channel_mentions (channel_id, message_id, mentioned_agent_id, sender_agent_id, content_preview)
+                       VALUES ($1, $2, $3, $4, $5)
+                       ON CONFLICT DO NOTHING`,
+                      [channelId, message.id, m.id, agent.id, content.slice(0, 300)],
+                    );
+                  }
+                }
+              } catch (err) {
+                logSecurityEvent("debug", "mention-persist-failed", { error: (err as Error).message });
+              }
+            })();
+          }
+        }
+
         // Emit reactive signals to proactive agents in this channel
         if (proactiveScheduler) {
           // Fire-and-forget — don't block the response
@@ -736,7 +924,9 @@ export function createChannelsRouter(
                   senderId: agent.id,
                   senderAddress: agent.address,
                   messagePreview: content.slice(0, 300),
-                }).catch(() => {}); // Swallow errors — reactive is best-effort
+                }).catch((err) => {
+                  logSecurityEvent("debug", "reactive-signal-failed", { signalType: "channel_message", error: (err as Error).message });
+                });
               }
 
               // Detect @mentions by Ethereum address prefix (e.g. @0xAbC123)
@@ -766,7 +956,9 @@ export function createChannelsRouter(
                       senderId: agent.id,
                       senderAddress: agent.address,
                       messagePreview: content.slice(0, 300),
-                    }).catch(() => {});
+                    }).catch((err) => {
+                      logSecurityEvent("debug", "reactive-signal-failed", { signalType: "channel_mention", error: (err as Error).message });
+                    });
                   }
                 }
               }
@@ -822,7 +1014,7 @@ export function createChannelsRouter(
         }
 
         const before = req.query.before ? String(req.query.before) : undefined;
-        const limit = parseInt(String(req.query.limit ?? "50"), 10) || 50;
+        const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 500);
 
         const messages = await channelService.getHistory(channelId, { before, limit });
 
@@ -885,6 +1077,39 @@ export function createChannelsRouter(
           error: err instanceof Error ? err.message : String(err),
         });
         res.status(500).json({ error: "Failed to get message history" });
+      }
+    },
+  );
+
+  // -------------------------------------------------------
+  //  GET /v1/channels/:id/suggested-bundles — Relevant bundles for this channel
+  // -------------------------------------------------------
+  router.get(
+    "/channels/:id/suggested-bundles",
+    authMiddleware,
+    registeredMiddleware,
+    async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+      try {
+        if (!bundleDiscoveryService) {
+          res.status(503).json({ error: "Bundle discovery not available" });
+          return;
+        }
+
+        const channelId = String(req.params.id);
+        const channel = await channelService.getChannel(channelId);
+        if (!channel) {
+          res.status(404).json({ error: "Channel not found" });
+          return;
+        }
+
+        const bundles = await bundleDiscoveryService.discoverForChannel(channelId, 5);
+        res.json({ bundles, channelId });
+      } catch (err) {
+        logSecurityEvent("error", "channel-suggested-bundles-failed", {
+          channelId: String(req.params.id),
+          error: err instanceof Error ? err.message : String(err),
+        });
+        res.status(500).json({ error: "Failed to get suggested bundles" });
       }
     },
   );

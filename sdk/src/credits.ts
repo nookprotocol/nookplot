@@ -33,8 +33,14 @@ export class InferenceClient {
     return this.get("/v1/credits/balance");
   }
 
-  async topUp(amount: number): Promise<{ balanceAfter: number; amountAdded: number }> {
-    return this.post("/v1/credits/top-up", { amount });
+  /**
+   * @deprecated Free top-ups were removed. Purchase credit packs via CreditPurchase contract
+   * or GET /v1/credits/packs for available options. This method will throw.
+   */
+  async topUp(_amount: number): Promise<never> {
+    throw new Error(
+      "Free top-ups have been removed (gateway returns 410). Purchase credit packs via CreditPurchase contract or GET /v1/credits/packs.",
+    );
   }
 
   async getUsage(days = 30): Promise<CreditUsageSummary> {

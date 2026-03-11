@@ -18,7 +18,29 @@ interface InboxThread {
   createdAt: string;
 }
 
-interface ChannelInfo {
+/** Thread summary — one per conversation partner, from GET /v1/inbox/threads */
+export interface ConversationThread {
+  id: string;
+  otherAddress: string;
+  otherName: string | null;
+  direction: "sent" | "received";
+  lastMessage: string;
+  messageType: string;
+  createdAt: string;
+  unreadCount: number;
+}
+
+/** Single message in a conversation, from GET /v1/inbox/conversation/:address */
+export interface ConversationMessage {
+  id: string;
+  direction: "sent" | "received";
+  content: string;
+  messageType: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface ChannelInfo {
   id: string;
   slug: string;
   name: string;
@@ -29,6 +51,9 @@ interface ChannelInfo {
   memberCount: number;
   isMember: boolean;
   createdAt: string;
+  lastMessageAt: string | null;
+  lastMessagePreview: string | null;
+  lastMessageFrom: string | null;
 }
 
 interface ChannelDetail extends ChannelInfo {
@@ -56,7 +81,7 @@ interface ChannelMember {
 }
 
 // ============================================================
-//  useInbox — DM threads with unread counts
+//  useInbox — DM threads with unread counts (legacy)
 // ============================================================
 
 export function useInbox(apiKey: string | null) {
@@ -99,6 +124,75 @@ export function useInbox(apiKey: string | null) {
   }, [apiKey, refresh]);
 
   return { messages, unreadCount, isLoading, refresh, sendMessage, markRead };
+}
+
+// ============================================================
+//  useThreads — conversation thread list (one per partner)
+// ============================================================
+
+export function useThreads(enabled: boolean) {
+  const [threads, setThreads] = useState<ConversationThread[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    if (!enabled) return;
+    setIsLoading(true);
+    try {
+      const data = await gatewayFetch<{ threads: ConversationThread[] }>("/v1/inbox/threads?limit=100");
+      setThreads(data.threads);
+    } catch {
+      // Silently fail
+    } finally {
+      setIsLoading(false);
+    }
+  }, [enabled]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  return { threads, isLoading, refresh };
+}
+
+// ============================================================
+//  useConversation — full bidirectional chat with one agent
+// ============================================================
+
+export function useConversation(enabled: boolean, otherAddress: string | null) {
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [otherName, setOtherName] = useState<string | null>(null);
+  const [myAddress, setMyAddress] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    if (!enabled || !otherAddress) return;
+    setIsLoading(true);
+    try {
+      const data = await gatewayFetch<{
+        messages: ConversationMessage[];
+        otherName: string | null;
+        myAddress: string;
+      }>(`/v1/inbox/conversation/${encodeURIComponent(otherAddress)}?limit=200`);
+      setMessages(data.messages);
+      setOtherName(data.otherName);
+      setMyAddress(data.myAddress);
+    } catch {
+      // Silently fail
+    } finally {
+      setIsLoading(false);
+    }
+  }, [enabled, otherAddress]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const sendMessage = useCallback(async (content: string, messageType = "text") => {
+    if (!enabled || !otherAddress) return;
+    await gatewayFetch("/v1/inbox/send", null, {
+      method: "POST",
+      body: JSON.stringify({ to: otherAddress, content, messageType }),
+    });
+    await refresh();
+  }, [enabled, otherAddress, refresh]);
+
+  return { messages, otherName, myAddress, isLoading, refresh, sendMessage };
 }
 
 // ============================================================
@@ -234,7 +328,11 @@ export function useChannelHistory(apiKey: string | null, channelId: string | nul
 
 export function useMessageStream(apiKey: string | null, onEvent?: (event: { type: string; data: Record<string, unknown> }) => void) {
   const wsRef = useRef<WebSocket | null>(null);
+  const onEventRef = useRef(onEvent);
   const [connected, setConnected] = useState(false);
+
+  // Keep the callback ref fresh without re-triggering the WebSocket connection
+  useEffect(() => { onEventRef.current = onEvent; }, [onEvent]);
 
   useEffect(() => {
     if (!apiKey) return;
@@ -256,7 +354,7 @@ export function useMessageStream(apiKey: string | null, onEvent?: (event: { type
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            onEvent?.(data);
+            onEventRef.current?.(data);
           } catch {
             // Ignore non-JSON
           }
@@ -275,7 +373,7 @@ export function useMessageStream(apiKey: string | null, onEvent?: (event: { type
         wsRef.current = null;
       }
     };
-  }, [apiKey, onEvent]);
+  }, [apiKey]);
 
   return { connected };
 }

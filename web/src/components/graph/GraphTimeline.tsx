@@ -1,24 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Play, Pause, RotateCcw } from "lucide-react";
+import { Play, Pause, RotateCcw, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface Props {
   /** Earliest timestamp in the dataset (unix seconds). */
   minTimestamp: number;
   /** Latest timestamp in the dataset (unix seconds). */
   maxTimestamp: number;
-  /** Current playback cursor (unix seconds). */
-  cursor: number;
-  /** Called when cursor changes. Accepts a value or a functional updater. */
-  onCursorChange: (valOrFn: number | ((prev: number) => number)) => void;
+  /** Shared mutable ref for the playback cursor (written here, read by KnowledgeGraph). */
+  cursorRef: React.MutableRefObject<number>;
   /** Called when timeline is enabled/disabled. */
   onActiveChange: (active: boolean) => void;
   /** Whether the timeline is active. */
   active: boolean;
 }
 
+/** Full playback takes this many seconds regardless of date range. */
+const PLAYBACK_DURATION_SECS = 10;
 const SECONDS_PER_DAY = 86400;
-const TICK_INTERVAL_MS = 100;
-const DAYS_PER_TICK = 1; // 1 day per 100ms = ~10 days/second
+/** Throttle UI (date label + slider) updates to ~15 fps during playback. */
+const DISPLAY_UPDATE_INTERVAL_MS = 66;
 
 function formatDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString("en-US", {
@@ -31,49 +31,95 @@ function formatDate(ts: number): string {
 export function GraphTimeline({
   minTimestamp,
   maxTimestamp,
-  cursor,
-  onCursorChange,
+  cursorRef,
   onActiveChange,
   active,
 }: Props) {
   const [playing, setPlaying] = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // displayCursor drives the slider position + date label.
+  // Updated at ~15 fps during playback (not 60 fps) to avoid re-rendering the parent.
+  const [displayCursor, setDisplayCursor] = useState(maxTimestamp);
+  const rafRef = useRef<number | null>(null);
+  const lastFrameRef = useRef<number>(0);
+  const lastDisplayRef = useRef<number>(0);
 
-  // Use a ref to access cursor inside the interval without re-creating it
-  const cursorRef = useRef(cursor);
-  cursorRef.current = cursor;
+  // Refs to access latest prop values inside rAF without recreating callback
+  const minRef = useRef(minTimestamp);
+  minRef.current = minTimestamp;
+  const maxRef = useRef(maxTimestamp);
+  maxRef.current = maxTimestamp;
 
-  // Stop playback when reaching the end
-  const tick = useCallback(() => {
-    const next = cursorRef.current + DAYS_PER_TICK * SECONDS_PER_DAY;
-    if (next >= maxTimestamp) {
-      setPlaying(false);
-      onCursorChange(maxTimestamp);
-    } else {
-      onCursorChange(next);
-    }
-  }, [maxTimestamp, onCursorChange]);
+  // Smooth animation loop using requestAnimationFrame.
+  // Writes to cursorRef directly (no React state) — zero parent re-renders.
+  // Throttles display updates to ~15 fps for the slider/date UI.
+  const animate = useCallback(
+    (now: number) => {
+      if (!lastFrameRef.current) {
+        lastFrameRef.current = now;
+        lastDisplayRef.current = now;
+        rafRef.current = requestAnimationFrame(animate);
+        return;
+      }
 
+      const dt = (now - lastFrameRef.current) / 1000; // seconds elapsed
+      lastFrameRef.current = now;
+
+      const range = maxRef.current - minRef.current;
+      if (range <= 0) {
+        setPlaying(false);
+        return;
+      }
+
+      // Advance cursor proportionally so full range = PLAYBACK_DURATION_SECS
+      const advance = (range / PLAYBACK_DURATION_SECS) * dt;
+      const next = cursorRef.current + advance;
+
+      if (next >= maxRef.current) {
+        cursorRef.current = maxRef.current;
+        setDisplayCursor(maxRef.current);
+        setPlaying(false);
+        return;
+      }
+
+      // Write directly to shared ref — KnowledgeGraph reads this in paint callbacks.
+      // No React setState here, so zero re-renders propagate up.
+      cursorRef.current = next;
+
+      // Throttle display updates (slider position + date label) to ~15 fps
+      if (now - lastDisplayRef.current >= DISPLAY_UPDATE_INTERVAL_MS) {
+        lastDisplayRef.current = now;
+        setDisplayCursor(next);
+      }
+
+      rafRef.current = requestAnimationFrame(animate);
+    },
+    [cursorRef],
+  );
+
+  // Start/stop the rAF loop when playing changes
   useEffect(() => {
     if (playing) {
-      intervalRef.current = setInterval(tick, TICK_INTERVAL_MS);
-    } else if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+      lastFrameRef.current = 0; // reset so first frame computes dt=0
+      rafRef.current = requestAnimationFrame(animate);
+    } else if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
     }
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [playing, tick]);
+  }, [playing, animate]);
 
   const handlePlayPause = () => {
     if (!active) {
       onActiveChange(true);
-      onCursorChange(minTimestamp);
+      cursorRef.current = minTimestamp;
+      setDisplayCursor(minTimestamp);
       setPlaying(true);
-    } else if (cursor >= maxTimestamp) {
+    } else if (displayCursor >= maxTimestamp) {
       // Reset and play from start
-      onCursorChange(minTimestamp);
+      cursorRef.current = minTimestamp;
+      setDisplayCursor(minTimestamp);
       setPlaying(true);
     } else {
       setPlaying((prev) => !prev);
@@ -83,25 +129,60 @@ export function GraphTimeline({
   const handleReset = () => {
     setPlaying(false);
     onActiveChange(false);
-    onCursorChange(maxTimestamp);
+    cursorRef.current = maxTimestamp;
+    setDisplayCursor(maxTimestamp);
   };
 
   const handleScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = parseInt(e.target.value);
-    onCursorChange(value);
+    cursorRef.current = value;
+    setDisplayCursor(value);
     // Pause while scrubbing
     setPlaying(false);
+  };
+
+  const handleStepBack = () => {
+    setPlaying(false);
+    if (!active) {
+      onActiveChange(true);
+      // Start at one day before the end
+      const v = Math.max(minTimestamp, maxTimestamp - SECONDS_PER_DAY);
+      cursorRef.current = v;
+      setDisplayCursor(v);
+    } else {
+      const v = Math.max(minTimestamp, cursorRef.current - SECONDS_PER_DAY);
+      cursorRef.current = v;
+      setDisplayCursor(v);
+    }
+  };
+
+  const handleStepForward = () => {
+    setPlaying(false);
+    if (!active) {
+      // Already at latest — nothing to step forward to
+      return;
+    }
+    const next = cursorRef.current + SECONDS_PER_DAY;
+    if (next >= maxTimestamp) {
+      // Reached the end — deactivate to show full network
+      onActiveChange(false);
+      cursorRef.current = maxTimestamp;
+      setDisplayCursor(maxTimestamp);
+    } else {
+      cursorRef.current = next;
+      setDisplayCursor(next);
+    }
   };
 
   // Progress percentage for the track background (clamped to 0-100)
   const rawProgress =
     maxTimestamp > minTimestamp
-      ? ((cursor - minTimestamp) / (maxTimestamp - minTimestamp)) * 100
+      ? ((displayCursor - minTimestamp) / (maxTimestamp - minTimestamp)) * 100
       : 100;
   const progress = Math.max(0, Math.min(100, isNaN(rawProgress) ? 100 : rawProgress));
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2">
+    <div className="flex items-center gap-3 bg-card px-3 py-2">
       {/* Play / Pause button */}
       <button
         onClick={handlePlayPause}
@@ -126,17 +207,34 @@ export function GraphTimeline({
         </button>
       )}
 
-      {/* Date display */}
-      <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[90px]">
-        {active ? formatDate(cursor) : "All time"}
-      </span>
+      {/* Date display with step arrows */}
+      <div className="flex items-center gap-0.5">
+        <button
+          onClick={handleStepBack}
+          className="rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+          title="Step back one day"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+        <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[90px] text-center">
+          {active ? formatDate(displayCursor) : "All time"}
+        </span>
+        <button
+          onClick={handleStepForward}
+          disabled={!active}
+          className="rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-default"
+          title="Step forward one day"
+        >
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
 
       {/* Scrubber */}
       <input
         type="range"
         min={minTimestamp}
         max={maxTimestamp}
-        value={cursor}
+        value={displayCursor}
         onChange={handleScrub}
         disabled={!active}
         className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer disabled:opacity-40 disabled:cursor-default"

@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useRef } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useSandboxStore } from "@/store/sandboxStore";
 
 interface SandboxLayoutProps {
@@ -17,7 +18,7 @@ interface SandboxLayoutProps {
 
 export function SandboxLayout({ sidebar, editor, bottom }: SandboxLayoutProps) {
   const { sidebarWidth, setSidebarWidth, bottomHeight, setBottomHeight, bottomPanelOpen } =
-    useSandboxStore();
+    useSandboxStore(useShallow((s) => ({ sidebarWidth: s.sidebarWidth, setSidebarWidth: s.setSidebarWidth, bottomHeight: s.bottomHeight, setBottomHeight: s.setBottomHeight, bottomPanelOpen: s.bottomPanelOpen })));
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Horizontal drag (sidebar width)
@@ -65,12 +66,12 @@ export function SandboxLayout({ sidebar, editor, bottom }: SandboxLayoutProps) {
   );
 
   return (
-    <div ref={containerRef} className="flex h-full w-full flex-col overflow-hidden bg-gray-950">
+    <div ref={containerRef} className="flex h-full w-full flex-col overflow-hidden bg-background">
       {/* Main area: sidebar + editor */}
       <div className="flex flex-1 overflow-hidden" style={{ minHeight: 0 }}>
         {/* Sidebar */}
         <div
-          className="shrink-0 overflow-hidden border-r border-white/10 bg-gray-900"
+          className="shrink-0 overflow-hidden border-r border-border bg-card"
           style={{ width: sidebarWidth }}
         >
           {sidebar}
@@ -78,7 +79,7 @@ export function SandboxLayout({ sidebar, editor, bottom }: SandboxLayoutProps) {
 
         {/* Horizontal resize handle */}
         <div
-          className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-indigo-500/50 active:bg-indigo-500/80"
+          className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent/50 active:bg-accent/80"
           onMouseDown={startHDrag}
         />
 
@@ -93,12 +94,12 @@ export function SandboxLayout({ sidebar, editor, bottom }: SandboxLayoutProps) {
         <>
           {/* Vertical resize handle */}
           <div
-            className="h-1 shrink-0 cursor-row-resize bg-transparent hover:bg-indigo-500/50 active:bg-indigo-500/80"
+            className="h-1 shrink-0 cursor-row-resize bg-transparent hover:bg-accent/50 active:bg-accent/80"
             onMouseDown={startVDrag}
           />
 
           <div
-            className="shrink-0 overflow-hidden border-t border-white/10"
+            className="shrink-0 overflow-hidden border-t border-border"
             style={{ height: bottomHeight }}
           >
             {bottom}

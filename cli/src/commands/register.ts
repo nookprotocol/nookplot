@@ -34,7 +34,7 @@ const MAX_CAPABILITIES = 20;
 const MAX_CAPABILITY_LENGTH = 50;
 
 /** Must match gateway/src/routes/agents.ts REGISTRATION_MESSAGE */
-const REGISTRATION_MESSAGE = "I am registering this address with the Nookplot Agent Gateway";
+export const REGISTRATION_MESSAGE = "I am registering this address with the Nookplot Agent Gateway";
 
 interface RegisterResult {
   apiKey: string;
@@ -50,6 +50,10 @@ interface AgentMeResult {
   did_cid?: string | null;
   didCid?: string | null;
   registeredOnChain?: boolean;
+  erc8004?: {
+    agentId: number;
+    source?: string;
+  } | null;
 }
 
 /** Response from POST /v1/prepare/register */
@@ -303,11 +307,13 @@ async function runRegister(opts: {
   console.log("");
 
   // ── Prepare + Sign + Relay on-chain registration ─────────
-  const relayed = await prepareSignRelay(gatewayUrl, agent.apiKey, wallet);
+  const relayed = await prepareSignRelayRegistration(gatewayUrl, agent.apiKey, wallet);
 
   // ── Wait for on-chain confirmation ─────────────────────
   if (relayed) {
     await waitForOnChain(gatewayUrl, agent.apiKey);
+    // Check ERC-8004 identity status (auto-mint/import fires after relay)
+    await checkErc8004Status(gatewayUrl, agent.apiKey);
   }
 
   // ── Auto-enable proactive scanning ───────────────────
@@ -348,7 +354,7 @@ async function runRegister(opts: {
  *
  * Returns true if the relay was successfully submitted, false on error.
  */
-async function prepareSignRelay(
+export async function prepareSignRelayRegistration(
   gatewayUrl: string,
   apiKey: string,
   wallet: ethers.Wallet | ethers.HDNodeWallet,
@@ -416,7 +422,7 @@ async function prepareSignRelay(
  * Save API key, private key, gateway URL, and address to .env.
  * Creates or updates existing .env file with restrictive permissions.
  */
-function saveCredentials(
+export function saveCredentials(
   apiKey: string,
   privateKey: string,
   gatewayUrl: string,
@@ -502,9 +508,41 @@ async function waitForOnChain(gatewayUrl: string, apiKey: string): Promise<void>
 }
 
 /**
+ * Check ERC-8004 identity status after on-chain registration.
+ * The gateway auto-imports or auto-mints in the background after relay —
+ * poll briefly to show the result.
+ */
+async function checkErc8004Status(gatewayUrl: string, apiKey: string): Promise<void> {
+  const spinner = ora("Checking ERC-8004 identity...").start();
+  const maxWaitMs = 30_000;
+  const pollInterval = 3_000;
+  const start = Date.now();
+
+  while (Date.now() - start < maxWaitMs) {
+    const meResult = await gatewayRequest<AgentMeResult>(
+      gatewayUrl, "GET", "/v1/agents/me", { apiKey },
+    );
+
+    if (!isGatewayError(meResult) && meResult.data.erc8004) {
+      const { agentId, source } = meResult.data.erc8004;
+      if (source === "imported") {
+        spinner.succeed(`Linked existing ERC-8004 identity (Agent ID: #${agentId})`);
+      } else {
+        spinner.succeed(`Minted new ERC-8004 identity (Agent ID: #${agentId})`);
+      }
+      return;
+    }
+
+    await new Promise((r) => setTimeout(r, pollInterval));
+  }
+
+  spinner.warn("ERC-8004 identity not yet available (run `nookplot status` to check later)");
+}
+
+/**
  * Ensure a path is listed in .gitignore.
  */
-function ensureGitignore(entry: string): void {
+export function ensureGitignore(entry: string): void {
   const gitignorePath = resolve(process.cwd(), ".gitignore");
 
   if (existsSync(gitignorePath)) {

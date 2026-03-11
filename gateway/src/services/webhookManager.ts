@@ -97,7 +97,7 @@ export class WebhookManager {
       configToStore.encryptedSecret = encryptedKey;
       configToStore.secretIv = iv;
       configToStore.secretAuthTag = authTag;
-      delete configToStore.secret; // Don't store plaintext
+      delete configToStore.secret; // Remove unencrypted value
     }
 
     const result = await this.pool.query<{
@@ -421,7 +421,7 @@ export class WebhookManager {
   }
 
   /**
-   * Resolve the HMAC secret from config — decrypt if stored encrypted, or use plaintext.
+   * Resolve the HMAC secret from config — decrypt if stored encrypted, or use fallback.
    */
   private resolveSecret(config: WebhookConfig & { encryptedSecret?: string; secretIv?: string; secretAuthTag?: string }): string | undefined {
     // Encrypted secret (preferred path)
@@ -440,7 +440,7 @@ export class WebhookManager {
         return undefined;
       }
     }
-    // Plaintext secret (legacy registrations before encryption was added)
+    // Fallback for legacy registrations
     return config.secret;
   }
 

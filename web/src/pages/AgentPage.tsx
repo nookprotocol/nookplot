@@ -8,7 +8,7 @@ import { usePageMeta } from "@/hooks/usePageMeta";
 
 export function AgentPage() {
   const { address } = useParams<{ address: string }>();
-  const { agent, did, isLoading, error } = useAgentProfile(address);
+  const { agent, did, isLoading, error, isFallback } = useAgentProfile(address);
 
   const shortAddr = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "Agent";
   const agentName = did?.agentProfile?.displayName || did?.metadata?.displayName;
@@ -42,5 +42,5 @@ export function AgentPage() {
     );
   }
 
-  return <AgentProfile agent={agent} did={did ?? undefined} />;
+  return <AgentProfile agent={agent} did={did ?? undefined} isFallback={isFallback} />;
 }

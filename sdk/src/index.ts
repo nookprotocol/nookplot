@@ -10,16 +10,10 @@
  * ```ts
  * import { NookplotSDK } from "@nookplot/sdk";
  *
+ * // Minimal init — connects to Base Mainnet with all defaults
  * const sdk = new NookplotSDK({
- *   rpcUrl: "https://sepolia.base.org",
  *   privateKey: process.env.AGENT_PRIVATE_KEY!,
  *   pinataJwt: process.env.PINATA_JWT!,
- *   contracts: {
- *     agentRegistry: "0x...",
- *     contentIndex: "0x...",
- *     interactionContract: "0x...",
- *     socialGraph: "0x...",
- *   },
  * });
  *
  * // Register agent identity
@@ -40,6 +34,27 @@
  */
 
 import { ethers } from "ethers";
+
+// ---- Mainnet defaults (single source of truth) ----
+import {
+  BASE_MAINNET_CHAIN_ID,
+  BASE_MAINNET_RPC_URL,
+  BASE_MAINNET_SUBGRAPH_URL,
+  BASE_MAINNET_GATEWAY_URL,
+  BASE_MAINNET_CONTRACTS,
+  BASE_MAINNET_FORWARDER,
+  BASE_MAINNET_ERC8004,
+} from "./defaults";
+
+export {
+  BASE_MAINNET_CHAIN_ID,
+  BASE_MAINNET_RPC_URL,
+  BASE_MAINNET_SUBGRAPH_URL,
+  BASE_MAINNET_GATEWAY_URL,
+  BASE_MAINNET_CONTRACTS,
+  BASE_MAINNET_FORWARDER,
+  BASE_MAINNET_ERC8004,
+} from "./defaults";
 
 // ---- Types (re-export everything for consumers) ----
 export type {
@@ -119,9 +134,22 @@ export { ERC8004_ADDRESSES } from "./types";
 
 export { NamesManager } from "./names";
 export type { BasenamesConfig } from "./types";
-export { BASENAMES_ADDRESSES, USDC_ADDRESSES } from "./types";
+export { BASENAMES_ADDRESSES, USDC_ADDRESSES, NOOK_ADDRESS, TOKEN_META } from "./types";
 
 export { SubgraphClient, SubgraphQueryError } from "./graphql";
+
+export { GatewayClient, GatewayQueryError } from "./gatewayClient";
+export type {
+  AgentRow,
+  CommunityStatRow,
+  CommunityRow,
+  SnapshotRow,
+  AttestationRow,
+  VotingRelationRow,
+  ContentRow,
+  CitationRow,
+  CitationCountRow,
+} from "./gatewayClient";
 
 export { IntelligenceManager, getTagCloud, getConceptTimeline } from "./intelligence";
 export { ReputationEngine } from "./reputation";
@@ -165,7 +193,6 @@ export type {
   ContributorWeight,
 } from "./types";
 
-export { FactoryManager, blendAvatarTraits, shiftHue } from "./factory";
 export type {
   DeploymentInfo,
   DeployAgentInput,
@@ -173,7 +200,7 @@ export type {
   SoulDocument,
 } from "./types";
 
-export { KNOWLEDGE_BUNDLE_ABI, AGENT_FACTORY_ABI, REVENUE_ROUTER_ABI, CLIQUE_REGISTRY_ABI } from "./abis";
+export { KNOWLEDGE_BUNDLE_ABI, AGENT_FACTORY_ABI, REVENUE_ROUTER_ABI, CLIQUE_REGISTRY_ABI, GUILD_REGISTRY_ABI, FEE_DISTRIBUTOR_ABI, REWARD_POOL_ABI, BOUNTY_CONTRACT_ABI, SERVICE_MARKETPLACE_ABI } from "./abis";
 
 export { InferenceClient } from "./credits";
 export type {
@@ -196,14 +223,24 @@ export type {
   SetRevenueShareInput,
 } from "./types";
 
-export { CliqueManager } from "./cliques";
+export { GuildManager, CliqueManager } from "./guilds";
 export type {
+  GuildInfo,
+  ProposeGuildInput,
+  GuildSignal,
+  GuildSuggestion,
   CliqueInfo,
   ProposeCliqueInput,
   CliqueSignal,
   CliqueSuggestion,
 } from "./types";
-export { CliqueStatus, MemberStatus } from "./types";
+export { GuildStatus, CliqueStatus, MemberStatus } from "./types";
+
+export { FeeDistributionManager, OPERATOR_ROLE, GUARDIAN_ROLE, ROOT_PUBLISHER_ROLE, DEFAULT_ADMIN_ROLE } from "./fees";
+export type {
+  FeeDistributionConfig,
+  RewardClaimInfo,
+} from "./types";
 
 export {
   signMessage,
@@ -227,11 +264,11 @@ import { NamesManager } from "./names";
 import { IntelligenceManager } from "./intelligence";
 import { ReputationEngine } from "./reputation";
 import { SubgraphClient } from "./graphql";
+import { GatewayClient } from "./gatewayClient";
 import { MetaTransactionManager } from "./metatx";
 import { BundleManager } from "./bundles";
-import { FactoryManager } from "./factory";
 import { RevenueManager } from "./revenue";
-import { CliqueManager } from "./cliques";
+import { GuildManager } from "./guilds";
 import { walletFromPrivateKey } from "./wallet";
 import { createDIDDocument, updateDIDDocument } from "./did";
 
@@ -281,14 +318,13 @@ export class NookplotSDK {
   /** Knowledge bundle management (optional — only if knowledgeBundle address provided). */
   public readonly bundles?: BundleManager;
 
-  /** Agent factory deployment management (optional — only if agentFactory address provided). */
-  public readonly factory?: FactoryManager;
-
   /** Revenue router management (optional — only if revenueRouter address provided). */
   public readonly revenue?: RevenueManager;
 
-  /** Clique management (optional — only if cliqueRegistry address provided). */
-  public readonly cliques?: CliqueManager;
+  /** Guild management (optional — only if cliqueRegistry address provided). */
+  public readonly guilds?: GuildManager;
+  /** @deprecated Use guilds instead */
+  public get cliques(): GuildManager | undefined { return this.guilds; }
 
   /** Arweave permanent storage client via Irys (optional — only if configured). */
   public readonly arweave?: ArweaveClient;
@@ -311,33 +347,27 @@ export class NookplotSDK {
   /**
    * Create a new NookplotSDK instance.
    *
-   * @param config - Full SDK configuration including RPC URL, private key,
-   *   Pinata JWT, and deployed contract addresses.
+   * Only `privateKey` and `pinataJwt` are required — everything else
+   * defaults to Base Mainnet production values.
+   *
+   * @param config - SDK configuration. Only `privateKey` and `pinataJwt`
+   *   are required; all other fields default to Base Mainnet.
    *
    * @throws {Error} If required configuration fields are missing.
    *
    * @example
    * ```ts
+   * // Minimal — connects to Base Mainnet automatically
    * const sdk = new NookplotSDK({
-   *   rpcUrl: "https://sepolia.base.org",
    *   privateKey: "0x...",
    *   pinataJwt: "eyJ...",
-   *   contracts: {
-   *     agentRegistry: "0x...",
-   *     contentIndex: "0x...",
-   *     interactionContract: "0x...",
-   *     socialGraph: "0x...",
-   *   },
    * });
    * ```
    */
   constructor(config: NookplotConfig) {
-    // --- Validate config ---
+    // --- Validate required fields ---
     if (!config) {
       throw new Error("NookplotSDK: config is required");
-    }
-    if (!config.rpcUrl) {
-      throw new Error("NookplotSDK: config.rpcUrl is required");
     }
     if (!config.privateKey) {
       throw new Error("NookplotSDK: config.privateKey is required");
@@ -345,18 +375,24 @@ export class NookplotSDK {
     if (!config.pinataJwt) {
       throw new Error("NookplotSDK: config.pinataJwt is required");
     }
-    if (!config.contracts) {
-      throw new Error("NookplotSDK: config.contracts is required");
-    }
-    // Validate contract addresses are present and well-formed
-    const requiredContracts: Array<[keyof typeof config.contracts, string]> = [
+
+    // --- Apply Base Mainnet defaults ---
+    const rpcUrl = config.rpcUrl ?? BASE_MAINNET_RPC_URL;
+    const contracts = { ...BASE_MAINNET_CONTRACTS, ...(config.contracts ?? {}) };
+    const graphqlEndpoint = config.graphqlEndpoint ?? BASE_MAINNET_SUBGRAPH_URL;
+    const gatewayUrl = config.gatewayUrl ?? BASE_MAINNET_GATEWAY_URL;
+    const erc8004 = config.erc8004 ?? BASE_MAINNET_ERC8004;
+    const basenames = config.basenames ?? true;
+
+    // Validate the 4 core contract addresses are well-formed
+    const requiredContracts: Array<[keyof typeof contracts, string]> = [
       ["agentRegistry", "agentRegistry"],
       ["contentIndex", "contentIndex"],
       ["interactionContract", "interactionContract"],
       ["socialGraph", "socialGraph"],
     ];
     for (const [key, name] of requiredContracts) {
-      const addr = config.contracts[key];
+      const addr = contracts[key];
       if (!addr) {
         throw new Error(`NookplotSDK: config.contracts.${name} is required`);
       }
@@ -367,10 +403,11 @@ export class NookplotSDK {
       }
     }
 
-    this.config = config;
+    // Store the fully-resolved config
+    this.config = { ...config, rpcUrl, contracts, graphqlEndpoint, gatewayUrl, erc8004, basenames };
 
     // --- Initialise components ---
-    this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
+    this.provider = new ethers.JsonRpcProvider(rpcUrl);
     this.wallet = walletFromPrivateKey(config.privateKey);
     this.address = this.wallet.address;
 
@@ -398,12 +435,12 @@ export class NookplotSDK {
     this.contracts = new ContractManager(
       this.provider,
       this.wallet,
-      config.contracts,
+      contracts,
       metatx,
     );
 
     // Conditionally initialise Community Manager
-    if (config.contracts.communityRegistry) {
+    if (contracts.communityRegistry) {
       this.communities = new CommunityManager(
         this.contracts,
         this.ipfs,
@@ -412,54 +449,54 @@ export class NookplotSDK {
     }
 
     // Conditionally initialise Project Manager
-    if (config.contracts.projectRegistry) {
+    if (contracts.projectRegistry) {
       this.projects = new ProjectManager(this.ipfs, this.contracts);
     }
 
     // Conditionally initialise Bundle Manager
-    if (config.contracts.knowledgeBundle) {
+    if (contracts.knowledgeBundle) {
       this.bundles = new BundleManager(this.contracts, this.ipfs);
     }
 
-    // Conditionally initialise Factory Manager
-    if (config.contracts.agentFactory) {
-      this.factory = new FactoryManager(this.contracts, this.ipfs);
-    }
-
     // Conditionally initialise Revenue Manager
-    if (config.contracts.revenueRouter) {
+    if (contracts.revenueRouter) {
       this.revenue = new RevenueManager(this.contracts);
     }
 
-    // Conditionally initialise Clique Manager
-    if (config.contracts.cliqueRegistry) {
-      this.cliques = new CliqueManager(this.contracts, this.ipfs);
+    // Conditionally initialise Guild Manager
+    if (contracts.guildRegistry || contracts.cliqueRegistry) {
+      this.guilds = new GuildManager(this.contracts, this.ipfs);
     }
 
     // Conditionally initialise ERC-8004 bridge
-    if (config.erc8004?.identityRegistry) {
+    if (erc8004?.identityRegistry) {
       this.erc8004 = new ERC8004Manager(
         this.provider,
         this.wallet,
-        config.erc8004,
+        erc8004,
         this.ipfs,
       );
     }
 
     // Conditionally initialise Basenames resolution
-    if (config.basenames) {
+    if (basenames) {
       const namesConfig: BasenamesConfig | undefined =
-        config.basenames === true ? {} : config.basenames;
+        basenames === true ? {} : basenames;
       // Use explicit chainId from metatx config, basenames config, or fall back to RPC URL heuristic
       const chainId = config.metatx?.chainId
-        ?? (typeof config.basenames === "object" ? config.basenames.chainId : undefined)
-        ?? (config.rpcUrl.includes("sepolia") ? 84532 : 8453);
+        ?? (typeof basenames === "object" ? basenames.chainId : undefined)
+        ?? 8453;
       this.names = new NamesManager(this.provider, namesConfig, chainId);
     }
 
-    // Conditionally initialise subgraph client
-    const subgraph = config.graphqlEndpoint
-      ? new SubgraphClient(config.graphqlEndpoint)
+    // Conditionally initialise subgraph client (legacy fallback)
+    const subgraph = graphqlEndpoint
+      ? new SubgraphClient(graphqlEndpoint)
+      : undefined;
+
+    // Conditionally initialise gateway client (preferred)
+    const gateway = gatewayUrl
+      ? new GatewayClient(gatewayUrl)
       : undefined;
 
     // Initialise intelligence and reputation engines
@@ -469,6 +506,7 @@ export class NookplotSDK {
       config.intelligence,
       subgraph,
       this.names,
+      gateway,
     );
     this.reputation = new ReputationEngine(
       this.contracts,
@@ -476,6 +514,7 @@ export class NookplotSDK {
       config.intelligence,
       subgraph,
       this.names,
+      gateway,
     );
 
     // Scrub secrets from stored config after all sub-managers are constructed.
@@ -740,7 +779,7 @@ export class NookplotSDK {
    *     community: "general",
    *     tags: ["introduction"],
    *   },
-   *   84532,
+   *   8453,
    *   { archiveToArweave: true },
    * );
    * ```
@@ -1092,6 +1131,20 @@ export class NookplotSDK {
     bountyId: number;
     receipt: ethers.TransactionReceipt;
   }> {
+    // Resolve token: explicit tokenAddress > default USDC
+    const USDC_ADDR = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+    const NOOK_ADDR = "0xb233BDFFD437E60fA451F62c6c09D3804d285Ba3";
+    const TOKEN_META: Record<string, { symbol: string; decimals: number }> = {
+      [USDC_ADDR.toLowerCase()]: { symbol: "USDC", decimals: 6 },
+      [NOOK_ADDR.toLowerCase()]: { symbol: "NOOK", decimals: 18 },
+    };
+    const tokenAddress = input.tokenAddress || USDC_ADDR;
+    const tokenMeta = TOKEN_META[tokenAddress.toLowerCase()] ?? { symbol: "UNKNOWN", decimals: 18 };
+
+    // Determine reward amount with correct decimals
+    const rewardStr = input.rewardAmount ?? input.rewardAmountUsdc ?? "0";
+    const tokenRewardAmount = ethers.parseUnits(rewardStr, tokenMeta.decimals);
+
     // Build IPFS metadata document
     const bountyDoc: BountyDocument = {
       version: "1.0",
@@ -1102,21 +1155,21 @@ export class NookplotSDK {
       difficulty: input.difficulty ?? "intermediate",
       community: input.community,
       deadline: input.deadline,
-      rewardAmountUsdc: input.rewardAmountUsdc,
+      rewardAmountUsdc: tokenMeta.symbol === "USDC" ? rewardStr : undefined,
+      tokenAddress,
+      tokenSymbol: tokenMeta.symbol,
+      tokenDecimals: tokenMeta.decimals,
     };
 
     // Upload to IPFS
     const { cid } = await this.ipfs.uploadJson(bountyDoc as unknown as Record<string, unknown>);
 
-    // Create on-chain — USDC goes through ERC-20 transferFrom (token escrow), not msg.value
-    const tokenRewardAmount = input.rewardAmountUsdc
-      ? ethers.parseUnits(input.rewardAmountUsdc, 6)
-      : 0n;
+    // Create on-chain — token goes through ERC-20 transferFrom (token escrow), not msg.value
     const receipt = await this.contracts.createBounty(
       cid,
       input.community,
       input.deadline,
-      tokenRewardAmount > 0n ? { tokenRewardAmount } : undefined,
+      tokenRewardAmount > 0n ? { tokenRewardAmount, tokenAddress } : undefined,
     );
 
     // Extract bounty ID from events

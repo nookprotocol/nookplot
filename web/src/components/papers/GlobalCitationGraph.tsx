@@ -4,20 +4,21 @@ import type { ForceGraphMethods, NodeObject } from "react-force-graph-2d";
 import { Plus, Minus } from "lucide-react";
 import { useUIStore } from "@/store/uiStore";
 import { useGlobalCitationGraph } from "@/hooks/usePapers";
-import type { GlobalCitationNode } from "@/lib/paperTypes";
+import type { CitationMapNode } from "@/lib/paperTypes";
 import { CitationMapTooltip } from "./CitationMapTooltip";
 import { CitationMapDetailPanel } from "./CitationMapDetailPanel";
 import { CitationMapLegend } from "./CitationMapLegend";
 
 const LABEL_COLOR = "#9A9890";
 const EDGE_COLOR = "rgba(154, 152, 144, 0.12)";
+const BUNDLE_EDGE_COLOR = "rgba(232, 184, 75, 0.18)";
 const BG_DARK = "#151716";
 const BG_LIGHT = "#FFFFFF";
 
-type FGNode = NodeObject<GlobalCitationNode>;
+type FGNode = NodeObject<CitationMapNode>;
 
 export function GlobalCitationGraph() {
-  const { nodes, edges, meta, isLoading } = useGlobalCitationGraph();
+  const { nodes, edges, bundleNodes: _bundleNodes, meta, isLoading, error, refetch } = useGlobalCitationGraph();
   const theme = useUIStore((s) => s.theme);
   const bgColor = theme === "light" ? BG_LIGHT : BG_DARK;
 
@@ -26,11 +27,11 @@ export function GlobalCitationGraph() {
   const fgRef = useRef<ForceGraphMethods<any, any>>(undefined);
   const [dimensions, setDimensions] = useState({ width: 600, height: 500 });
   const [hoverNode, setHoverNode] = useState<{
-    node: GlobalCitationNode;
+    node: CitationMapNode;
     x: number;
     y: number;
   } | null>(null);
-  const [selectedNode, setSelectedNode] = useState<GlobalCitationNode | null>(null);
+  const [selectedNode, setSelectedNode] = useState<CitationMapNode | null>(null);
   const [hiddenGenres, setHiddenGenres] = useState<Set<string>>(new Set());
 
   // ResizeObserver
@@ -124,6 +125,7 @@ export function GlobalCitationGraph() {
       const y = node.y ?? 0;
       const r = node.radius ?? 5;
       const color = node.color ?? LABEL_COLOR;
+      const isBundle = "type" in node && node.type === "bundle";
 
       // Glow halo
       ctx.globalAlpha = 0.4;
@@ -136,11 +138,31 @@ export function GlobalCitationGraph() {
       ctx.fill();
       ctx.globalAlpha = 1;
 
-      // Main circle
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, 2 * Math.PI);
-      ctx.fillStyle = color;
-      ctx.fill();
+      if (isBundle) {
+        // Rounded rectangle for bundles
+        const w = r * 2.2;
+        const h = r * 1.6;
+        const cr = r * 0.35; // corner radius
+        ctx.beginPath();
+        ctx.moveTo(x - w / 2 + cr, y - h / 2);
+        ctx.lineTo(x + w / 2 - cr, y - h / 2);
+        ctx.quadraticCurveTo(x + w / 2, y - h / 2, x + w / 2, y - h / 2 + cr);
+        ctx.lineTo(x + w / 2, y + h / 2 - cr);
+        ctx.quadraticCurveTo(x + w / 2, y + h / 2, x + w / 2 - cr, y + h / 2);
+        ctx.lineTo(x - w / 2 + cr, y + h / 2);
+        ctx.quadraticCurveTo(x - w / 2, y + h / 2, x - w / 2, y + h / 2 - cr);
+        ctx.lineTo(x - w / 2, y - h / 2 + cr);
+        ctx.quadraticCurveTo(x - w / 2, y - h / 2, x - w / 2 + cr, y - h / 2);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+      } else {
+        // Main circle for papers
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
 
       // Label on hover
       const isHovered = hoverNode?.node.id === node.id;
@@ -163,17 +185,26 @@ export function GlobalCitationGraph() {
       const x = node.x ?? 0;
       const y = node.y ?? 0;
       const r = (node.radius ?? 5) + 2;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, 2 * Math.PI);
-      ctx.fillStyle = color;
-      ctx.fill();
+      const isBundle = "type" in node && node.type === "bundle";
+
+      if (isBundle) {
+        const w = r * 2.2;
+        const h = r * 1.6;
+        ctx.fillStyle = color;
+        ctx.fillRect(x - w / 2, y - h / 2, w, h);
+      } else {
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
     },
     [],
   );
 
   // Interactions
   const handleNodeClick = useCallback((node: FGNode) => {
-    setSelectedNode(node as GlobalCitationNode);
+    setSelectedNode(node as CitationMapNode);
   }, []);
 
   const handleNodeHover = useCallback((node: FGNode | null) => {
@@ -184,7 +215,7 @@ export function GlobalCitationGraph() {
     const coords = fgRef.current.graph2ScreenCoords(node.x ?? 0, node.y ?? 0);
     const rect = containerRef.current?.getBoundingClientRect();
     setHoverNode({
-      node: node as GlobalCitationNode,
+      node: node as CitationMapNode,
       x: (rect?.left ?? 0) + coords.x,
       y: (rect?.top ?? 0) + coords.y,
     });
@@ -209,85 +240,109 @@ export function GlobalCitationGraph() {
         <div className="flex items-center justify-center h-full">
           <p className="text-sm text-muted-foreground">Loading citation graph...</p>
         </div>
-      ) : graphData.nodes.length === 0 ? (
-        <div className="flex items-center justify-center h-full">
-          <p className="text-sm text-muted-foreground">No citation data available.</p>
+      ) : nodes.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-full gap-3">
+          <p className="text-sm text-muted-foreground">
+            {error ? "Failed to load citation data. Please try again." : "No citation data available."}
+          </p>
+          <button
+            onClick={() => refetch()}
+            className="px-3 py-1.5 text-xs rounded-md bg-accent-soft text-accent hover:bg-accent/20 transition-colors"
+          >
+            Retry
+          </button>
         </div>
       ) : (
         <>
-          <ForceGraph2D
-            ref={fgRef}
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            graphData={graphData as any}
-            width={selectedNode ? dimensions.width - 288 : dimensions.width}
-            height={dimensions.height}
-            backgroundColor={bgColor}
-            nodeCanvasObject={paintNode}
-            nodeCanvasObjectMode={() => "replace"}
-            nodePointerAreaPaint={paintPointerArea}
-            onNodeClick={handleNodeClick}
-            onNodeHover={handleNodeHover}
-            linkColor={() => EDGE_COLOR}
-            linkWidth={() => 0.5}
-            linkDirectionalArrowLength={3}
-            linkDirectionalArrowRelPos={1}
-            warmupTicks={50}
-            cooldownTicks={200}
-            d3VelocityDecay={0.4}
-            enableNodeDrag={true}
-            enableZoomInteraction={true}
-            enablePanInteraction={true}
-          />
-
-          {/* Zoom controls */}
-          <div className="absolute bottom-3 right-3 flex flex-col overflow-hidden rounded-lg border border-border">
-            <button
-              onClick={handleZoomIn}
-              className="w-[30px] h-[30px] flex items-center justify-center text-muted hover:text-foreground hover:bg-bg-raised transition-colors"
-              style={{ background: "var(--color-bg-surface)" }}
-              aria-label="Zoom in"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-            <div className="h-px" style={{ background: "var(--color-border)" }} />
-            <button
-              onClick={handleZoomOut}
-              className="w-[30px] h-[30px] flex items-center justify-center text-muted hover:text-foreground hover:bg-bg-raised transition-colors"
-              style={{ background: "var(--color-bg-surface)" }}
-              aria-label="Zoom out"
-            >
-              <Minus className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          {/* Stats badge */}
-          {meta && (
-            <div className="absolute top-3 right-3 rounded-lg border border-border bg-card/80 backdrop-blur-sm px-2.5 py-1 text-[10px] text-muted-foreground">
-              {meta.totalNodes} papers &middot; {meta.totalEdges} citations
+          {graphData.nodes.length === 0 ? (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-sm text-muted-foreground">All genres hidden — toggle below to show.</p>
             </div>
+          ) : (
+            <>
+              <ForceGraph2D
+                ref={fgRef}
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                graphData={graphData as any}
+                width={selectedNode ? dimensions.width - 288 : dimensions.width}
+                height={dimensions.height}
+                backgroundColor={bgColor}
+                nodeCanvasObject={paintNode}
+                nodeCanvasObjectMode={() => "replace"}
+                nodePointerAreaPaint={paintPointerArea}
+                onNodeClick={handleNodeClick}
+                onNodeHover={handleNodeHover}
+                linkColor={(link: { source: string | { id?: string }; target: string | { id?: string } }) => {
+                  const srcId = typeof link.source === "string" ? link.source : link.source?.id ?? "";
+                  return srcId.startsWith("bundle:") ? BUNDLE_EDGE_COLOR : EDGE_COLOR;
+                }}
+                linkWidth={() => 0.5}
+                linkDirectionalArrowLength={(link: { source: string | { id?: string }; target: string | { id?: string } }) => {
+                  const srcId = typeof link.source === "string" ? link.source : link.source?.id ?? "";
+                  return srcId.startsWith("bundle:") ? 0 : 3;
+                }}
+                linkDirectionalArrowRelPos={1}
+                warmupTicks={50}
+                cooldownTicks={200}
+                d3VelocityDecay={0.4}
+                enableNodeDrag={true}
+                enableZoomInteraction={true}
+                enablePanInteraction={true}
+              />
+
+              {/* Zoom controls */}
+              <div className="absolute bottom-3 right-3 flex flex-col overflow-hidden rounded-lg border border-border">
+                <button
+                  onClick={handleZoomIn}
+                  className="w-[30px] h-[30px] flex items-center justify-center text-muted hover:text-foreground hover:bg-bg-raised transition-colors"
+                  style={{ background: "var(--color-bg-surface)" }}
+                  aria-label="Zoom in"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+                <div className="h-px" style={{ background: "var(--color-border)" }} />
+                <button
+                  onClick={handleZoomOut}
+                  className="w-[30px] h-[30px] flex items-center justify-center text-muted hover:text-foreground hover:bg-bg-raised transition-colors"
+                  style={{ background: "var(--color-bg-surface)" }}
+                  aria-label="Zoom out"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {/* Stats badge */}
+              {meta && (
+                <div className="absolute top-3 right-3 rounded-lg border border-border bg-card/80 backdrop-blur-sm px-2.5 py-1 text-[10px] text-muted-foreground">
+                  {meta.totalNodes} papers &middot; {meta.totalEdges} citations
+                  {(meta.totalBundles ?? 0) > 0 && <> &middot; {meta.totalBundles} bundles</>}
+                  {(meta.totalContentNodes ?? 0) > 0 && <> &middot; {meta.totalContentNodes} posts</>}
+                </div>
+              )}
+
+              {hoverNode && !selectedNode && (
+                <CitationMapTooltip
+                  node={hoverNode.node}
+                  x={hoverNode.x}
+                  y={hoverNode.y}
+                />
+              )}
+
+              {selectedNode && (
+                <CitationMapDetailPanel
+                  node={selectedNode}
+                  onClose={() => setSelectedNode(null)}
+                />
+              )}
+            </>
           )}
 
-          {/* Legend with genre filtering */}
+          {/* Legend always visible when data exists */}
           <CitationMapLegend
             nodes={nodes}
             hiddenGenres={hiddenGenres}
             onToggleGenre={handleToggleGenre}
           />
-
-          {hoverNode && !selectedNode && (
-            <CitationMapTooltip
-              node={hoverNode.node}
-              x={hoverNode.x}
-              y={hoverNode.y}
-            />
-          )}
-
-          {selectedNode && (
-            <CitationMapDetailPanel
-              node={selectedNode}
-              onClose={() => setSelectedNode(null)}
-            />
-          )}
         </>
       )}
     </div>

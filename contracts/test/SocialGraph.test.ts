@@ -593,6 +593,322 @@ describe("SocialGraph", function () {
   });
 
   // ============================================================
+  //                     ENDORSEMENT
+  // ============================================================
+
+  describe("Endorsement", function () {
+    it("should create an endorsement", async function () {
+      await expect(
+        socialGraph.connect(agentA).endorse(agentB.address, "solidity", 5, "Expert smart contract dev")
+      ).to.emit(socialGraph, "EndorsementCreated");
+    });
+
+    it("should store endorsement data correctly", async function () {
+      await socialGraph.connect(agentA).endorse(agentB.address, "solidity", 4, "Great work on bounty #42");
+
+      const endorsement = await socialGraph.getEndorsement(agentA.address, agentB.address, "solidity");
+      expect(endorsement.endorser).to.equal(agentA.address);
+      expect(endorsement.endorsee).to.equal(agentB.address);
+      expect(endorsement.skill).to.equal("solidity");
+      expect(endorsement.rating).to.equal(4);
+      expect(endorsement.context).to.equal("Great work on bounty #42");
+      expect(endorsement.timestamp).to.be.greaterThan(0);
+      expect(endorsement.skillHash).to.equal(ethers.keccak256(ethers.toUtf8Bytes("solidity")));
+    });
+
+    it("should increment endorsement counts", async function () {
+      await socialGraph.connect(agentA).endorse(agentB.address, "solidity", 5, "");
+
+      expect(await socialGraph.endorsementsReceivedCount(agentB.address)).to.equal(1);
+      expect(await socialGraph.endorsementsGivenCount(agentA.address)).to.equal(1);
+    });
+
+    it("should allow multiple skills for same endorsee", async function () {
+      await socialGraph.connect(agentA).endorse(agentB.address, "solidity", 5, "");
+      await socialGraph.connect(agentA).endorse(agentB.address, "typescript", 4, "");
+
+      expect(await socialGraph.endorsementsReceivedCount(agentB.address)).to.equal(2);
+      expect(await socialGraph.endorsementsGivenCount(agentA.address)).to.equal(2);
+    });
+
+    it("should allow multiple agents to endorse same skill", async function () {
+      await socialGraph.connect(agentA).endorse(agentB.address, "solidity", 5, "");
+      await socialGraph.connect(agentC).endorse(agentB.address, "solidity", 3, "");
+
+      expect(await socialGraph.endorsementsReceivedCount(agentB.address)).to.equal(2);
+    });
+
+    it("should report endorsement status correctly", async function () {
+      await socialGraph.connect(agentA).endorse(agentB.address, "solidity", 5, "");
+
+      expect(await socialGraph.hasEndorsed(agentA.address, agentB.address, "solidity")).to.be.true;
+      expect(await socialGraph.hasEndorsed(agentA.address, agentB.address, "typescript")).to.be.false;
+      expect(await socialGraph.hasEndorsed(agentB.address, agentA.address, "solidity")).to.be.false;
+    });
+
+    it("should update endorsement on re-endorse (same skill)", async function () {
+      await socialGraph.connect(agentA).endorse(agentB.address, "solidity", 3, "decent");
+      await socialGraph.connect(agentA).endorse(agentB.address, "solidity", 5, "improved!");
+
+      const endorsement = await socialGraph.getEndorsement(agentA.address, agentB.address, "solidity");
+      expect(endorsement.rating).to.equal(5);
+      expect(endorsement.context).to.equal("improved!");
+
+      // Count should NOT increment on update
+      expect(await socialGraph.endorsementsReceivedCount(agentB.address)).to.equal(1);
+      expect(await socialGraph.endorsementsGivenCount(agentA.address)).to.equal(1);
+    });
+
+    it("should allow empty context", async function () {
+      await socialGraph.connect(agentA).endorse(agentB.address, "solidity", 5, "");
+
+      const endorsement = await socialGraph.getEndorsement(agentA.address, agentB.address, "solidity");
+      expect(endorsement.context).to.equal("");
+    });
+
+    it("should revert when endorsing self", async function () {
+      await expect(
+        socialGraph.connect(agentA).endorse(agentA.address, "solidity", 5, "")
+      ).to.be.revertedWithCustomError(socialGraph, "CannotEndorseSelf");
+    });
+
+    it("should revert with invalid rating (0)", async function () {
+      await expect(
+        socialGraph.connect(agentA).endorse(agentB.address, "solidity", 0, "")
+      ).to.be.revertedWithCustomError(socialGraph, "InvalidRating");
+    });
+
+    it("should revert with invalid rating (6)", async function () {
+      await expect(
+        socialGraph.connect(agentA).endorse(agentB.address, "solidity", 6, "")
+      ).to.be.revertedWithCustomError(socialGraph, "InvalidRating");
+    });
+
+    it("should revert with skill too short (1 char)", async function () {
+      await expect(
+        socialGraph.connect(agentA).endorse(agentB.address, "a", 5, "")
+      ).to.be.revertedWithCustomError(socialGraph, "SkillTooShort");
+    });
+
+    it("should revert with skill too long (65 chars)", async function () {
+      const longSkill = "a".repeat(65);
+      await expect(
+        socialGraph.connect(agentA).endorse(agentB.address, longSkill, 5, "")
+      ).to.be.revertedWithCustomError(socialGraph, "SkillTooLong");
+    });
+
+    it("should revert with context too long (257 chars)", async function () {
+      const longContext = "a".repeat(257);
+      await expect(
+        socialGraph.connect(agentA).endorse(agentB.address, "solidity", 5, longContext)
+      ).to.be.revertedWithCustomError(socialGraph, "ContextTooLong");
+    });
+
+    it("should accept skill at min length (2 chars)", async function () {
+      await expect(
+        socialGraph.connect(agentA).endorse(agentB.address, "go", 5, "")
+      ).to.emit(socialGraph, "EndorsementCreated");
+    });
+
+    it("should accept skill at max length (64 chars)", async function () {
+      const maxSkill = "a".repeat(64);
+      await expect(
+        socialGraph.connect(agentA).endorse(agentB.address, maxSkill, 5, "")
+      ).to.emit(socialGraph, "EndorsementCreated");
+    });
+
+    it("should accept context at max length (256 chars)", async function () {
+      const maxContext = "a".repeat(256);
+      await expect(
+        socialGraph.connect(agentA).endorse(agentB.address, "solidity", 5, maxContext)
+      ).to.emit(socialGraph, "EndorsementCreated");
+    });
+
+    it("should revert when endorser is not registered", async function () {
+      await expect(
+        socialGraph.connect(nonAgent).endorse(agentB.address, "solidity", 5, "")
+      ).to.be.revertedWithCustomError(socialGraph, "NotRegisteredAgent");
+    });
+
+    it("should revert when endorsee is not registered", async function () {
+      await expect(
+        socialGraph.connect(agentA).endorse(nonAgent.address, "solidity", 5, "")
+      ).to.be.revertedWithCustomError(socialGraph, "NotRegisteredAgent");
+    });
+
+    it("should revert when paused", async function () {
+      await socialGraph.connect(owner).pause();
+      await expect(
+        socialGraph.connect(agentA).endorse(agentB.address, "solidity", 5, "")
+      ).to.be.revertedWithCustomError(socialGraph, "EnforcedPause");
+    });
+  });
+
+  // ============================================================
+  //                   REVOKE ENDORSEMENT
+  // ============================================================
+
+  describe("Revoke Endorsement", function () {
+    beforeEach(async function () {
+      await socialGraph.connect(agentA).endorse(agentB.address, "solidity", 5, "Expert");
+    });
+
+    it("should revoke endorsement successfully", async function () {
+      await expect(
+        socialGraph.connect(agentA).revokeEndorsement(agentB.address, "solidity")
+      ).to.emit(socialGraph, "EndorsementRevoked");
+    });
+
+    it("should decrement endorsement counts", async function () {
+      await socialGraph.connect(agentA).revokeEndorsement(agentB.address, "solidity");
+
+      expect(await socialGraph.endorsementsReceivedCount(agentB.address)).to.equal(0);
+      expect(await socialGraph.endorsementsGivenCount(agentA.address)).to.equal(0);
+    });
+
+    it("should clear endorsement data", async function () {
+      await socialGraph.connect(agentA).revokeEndorsement(agentB.address, "solidity");
+
+      expect(await socialGraph.hasEndorsed(agentA.address, agentB.address, "solidity")).to.be.false;
+    });
+
+    it("should revert when no endorsement exists", async function () {
+      await expect(
+        socialGraph.connect(agentA).revokeEndorsement(agentB.address, "typescript")
+      ).to.be.revertedWithCustomError(socialGraph, "NotEndorsed");
+    });
+
+    it("should allow re-endorsing after revocation", async function () {
+      await socialGraph.connect(agentA).revokeEndorsement(agentB.address, "solidity");
+      await socialGraph.connect(agentA).endorse(agentB.address, "solidity", 3, "New assessment");
+
+      expect(await socialGraph.hasEndorsed(agentA.address, agentB.address, "solidity")).to.be.true;
+      const endorsement = await socialGraph.getEndorsement(agentA.address, agentB.address, "solidity");
+      expect(endorsement.rating).to.equal(3);
+    });
+
+    it("should only revoke the specific skill endorsement", async function () {
+      await socialGraph.connect(agentA).endorse(agentB.address, "typescript", 4, "");
+      await socialGraph.connect(agentA).revokeEndorsement(agentB.address, "solidity");
+
+      expect(await socialGraph.hasEndorsed(agentA.address, agentB.address, "solidity")).to.be.false;
+      expect(await socialGraph.hasEndorsed(agentA.address, agentB.address, "typescript")).to.be.true;
+      expect(await socialGraph.endorsementsReceivedCount(agentB.address)).to.equal(1);
+      expect(await socialGraph.endorsementsGivenCount(agentA.address)).to.equal(1);
+    });
+  });
+
+  // ============================================================
+  //        ENDORSEMENT META-TRANSACTIONS (ERC-2771)
+  // ============================================================
+
+  describe("Endorsement Meta-Transactions", function () {
+    let relayer: SignerWithAddress;
+
+    beforeEach(async function () {
+      relayer = treasury;
+    });
+
+    it("should allow endorsement via meta-transaction", async function () {
+      const nonce = await forwarder.nonces(agentA.address);
+      const block = await ethers.provider.getBlock("latest");
+      const deadline = block!.timestamp + 3600;
+      const data = socialGraph.interface.encodeFunctionData("endorse", [
+        agentB.address,
+        "solidity",
+        5,
+        "Great contract work",
+      ]);
+
+      const domain = {
+        name: "NookplotForwarder",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await forwarder.getAddress(),
+      };
+      const types = {
+        ForwardRequest: [
+          { name: "from", type: "address" },
+          { name: "to", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "gas", type: "uint256" },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint48" },
+          { name: "data", type: "bytes" },
+        ],
+      };
+      const value = {
+        from: agentA.address,
+        to: await socialGraph.getAddress(),
+        value: 0n,
+        gas: 500000n,
+        nonce,
+        deadline,
+        data,
+      };
+      const signature = await agentA.signTypedData(domain, types, value);
+
+      await forwarder.connect(relayer).execute({ ...value, signature });
+
+      expect(await socialGraph.hasEndorsed(agentA.address, agentB.address, "solidity")).to.be.true;
+      expect(await socialGraph.endorsementsReceivedCount(agentB.address)).to.equal(1);
+
+      const endorsement = await socialGraph.getEndorsement(agentA.address, agentB.address, "solidity");
+      expect(endorsement.endorser).to.equal(agentA.address);
+      expect(endorsement.endorsee).to.equal(agentB.address);
+      expect(endorsement.rating).to.equal(5);
+      expect(endorsement.context).to.equal("Great contract work");
+    });
+
+    it("should allow revoking endorsement via meta-transaction", async function () {
+      // First endorse directly
+      await socialGraph.connect(agentA).endorse(agentB.address, "solidity", 5, "");
+
+      // Then revoke via meta-tx
+      const nonce = await forwarder.nonces(agentA.address);
+      const block = await ethers.provider.getBlock("latest");
+      const deadline = block!.timestamp + 3600;
+      const data = socialGraph.interface.encodeFunctionData("revokeEndorsement", [
+        agentB.address,
+        "solidity",
+      ]);
+
+      const domain = {
+        name: "NookplotForwarder",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await forwarder.getAddress(),
+      };
+      const types = {
+        ForwardRequest: [
+          { name: "from", type: "address" },
+          { name: "to", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "gas", type: "uint256" },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint48" },
+          { name: "data", type: "bytes" },
+        ],
+      };
+      const value = {
+        from: agentA.address,
+        to: await socialGraph.getAddress(),
+        value: 0n,
+        gas: 500000n,
+        nonce,
+        deadline,
+        data,
+      };
+      const signature = await agentA.signTypedData(domain, types, value);
+
+      await forwarder.connect(relayer).execute({ ...value, signature });
+
+      expect(await socialGraph.hasEndorsed(agentA.address, agentB.address, "solidity")).to.be.false;
+      expect(await socialGraph.endorsementsReceivedCount(agentB.address)).to.equal(0);
+    });
+  });
+
+  // ============================================================
   //                        HELPERS
   // ============================================================
 

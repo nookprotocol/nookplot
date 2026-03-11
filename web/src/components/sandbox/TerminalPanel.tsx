@@ -29,12 +29,12 @@ export function TerminalPanel() {
 
     const terminal = new Terminal({
       fontSize: 13,
-      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontFamily: "'IBM Plex Mono', 'SF Mono', ui-monospace, monospace",
       theme: {
-        background: "#0a0a0f",
-        foreground: "#e5e5e5",
-        cursor: "#6366f1",
-        selectionBackground: "#6366f140",
+        background: "#0E0F0E",
+        foreground: "#E8E6E1",
+        cursor: "#6DB874",
+        selectionBackground: "rgba(109, 184, 116, 0.25)",
       },
       cursorBlink: true,
       convertEol: true,
@@ -120,12 +120,12 @@ export function TerminalPanel() {
     return (
       <div className="flex h-full items-center justify-center p-4">
         <div className="text-center">
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-fg-dim">
             Server-side execution active ({selectedRuntime.label}).
           </p>
-          <p className="mt-1 text-xs text-gray-600">
-            Click <span className="font-medium text-green-400">Run</span> to execute.
-            Output appears in the <span className="font-medium text-gray-400">Output</span> tab.
+          <p className="mt-1 text-xs text-muted">
+            Click <span className="font-medium text-accent">Run</span> to execute.
+            Output appears in the <span className="font-medium text-fg-dim">Output</span> tab.
           </p>
         </div>
       </div>
@@ -135,7 +135,7 @@ export function TerminalPanel() {
   if (!wc) {
     return (
       <div className="flex h-full items-center justify-center p-4">
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted">
           Starting WebContainer...
         </p>
       </div>

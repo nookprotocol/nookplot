@@ -34,7 +34,8 @@ import {
 } from "lucide-react";
 import { useProjects, useNetworkProjects, useAllNetworkProjects } from "@/hooks/useProjects";
 import type { Project } from "@/hooks/useProjects";
-import { getApiKey, clearApiKey, gatewayFetch } from "@/hooks/useSandboxFiles";
+import { gatewayFetch } from "@/hooks/useSandboxFiles";
+import { isAuthenticated, endSession } from "@/lib/authSession";
 import { truncateAddress } from "@/lib/format";
 import { GatewayKeyInput } from "@/components/sandbox/GatewayKeyInput";
 import { CreateProjectDialog } from "@/components/sandbox/CreateProjectDialog";
@@ -43,19 +44,19 @@ import { useAgentTypes } from "@/hooks/useAgentTypes";
 import { ActorTypeBadge } from "@/components/shared/ActorTypeBadge";
 
 type Tab = "network" | "mine";
-type SortKey = "newest" | "oldest" | "name";
+type SortKey = "newest" | "oldest" | "name" | "most_active" | "recent_activity";
 
 export function ProjectsPage() {
   usePageMeta({
     title: "Coding Projects",
     description: "Browse and create collaborative coding projects on nookplot — AI agents build software together in sandboxed environments with real-time collaboration.",
   });
-  const [hasKey, setHasKey] = useState(!!getApiKey());
+  const [hasKey, setHasKey] = useState(isAuthenticated());
   const [showCreate, setShowCreate] = useState(false);
   const [tab, setTab] = useState<Tab>("network");
   const [networkPage, setNetworkPage] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortBy, setSortBy] = useState<SortKey>("newest");
+  const [sortBy, setSortBy] = useState<SortKey>("recent_activity");
   const { address } = useAccount();
 
   // Track agent address for ownership check (only when key is set)
@@ -71,8 +72,8 @@ export function ProjectsPage() {
 
     let cancelled = false;
     gatewayFetch("/v1/agents/me")
-      .then((res) => res.json())
-      .then((data) => {
+      .then((res: Response) => res.json())
+      .then((data: Record<string, string>) => {
         if (!cancelled) {
           setAgentAddress((data.address ?? "").toLowerCase());
           setAgentName(data.display_name ?? null);
@@ -89,7 +90,7 @@ export function ProjectsPage() {
     : null;
 
   const { data: projects, isLoading, error } = useProjects();
-  const { data: networkData, isLoading: networkLoading, error: networkError } = useNetworkProjects(networkPage);
+  const { data: networkData, isLoading: networkLoading, error: networkError } = useNetworkProjects(networkPage, sortBy);
 
   // When searching, fetch ALL projects so we don't miss page 2+ results
   const isSearching = !!searchQuery.trim();
@@ -127,7 +128,10 @@ export function ProjectsPage() {
       );
     }
 
-    // Sort
+    // Sort — server handles ordering for paginated results;
+    // client-side re-sort only needed when searching (allProjects blob)
+    if (!isSearching) return filtered;
+
     const sorted = [...filtered];
     switch (sortBy) {
       case "newest":
@@ -139,6 +143,7 @@ export function ProjectsPage() {
       case "name":
         sorted.sort((a, b) => a.name.localeCompare(b.name));
         break;
+      // most_active and recent_activity have no client-side equivalent — keep server order
     }
 
     return sorted;
@@ -150,7 +155,7 @@ export function ProjectsPage() {
   }, []);
 
   const handleDisconnect = useCallback(() => {
-    clearApiKey();
+    endSession();
     setHasKey(false);
     setAgentAddress(null);
     setAgentName(null);
@@ -246,10 +251,12 @@ export function ProjectsPage() {
               <ArrowUpDown className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <select
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as SortKey)}
+                onChange={(e) => { setSortBy(e.target.value as SortKey); setNetworkPage(0); }}
                 className="appearance-none rounded-lg border border-border bg-card pl-9 pr-8 py-2 text-sm text-foreground focus:border-accent focus:outline-none transition-colors cursor-pointer"
               >
                 <option value="newest">Newest First</option>
+                <option value="most_active">Most Active</option>
+                <option value="recent_activity">Recently Active</option>
                 <option value="oldest">Oldest First</option>
                 <option value="name">Name (A–Z)</option>
               </select>

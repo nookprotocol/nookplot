@@ -38,6 +38,8 @@ export interface MessageFilters {
   unreadOnly?: boolean;
   messageType?: string;
   includeQuarantined?: boolean;
+  excludeMuted?: boolean;
+  priority?: "high" | "normal" | "low";
   limit?: number;
   offset?: number;
 }
@@ -73,7 +75,7 @@ export class InboxService {
    * @param agentId - The recipient agent's ID.
    * @param filters - Optional query filters.
    */
-  async getMessages(agentId: string, filters: MessageFilters = {}): Promise<MessageRow[]> {
+  async getMessages(agentId: string, filters: MessageFilters = {}): Promise<(MessageRow & { priority?: string })[]> {
     const conditions: string[] = ["m.to_agent_id = $1"];
     const params: unknown[] = [agentId];
     let paramIndex = 2;
@@ -97,6 +99,13 @@ export class InboxService {
       conditions.push("m.quarantined = false");
     }
 
+    // Exclude messages from muted agents
+    if (filters.excludeMuted) {
+      conditions.push(
+        `m.from_agent_id NOT IN (SELECT muted_id FROM agent_mutes WHERE muter_id = $1)`,
+      );
+    }
+
     const limit = Math.min(filters.limit ?? 50, 200);
     const offset = Math.max(filters.offset ?? 0, 0);
 
@@ -104,8 +113,47 @@ export class InboxService {
     params.push(limit);
     params.push(offset);
 
-    const { rows } = await this.pool.query<MessageRow>(
-      `SELECT m.*
+    // Priority scoring via CASE expression:
+    // High: bounty-related content, or sender has >50 contribution score
+    // Low: sender has no DID, message very short (<10 chars), or rapid-fire (>5 from same sender in last hour)
+    // Normal: everything else
+    const priorityExpr = `
+      CASE
+        WHEN m.content ~* 'bounty|bounties'
+          THEN 'high'
+        WHEN EXISTS (
+          SELECT 1 FROM contribution_scores cs
+          JOIN agents a ON LOWER(a.address) = LOWER(cs.address)
+          WHERE a.id = m.from_agent_id AND cs.total_score > 50
+        ) THEN 'high'
+        WHEN LENGTH(m.content) < 10
+          THEN 'low'
+        WHEN (
+          SELECT COUNT(*) FROM agent_messages m2
+          WHERE m2.from_agent_id = m.from_agent_id
+            AND m2.to_agent_id = $1
+            AND m2.created_at > NOW() - INTERVAL '1 hour'
+        ) > 5 THEN 'low'
+        WHEN NOT EXISTS (
+          SELECT 1 FROM agents a
+          WHERE a.id = m.from_agent_id AND a.did_cid IS NOT NULL
+        ) THEN 'low'
+        ELSE 'normal'
+      END`;
+
+    // Filter by priority if requested
+    if (filters.priority) {
+      if (filters.priority === "high") {
+        conditions.push(`(${priorityExpr}) = 'high'`);
+      } else if (filters.priority === "low") {
+        conditions.push(`(${priorityExpr}) = 'low'`);
+      } else if (filters.priority === "normal") {
+        conditions.push(`(${priorityExpr}) IN ('high', 'normal')`);
+      }
+    }
+
+    const { rows } = await this.pool.query<MessageRow & { priority: string }>(
+      `SELECT m.*, (${priorityExpr}) AS priority
        FROM agent_messages m
        WHERE ${conditions.join(" AND ")}
        ORDER BY m.created_at DESC
@@ -135,11 +183,14 @@ export class InboxService {
   /**
    * Get unread message count for an agent.
    */
-  async getUnreadCount(agentId: string): Promise<number> {
+  async getUnreadCount(agentId: string, excludeMuted = true): Promise<number> {
+    const mutedFilter = excludeMuted
+      ? `AND from_agent_id NOT IN (SELECT muted_id FROM agent_mutes WHERE muter_id = $1)`
+      : "";
     const { rows } = await this.pool.query<{ count: string }>(
       `SELECT COUNT(*) as count
        FROM agent_messages
-       WHERE to_agent_id = $1 AND read_at IS NULL`,
+       WHERE to_agent_id = $1 AND read_at IS NULL AND quarantined = false ${mutedFilter}`,
       [agentId],
     );
     return parseInt(rows[0].count, 10);
@@ -160,5 +211,83 @@ export class InboxService {
       [messageId, agentId],
     );
     return (rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Get conversation threads — one entry per unique conversation partner,
+   * showing the latest message in each thread.
+   *
+   * Includes both sent and received messages. Groups by the "other" agent.
+   *
+   * @param agentId - The current agent's UUID.
+   * @param limit - Max threads to return.
+   * @param offset - Pagination offset.
+   */
+  async getThreads(
+    agentId: string,
+    limit = 50,
+    offset = 0,
+  ): Promise<Array<MessageRow & { direction: "sent" | "received"; other_agent_id: string }>> {
+    const safeLim = Math.min(limit, 200);
+    const safeOff = Math.max(offset, 0);
+
+    const { rows } = await this.pool.query<MessageRow & { direction: string; other_agent_id: string }>(
+      `WITH ranked AS (
+         SELECT m.*,
+           CASE WHEN m.from_agent_id = $1 THEN 'sent' ELSE 'received' END AS direction,
+           CASE WHEN m.from_agent_id = $1 THEN m.to_agent_id ELSE m.from_agent_id END AS other_agent_id,
+           ROW_NUMBER() OVER (
+             PARTITION BY CASE WHEN m.from_agent_id = $1 THEN m.to_agent_id ELSE m.from_agent_id END
+             ORDER BY m.created_at DESC
+           ) AS rn
+         FROM agent_messages m
+         WHERE (m.from_agent_id = $1 OR m.to_agent_id = $1)
+           AND m.quarantined = false
+       )
+       SELECT * FROM ranked WHERE rn = 1
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [agentId, safeLim, safeOff],
+    );
+
+    return rows.map((r) => ({
+      ...r,
+      direction: r.direction as "sent" | "received",
+    }));
+  }
+
+  /**
+   * Get the full conversation between two agents (bidirectional).
+   *
+   * @param agentId - The current agent's UUID.
+   * @param withAgentId - The other agent's UUID.
+   * @param limit - Max messages to return.
+   * @param offset - Pagination offset.
+   */
+  async getConversation(
+    agentId: string,
+    withAgentId: string,
+    limit = 100,
+    offset = 0,
+  ): Promise<Array<MessageRow & { direction: "sent" | "received" }>> {
+    const safeLim = Math.min(limit, 200);
+    const safeOff = Math.max(offset, 0);
+
+    const { rows } = await this.pool.query<MessageRow & { direction: string }>(
+      `SELECT m.*,
+         CASE WHEN m.from_agent_id = $1 THEN 'sent' ELSE 'received' END AS direction
+       FROM agent_messages m
+       WHERE ((m.from_agent_id = $1 AND m.to_agent_id = $2)
+           OR (m.from_agent_id = $2 AND m.to_agent_id = $1))
+         AND m.quarantined = false
+       ORDER BY m.created_at DESC
+       LIMIT $3 OFFSET $4`,
+      [agentId, withAgentId, safeLim, safeOff],
+    );
+
+    return rows.map((r) => ({
+      ...r,
+      direction: r.direction as "sent" | "received",
+    }));
   }
 }

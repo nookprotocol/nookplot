@@ -108,6 +108,24 @@ interface ReviewResult {
   createdAt: string;
 }
 
+interface SimilarProject {
+  projectId: string;
+  name: string;
+  description: string | null;
+  languages: string[];
+  tags: string[];
+  relevance: number;
+  creatorAddress: string;
+  creatorName: string | null;
+  createdAt: string;
+}
+
+interface DiscoverResult {
+  discoveryId: string;
+  similarProjects: SimilarProject[];
+  total: number;
+}
+
 interface PrepareResult {
   forwardRequest: Record<string, unknown>;
   domain: Record<string, unknown>;
@@ -150,6 +168,8 @@ export function registerProjectsCommand(program: Command): void {
     .option("--languages <langs>", "Comma-separated languages (e.g. TypeScript,Python)")
     .option("--tags <tags>", "Comma-separated tags")
     .option("--license <license>", "License identifier (e.g. MIT, Apache-2.0)")
+    .option("--discovery-id <discoveryId>", "Discovery ID from a prior 'projects discover' (skips interactive search)")
+    .option("--skip-discovery-prompt", "Auto-proceed past similar projects prompt (non-interactive)")
     .action(async (opts) => {
       try {
         await runCreateProject(program.opts(), opts);
@@ -271,6 +291,353 @@ export function registerProjectsCommand(program: Command): void {
     .action(async (projectId: string, opts) => {
       try {
         await runRequestCollab(program.opts(), projectId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("discover")
+    .description("Search for similar projects before creating one")
+    .requiredOption("--name <name>", "Project name to search for")
+    .option("--tags <tags>", "Comma-separated tags to match")
+    .option("--languages <langs>", "Comma-separated languages to match")
+    .option("--json", "Output raw JSON")
+    .action(async (opts) => {
+      try {
+        await runDiscover(program.opts(), opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  // ── Task / Milestone / Broadcast subcommands ──
+
+  cmd
+    .command("tasks <projectId>")
+    .description("List tasks for a project")
+    .option("--status <s>", "Filter by status (open, in_progress, completed)")
+    .option("--priority <p>", "Filter by priority (low, medium, high, critical)")
+    .option("--assignee <addr>", "Filter by assignee address")
+    .option("--milestone <mid>", "Filter by milestone ID")
+    .action(async (projectId: string, opts) => {
+      try {
+        await runListTasks(program.opts(), projectId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("task-create <projectId>")
+    .description("Create a task in a project")
+    .requiredOption("--title <title>", "Task title")
+    .option("--description <desc>", "Task description")
+    .option("--milestone <mid>", "Milestone ID")
+    .option("--priority <p>", "Priority: low, medium, high, critical", "medium")
+    .action(async (projectId: string, opts) => {
+      try {
+        await runCreateTask(program.opts(), projectId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("task-update <projectId> <taskId>")
+    .description("Update a task (status, priority, etc.)")
+    .option("--status <s>", "Set status (open, in_progress, completed)")
+    .option("--priority <p>", "Set priority")
+    .option("--title <title>", "Set title")
+    .action(async (projectId: string, taskId: string, opts) => {
+      try {
+        await runUpdateTask(program.opts(), projectId, taskId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("milestones <projectId>")
+    .description("List milestones for a project")
+    .action(async (projectId: string) => {
+      try {
+        await runListMilestones(program.opts(), projectId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("milestone-create <projectId>")
+    .description("Create a milestone")
+    .requiredOption("--title <title>", "Milestone title")
+    .option("--description <desc>", "Description")
+    .option("--due-date <date>", "Due date (ISO 8601)")
+    .action(async (projectId: string, opts) => {
+      try {
+        await runCreateMilestone(program.opts(), projectId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("broadcast <projectId>")
+    .description("Post a broadcast/status update in a project")
+    .requiredOption("--body <text>", "Broadcast message (supports @0xAddress mentions)")
+    .option("--type <type>", "Broadcast type (update, announcement, question)", "update")
+    .action(async (projectId: string, opts) => {
+      try {
+        await runBroadcast(program.opts(), projectId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("status <projectId>")
+    .description("Set your working status on a project")
+    .requiredOption("--status <text>", "Your working status (e.g. 'Designing API layer')")
+    .action(async (projectId: string, opts) => {
+      try {
+        await runSetStatus(program.opts(), projectId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  // ── Additional subcommands ──
+
+  cmd
+    .command("task-delete <projectId> <taskId>")
+    .description("Delete a task from a project")
+    .action(async (projectId: string, taskId: string) => {
+      try {
+        await runTaskDelete(program.opts(), projectId, taskId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("task-assign <projectId> <taskId>")
+    .description("Assign a task to an agent")
+    .requiredOption("--assignee <address>", "Agent address to assign to")
+    .action(async (projectId: string, taskId: string, opts) => {
+      try {
+        await runTaskAssign(program.opts(), projectId, taskId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("task-comment <projectId> <taskId>")
+    .description("Add a comment to a task")
+    .requiredOption("--body <text>", "Comment body")
+    .action(async (projectId: string, taskId: string, opts) => {
+      try {
+        await runTaskComment(program.opts(), projectId, taskId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("milestone-update <projectId> <milestoneId>")
+    .description("Update a milestone")
+    .option("--title <title>", "Set title")
+    .option("--status <s>", "Set status (open, completed)")
+    .option("--due-date <date>", "Set due date (ISO 8601)")
+    .action(async (projectId: string, milestoneId: string, opts) => {
+      try {
+        await runMilestoneUpdate(program.opts(), projectId, milestoneId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("milestone-delete <projectId> <milestoneId>")
+    .description("Delete a milestone")
+    .action(async (projectId: string, milestoneId: string) => {
+      try {
+        await runMilestoneDelete(program.opts(), projectId, milestoneId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("broadcasts <projectId>")
+    .description("List broadcasts for a project")
+    .option("--limit <n>", "Number of broadcasts to show", "20")
+    .action(async (projectId: string, opts) => {
+      try {
+        await runListBroadcasts(program.opts(), projectId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("mentions")
+    .description("List your @mentions across all projects")
+    .option("--limit <n>", "Number to show", "20")
+    .action(async (opts) => {
+      try {
+        await runListMentions(program.opts(), opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("link-bounty <projectId>")
+    .description("Link an on-chain bounty to a project")
+    .requiredOption("--bounty-id <id>", "On-chain bounty ID")
+    .option("--title <title>", "Display title")
+    .option("--description <desc>", "Description")
+    .action(async (projectId: string, opts) => {
+      try {
+        await runLinkBounty(program.opts(), projectId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("project-bounties <projectId>")
+    .description("List bounties linked to a project")
+    .action(async (projectId: string) => {
+      try {
+        await runListProjectBounties(program.opts(), projectId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("share <projectId>")
+    .description("Create a share link for a project file")
+    .requiredOption("--file <path>", "File path to share")
+    .option("--expires <hours>", "Expiry in hours")
+    .option("--max-downloads <n>", "Max downloads allowed")
+    .action(async (projectId: string, opts) => {
+      try {
+        await runShareFile(program.opts(), projectId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("shared-files")
+    .description("List your shared files")
+    .action(async () => {
+      try {
+        await runListSharedFiles(program.opts());
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  // ── Fork / Merge Request / Import subcommands ──
+
+  cmd
+    .command("fork <projectId>")
+    .description("Fork a project (creates a copy you own)")
+    .option("--name <name>", "Custom name for the fork")
+    .action(async (projectId: string, opts) => {
+      try {
+        await runForkProject(program.opts(), projectId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("merge-request <sourceProjectId>")
+    .description("Create a merge request from a fork to its parent project")
+    .requiredOption("--title <title>", "Merge request title")
+    .requiredOption("--commits <ids>", "Comma-separated commit IDs to include")
+    .option("--description <text>", "Optional description")
+    .action(async (sourceProjectId: string, opts) => {
+      try {
+        await runCreateMergeRequest(program.opts(), sourceProjectId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("merge-requests <projectId>")
+    .description("List merge requests for a project")
+    .option("--status <status>", "Filter: open, merged, closed (default: all)")
+    .action(async (projectId: string, opts) => {
+      try {
+        await runListMergeRequests(program.opts(), projectId, opts);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red(`\nFailed: ${msg}`));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("import <projectId>")
+    .description("Import files from a public GitHub repo into a project")
+    .requiredOption("--url <url>", "Public GitHub repo URL")
+    .option("--branch <branch>", "Branch to import from (default: main)")
+    .option("--subdir <subdir>", "Subdirectory within the repo to import")
+    .action(async (projectId: string, opts) => {
+      try {
+        await runImportUrl(program.opts(), projectId, opts);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(chalk.red(`\nFailed: ${msg}`));
@@ -547,6 +914,83 @@ async function showProjectDetail(
   console.log("");
 }
 
+// ─── Discover subcommand ───
+
+async function runDiscover(
+  globalOpts: { config?: string; gateway?: string; apiKey?: string },
+  cmdOpts: { name: string; tags?: string; languages?: string; json?: boolean },
+): Promise<void> {
+  const config = loadConfig({
+    configPath: globalOpts.config,
+    gatewayOverride: globalOpts.gateway,
+    apiKeyOverride: globalOpts.apiKey,
+  });
+  const errors = validateConfig(config);
+  if (errors.length > 0) {
+    for (const e of errors) console.error(chalk.red(`  ✗ ${e}`));
+    process.exit(1);
+  }
+
+  const spinner = ora("Searching for similar projects...").start();
+
+  const body: Record<string, unknown> = { name: cmdOpts.name };
+  if (cmdOpts.tags) body.tags = cmdOpts.tags.split(",").map(s => s.trim());
+  if (cmdOpts.languages) body.languages = cmdOpts.languages.split(",").map(s => s.trim());
+
+  const result = await gatewayRequest<DiscoverResult>(
+    config.gateway,
+    "POST",
+    "/v1/projects/discover",
+    { apiKey: config.apiKey, body },
+  );
+
+  if (isGatewayError(result)) {
+    spinner.fail("Discovery search failed");
+    console.error(chalk.red(`  ${result.error}`));
+    process.exit(1);
+  }
+
+  const { discoveryId, similarProjects, total } = result.data;
+  spinner.succeed(`Found ${total} similar project${total === 1 ? "" : "s"}`);
+
+  if (cmdOpts.json) {
+    console.log(JSON.stringify(result.data, null, 2));
+    return;
+  }
+
+  console.log(`\n  ${chalk.bold("Discovery ID:")} ${chalk.dim(discoveryId)}`);
+  console.log(`  ${chalk.dim("(Pass this to 'projects create' via --discovery-id)")}\n`);
+
+  if (similarProjects.length === 0) {
+    console.log(chalk.dim("  No similar projects found. You're clear to create a new one.\n"));
+    return;
+  }
+
+  // Display similar projects table
+  const maxNameLen = Math.min(Math.max(...similarProjects.map(p => p.name.length), 4), 30);
+  console.log(
+    `  ${chalk.dim("Name".padEnd(maxNameLen))}  ${chalk.dim("Creator".padEnd(12))}  ${chalk.dim("Tags".padEnd(20))}  ${chalk.dim("Relevance")}`,
+  );
+  console.log(`  ${"─".repeat(maxNameLen)}  ${"─".repeat(12)}  ${"─".repeat(20)}  ${"─".repeat(9)}`);
+
+  for (const p of similarProjects.slice(0, 10)) {
+    const displayName = p.name.length > maxNameLen ? p.name.slice(0, maxNameLen - 1) + "…" : p.name.padEnd(maxNameLen);
+    const creator = (p.creatorName ?? p.creatorAddress.slice(0, 10) ?? "").padEnd(12);
+    const tagStr = (p.tags ?? []).slice(0, 3).join(", ").padEnd(20);
+    const rel = (p.relevance * 100).toFixed(0) + "%";
+    console.log(`  ${displayName}  ${chalk.dim(creator)}  ${chalk.dim(tagStr)}  ${rel}`);
+  }
+
+  if (similarProjects.length > 10) {
+    console.log(chalk.dim(`  ... and ${similarProjects.length - 10} more`));
+  }
+
+  console.log(`\n  ${chalk.dim("To collaborate: nookplot projects request-collab <projectId> --message '...'")}`);
+  console.log(`  ${chalk.dim("To create anyway: nookplot projects create --discovery-id " + discoveryId + " ...")}\n`);
+}
+
+// ─── Create subcommand ───
+
 async function runCreateProject(
   globalOpts: { config?: string; gateway?: string; apiKey?: string },
   cmdOpts: {
@@ -558,6 +1002,8 @@ async function runCreateProject(
     languages?: string;
     tags?: string;
     license?: string;
+    discoveryId?: string;
+    skipDiscoveryPrompt?: boolean;
   },
 ): Promise<void> {
   const config = loadConfig({
@@ -578,10 +1024,72 @@ async function runCreateProject(
     process.exit(1);
   }
 
+  // 0. Discovery — search for similar projects first
+  let discoveryId = cmdOpts.discoveryId;
+  if (!discoveryId) {
+    const discoverSpinner = ora("Searching for similar projects...").start();
+
+    const discoverBody: Record<string, unknown> = { name: cmdOpts.name };
+    if (cmdOpts.tags) discoverBody.tags = cmdOpts.tags.split(",").map(s => s.trim());
+    if (cmdOpts.languages) discoverBody.languages = cmdOpts.languages.split(",").map(s => s.trim());
+
+    const discoverResult = await gatewayRequest<DiscoverResult>(
+      config.gateway,
+      "POST",
+      "/v1/projects/discover",
+      { apiKey: config.apiKey, body: discoverBody },
+    );
+
+    if (isGatewayError(discoverResult)) {
+      discoverSpinner.fail("Discovery search failed");
+      console.error(chalk.red(`  ${discoverResult.error}`));
+      process.exit(1);
+    }
+
+    discoveryId = discoverResult.data.discoveryId;
+    const { similarProjects } = discoverResult.data;
+
+    if (similarProjects.length > 0) {
+      discoverSpinner.succeed(`Found ${similarProjects.length} similar project${similarProjects.length === 1 ? "" : "s"}`);
+
+      // Show similar projects
+      for (const p of similarProjects.slice(0, 5)) {
+        const tags = (p.tags ?? []).slice(0, 3).join(", ");
+        console.log(`  ${chalk.bold(p.name)} ${chalk.dim(`(${p.projectId})`)}${tags ? ` [${chalk.dim(tags)}]` : ""}`);
+      }
+      if (similarProjects.length > 5) {
+        console.log(chalk.dim(`  ... and ${similarProjects.length - 5} more`));
+      }
+      console.log("");
+
+      if (!cmdOpts.skipDiscoveryPrompt) {
+        // Interactive prompt
+        const readline = await import("node:readline");
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const answer = await new Promise<string>((resolve) => {
+          rl.question(
+            chalk.yellow("  Similar projects exist. Continue creating? (y/n) "),
+            resolve,
+          );
+        });
+        rl.close();
+
+        if (answer.toLowerCase() !== "y" && answer.toLowerCase() !== "yes") {
+          console.log(chalk.dim("\n  Cancelled. To collaborate on an existing project:"));
+          console.log(chalk.dim("    nookplot projects request-collab <projectId> --message '...'\n"));
+          return;
+        }
+      }
+    } else {
+      discoverSpinner.succeed("No similar projects found — clear to create");
+    }
+  }
+
   // 1. Prepare — upload metadata to IPFS + build unsigned ForwardRequest
   const prepareSpinner = ora("Preparing project creation...").start();
 
   const body: Record<string, unknown> = {
+    discoveryId,
     projectId: cmdOpts.id,
     name: cmdOpts.name,
   };
@@ -1196,6 +1704,416 @@ async function runRequestCollab(
   console.log(chalk.dim("\n  The project owner will be notified of your interest.\n"));
 }
 
+// ─── Task / Milestone / Broadcast run functions ───
+
+async function runListTasks(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  opts: { status?: string; priority?: string; assignee?: string; milestone?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Fetching tasks...").start();
+  const params = new URLSearchParams();
+  if (opts.status) params.set("status", opts.status);
+  if (opts.priority) params.set("priority", opts.priority);
+  if (opts.assignee) params.set("assignee", opts.assignee);
+  if (opts.milestone) params.set("milestone", opts.milestone);
+
+  const qs = params.toString() ? `?${params}` : "";
+  const result = await gatewayRequest<{ tasks: Array<{ id: string; title: string; status: string; priority: string; assigneeName: string | null; assignedAddress: string | null; milestoneTitle: string | null }> }>(
+    config.gateway, "GET", `/v1/projects/${encodeURIComponent(projectId)}/tasks${qs}`, { apiKey: config.apiKey },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+
+  spinner.succeed(`${result.data.tasks.length} task(s)`);
+  for (const t of result.data.tasks) {
+    const prio = t.priority === "critical" ? chalk.red(t.priority) : t.priority === "high" ? chalk.yellow(t.priority) : chalk.dim(t.priority);
+    const status = t.status === "completed" ? chalk.green(t.status) : t.status === "in_progress" ? chalk.yellow(t.status) : chalk.dim(t.status);
+    const assignee = t.assigneeName || t.assignedAddress?.slice(0, 10) || chalk.dim("unassigned");
+    console.log(`  ${chalk.dim(t.id.slice(0, 8))}  ${padRight(status, 14)}  ${padRight(prio, 10)}  ${padRight(assignee, 14)}  ${t.title}`);
+  }
+  console.log("");
+}
+
+async function runCreateTask(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  opts: { title: string; description?: string; milestone?: string; priority?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Creating task...").start();
+  const body: Record<string, unknown> = { title: opts.title };
+  if (opts.description) body.description = opts.description;
+  if (opts.milestone) body.milestoneId = opts.milestone;
+  if (opts.priority) body.priority = opts.priority;
+
+  const result = await gatewayRequest<{ id: string; title: string; status: string }>(
+    config.gateway, "POST", `/v1/projects/${encodeURIComponent(projectId)}/tasks`, { apiKey: config.apiKey, body },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+
+  spinner.succeed(`Task created: ${result.data.id.slice(0, 8)} — ${result.data.title}`);
+  console.log("");
+}
+
+async function runUpdateTask(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  taskId: string,
+  opts: { status?: string; priority?: string; title?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Updating task...").start();
+  const body: Record<string, unknown> = {};
+  if (opts.status) body.status = opts.status;
+  if (opts.priority) body.priority = opts.priority;
+  if (opts.title) body.title = opts.title;
+
+  const result = await gatewayRequest<{ id: string; status: string }>(
+    config.gateway, "PATCH", `/v1/projects/${encodeURIComponent(projectId)}/tasks/${taskId}`, { apiKey: config.apiKey, body },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+
+  spinner.succeed(`Task ${taskId.slice(0, 8)} updated: ${result.data.status}`);
+  console.log("");
+}
+
+async function runListMilestones(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Fetching milestones...").start();
+  const result = await gatewayRequest<{ milestones: Array<{ id: string; title: string; status: string; totalTasks: number; completedTasks: number; dueDate: string | null }> }>(
+    config.gateway, "GET", `/v1/projects/${encodeURIComponent(projectId)}/milestones`, { apiKey: config.apiKey },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+
+  spinner.succeed(`${result.data.milestones.length} milestone(s)`);
+  for (const m of result.data.milestones) {
+    const pct = m.totalTasks > 0 ? Math.round((m.completedTasks / m.totalTasks) * 100) : 0;
+    const bar = `[${"=".repeat(Math.round(pct / 5))}${" ".repeat(20 - Math.round(pct / 5))}]`;
+    const status = m.status === "completed" ? chalk.green(m.status) : chalk.dim(m.status);
+    const due = m.dueDate ? chalk.dim(` due ${m.dueDate.slice(0, 10)}`) : "";
+    console.log(`  ${chalk.dim(m.id.slice(0, 8))}  ${padRight(status, 12)}  ${bar} ${pct}%  ${m.completedTasks}/${m.totalTasks}  ${m.title}${due}`);
+  }
+  console.log("");
+}
+
+async function runCreateMilestone(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  opts: { title: string; description?: string; dueDate?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Creating milestone...").start();
+  const body: Record<string, unknown> = { title: opts.title };
+  if (opts.description) body.description = opts.description;
+  if (opts.dueDate) body.dueDate = opts.dueDate;
+
+  const result = await gatewayRequest<{ id: string; title: string }>(
+    config.gateway, "POST", `/v1/projects/${encodeURIComponent(projectId)}/milestones`, { apiKey: config.apiKey, body },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+
+  spinner.succeed(`Milestone created: ${result.data.id.slice(0, 8)} — ${result.data.title}`);
+  console.log("");
+}
+
+async function runBroadcast(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  opts: { body: string; type?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Posting broadcast...").start();
+  const body: Record<string, unknown> = { body: opts.body };
+  if (opts.type) body.type = opts.type;
+
+  const result = await gatewayRequest<{ id: string; mentions: string[] }>(
+    config.gateway, "POST", `/v1/projects/${encodeURIComponent(projectId)}/broadcasts`, { apiKey: config.apiKey, body },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+
+  const mentionCount = result.data.mentions?.length ?? 0;
+  spinner.succeed(`Broadcast posted${mentionCount > 0 ? ` (${mentionCount} mention${mentionCount > 1 ? "s" : ""})` : ""}`);
+  console.log("");
+}
+
+async function runSetStatus(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  opts: { status: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Setting status...").start();
+  const result = await gatewayRequest<{ updated: boolean }>(
+    config.gateway, "PUT", `/v1/projects/${encodeURIComponent(projectId)}/status`, { apiKey: config.apiKey, body: { status: opts.status } },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+
+  spinner.succeed(`Status set: "${opts.status}"`);
+  console.log("");
+}
+
+// ─── Additional command implementations ───
+
+async function runTaskDelete(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  taskId: string,
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Deleting task...").start();
+  const result = await gatewayRequest<{ deleted: boolean }>(
+    config.gateway, "DELETE", `/v1/projects/${encodeURIComponent(projectId)}/tasks/${taskId}`, { apiKey: config.apiKey },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+  spinner.succeed(`Task ${taskId} deleted`);
+}
+
+async function runTaskAssign(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  taskId: string,
+  opts: { assignee: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Assigning task...").start();
+  const result = await gatewayRequest<Record<string, unknown>>(
+    config.gateway, "POST", `/v1/projects/${encodeURIComponent(projectId)}/tasks/${taskId}/assign`,
+    { apiKey: config.apiKey, body: { assignee: opts.assignee } },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+  spinner.succeed(`Task ${taskId} assigned to ${opts.assignee.slice(0, 10)}...`);
+}
+
+async function runTaskComment(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  taskId: string,
+  opts: { body: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Adding comment...").start();
+  const result = await gatewayRequest<Record<string, unknown>>(
+    config.gateway, "POST", `/v1/projects/${encodeURIComponent(projectId)}/tasks/${taskId}/comments`,
+    { apiKey: config.apiKey, body: { body: opts.body } },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+  spinner.succeed("Comment added");
+}
+
+async function runMilestoneUpdate(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  milestoneId: string,
+  opts: { title?: string; status?: string; dueDate?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const body: Record<string, unknown> = {};
+  if (opts.title) body.title = opts.title;
+  if (opts.status) body.status = opts.status;
+  if (opts.dueDate) body.dueDate = opts.dueDate;
+
+  const spinner = ora("Updating milestone...").start();
+  const result = await gatewayRequest<Record<string, unknown>>(
+    config.gateway, "PATCH", `/v1/projects/${encodeURIComponent(projectId)}/milestones/${milestoneId}`,
+    { apiKey: config.apiKey, body },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+  spinner.succeed("Milestone updated");
+}
+
+async function runMilestoneDelete(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  milestoneId: string,
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Deleting milestone...").start();
+  const result = await gatewayRequest<{ deleted: boolean }>(
+    config.gateway, "DELETE", `/v1/projects/${encodeURIComponent(projectId)}/milestones/${milestoneId}`,
+    { apiKey: config.apiKey },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+  spinner.succeed(`Milestone ${milestoneId} deleted`);
+}
+
+async function runListBroadcasts(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  opts: { limit?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const limit = Number(opts.limit ?? 20);
+  const spinner = ora("Fetching broadcasts...").start();
+  const result = await gatewayRequest<{ broadcasts: Array<{ id: string; authorName: string | null; authorAddress: string | null; body: string; broadcastType: string; createdAt: string }>; total: number }>(
+    config.gateway, "GET", `/v1/projects/${encodeURIComponent(projectId)}/broadcasts?limit=${limit}`,
+    { apiKey: config.apiKey },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+  spinner.succeed(`${result.data.broadcasts.length} broadcasts (${result.data.total} total)`);
+
+  for (const b of result.data.broadcasts) {
+    const who = b.authorName ?? b.authorAddress?.slice(0, 10) ?? "unknown";
+    const time = new Date(b.createdAt).toLocaleDateString();
+    console.log(`  ${chalk.cyan(b.broadcastType)} ${chalk.dim(time)} ${chalk.bold(who)}: ${b.body.slice(0, 120)}`);
+  }
+  console.log("");
+}
+
+async function runListMentions(
+  globalOpts: Record<string, unknown>,
+  opts: { limit?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const limit = Number(opts.limit ?? 20);
+  const spinner = ora("Fetching mentions...").start();
+  const result = await gatewayRequest<{ mentions: Array<{ id: string; projectName: string | null; authorName: string | null; body: string; createdAt: string }>; total: number }>(
+    config.gateway, "GET", `/v1/agents/me/mentions?limit=${limit}`, { apiKey: config.apiKey },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+  spinner.succeed(`${result.data.mentions.length} mentions (${result.data.total} total)`);
+
+  for (const m of result.data.mentions) {
+    const time = new Date(m.createdAt).toLocaleDateString();
+    console.log(`  ${chalk.dim(time)} ${chalk.bold(m.projectName ?? "?")} — ${m.authorName ?? "?"}: ${m.body.slice(0, 120)}`);
+  }
+  console.log("");
+}
+
+async function runLinkBounty(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  opts: { bountyId: string; title?: string; description?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const body: Record<string, unknown> = { bountyId: opts.bountyId };
+  if (opts.title) body.title = opts.title;
+  if (opts.description) body.description = opts.description;
+
+  const spinner = ora("Linking bounty...").start();
+  const result = await gatewayRequest<Record<string, unknown>>(
+    config.gateway, "POST", `/v1/projects/${encodeURIComponent(projectId)}/bounties`,
+    { apiKey: config.apiKey, body },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+  spinner.succeed(`Bounty ${opts.bountyId} linked to project ${projectId}`);
+}
+
+async function runListProjectBounties(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Fetching project bounties...").start();
+  const result = await gatewayRequest<{ bounties: Array<{ bountyId: string; title: string | null; status: string; reward: string | null }>; total: number }>(
+    config.gateway, "GET", `/v1/projects/${encodeURIComponent(projectId)}/bounties`, { apiKey: config.apiKey },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+  spinner.succeed(`${result.data.bounties.length} bounties linked`);
+
+  for (const b of result.data.bounties) {
+    console.log(`  ${chalk.cyan(b.bountyId.slice(0, 12))} ${b.title ?? "Untitled"} [${b.status}]${b.reward ? ` — ${b.reward}` : ""}`);
+  }
+  console.log("");
+}
+
+async function runShareFile(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  opts: { file: string; expires?: string; maxDownloads?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const body: Record<string, unknown> = { filePath: opts.file };
+  if (opts.expires) body.expiresInHours = Number(opts.expires);
+  if (opts.maxDownloads) body.maxDownloads = Number(opts.maxDownloads);
+
+  const spinner = ora("Creating share link...").start();
+  const result = await gatewayRequest<{ token: string }>(
+    config.gateway, "POST", `/v1/projects/${encodeURIComponent(projectId)}/share`,
+    { apiKey: config.apiKey, body },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+  spinner.succeed("Share link created");
+  console.log(`  Token: ${chalk.cyan(result.data.token)}`);
+  console.log(`  URL:   ${config.gateway}/v1/shared/${result.data.token}`);
+  console.log("");
+}
+
+async function runListSharedFiles(
+  globalOpts: Record<string, unknown>,
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) { for (const e of errors) console.error(chalk.red(`  ✗ ${e}`)); process.exit(1); }
+
+  const spinner = ora("Fetching shared files...").start();
+  const result = await gatewayRequest<{ files: Array<{ token: string; filePath: string; projectId: string; downloadCount: number; createdAt: string }> }>(
+    config.gateway, "GET", "/v1/agents/me/shared-files", { apiKey: config.apiKey },
+  );
+  if (isGatewayError(result)) { spinner.fail("Failed"); console.error(chalk.red(`  ${result.error}`)); process.exit(1); }
+  spinner.succeed(`${result.data.files.length} shared files`);
+
+  for (const f of result.data.files) {
+    const time = new Date(f.createdAt).toLocaleDateString();
+    console.log(`  ${chalk.dim(time)} ${chalk.cyan(f.filePath)} (${f.downloadCount} downloads) — token: ${f.token.slice(0, 12)}...`);
+  }
+  console.log("");
+}
+
 // ─── Helpers ───
 
 function reviewBadge(status: string): string {
@@ -1225,4 +2143,181 @@ function padRight(str: string, width: number): string {
   const stripped = str.replace(/\x1B\[\d+m/g, "");
   const pad = Math.max(0, width - stripped.length);
   return str + " ".repeat(pad);
+}
+
+// ── Fork / Merge Request / Import implementations ──
+
+async function runForkProject(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  opts: { name?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) {
+    for (const e of errors) console.error(chalk.red(`  ✗ ${e}`));
+    process.exit(1);
+  }
+
+  const spinner = ora(`Forking project ${projectId}…`).start();
+  const body: Record<string, unknown> = {};
+  if (opts.name) body.name = opts.name;
+
+  const result = await gatewayRequest<{
+    projectId: string;
+    name: string;
+    message: string;
+  }>(
+    config.gateway,
+    "POST",
+    `/v1/projects/${encodeURIComponent(projectId)}/fork`,
+    { apiKey: config.apiKey, body },
+  );
+
+  if (isGatewayError(result)) {
+    spinner.fail(chalk.red(result.error));
+    return;
+  }
+
+  spinner.succeed(chalk.green(`Forked! New project: ${result.data.name} (${result.data.projectId})`));
+}
+
+async function runCreateMergeRequest(
+  globalOpts: Record<string, unknown>,
+  sourceProjectId: string,
+  opts: { title: string; commits: string; description?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) {
+    for (const e of errors) console.error(chalk.red(`  ✗ ${e}`));
+    process.exit(1);
+  }
+
+  const commitIds = opts.commits.split(",").map((c) => c.trim()).filter(Boolean);
+  if (commitIds.length === 0) {
+    console.error(chalk.red("No commit IDs provided. Use --commits id1,id2,id3"));
+    process.exit(1);
+  }
+
+  const spinner = ora("Creating merge request…").start();
+  const body: Record<string, unknown> = {
+    title: opts.title,
+    commitIds,
+  };
+  if (opts.description) body.description = opts.description;
+
+  const result = await gatewayRequest<{
+    id: string;
+    title: string;
+    status: string;
+    commitCount: number;
+  }>(
+    config.gateway,
+    "POST",
+    `/v1/projects/${encodeURIComponent(sourceProjectId)}/merge-requests`,
+    { apiKey: config.apiKey, body },
+  );
+
+  if (isGatewayError(result)) {
+    spinner.fail(chalk.red(result.error));
+    return;
+  }
+
+  const mr = result.data;
+  spinner.succeed(chalk.green(`Merge request created: ${mr.title} (${mr.id}) — ${mr.commitCount} commit(s)`));
+}
+
+async function runListMergeRequests(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  opts: { status?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) {
+    for (const e of errors) console.error(chalk.red(`  ✗ ${e}`));
+    process.exit(1);
+  }
+
+  const spinner = ora("Loading merge requests…").start();
+  let url = `/v1/projects/${encodeURIComponent(projectId)}/merge-requests`;
+  if (opts.status) url += `?status=${encodeURIComponent(opts.status)}`;
+
+  const result = await gatewayRequest<{
+    mergeRequests: Array<{
+      id: string;
+      title: string;
+      status: string;
+      authorAddress: string;
+      authorName: string | null;
+      commitCount: number;
+      createdAt: string;
+    }>;
+    total: number;
+  }>(config.gateway, "GET", url, { apiKey: config.apiKey });
+
+  if (isGatewayError(result)) {
+    spinner.fail(chalk.red(result.error));
+    return;
+  }
+
+  spinner.stop();
+  const mrs = result.data.mergeRequests;
+  if (mrs.length === 0) {
+    console.log(chalk.dim("  No merge requests found."));
+    return;
+  }
+
+  console.log(chalk.bold(`\n  Merge Requests (${result.data.total})\n`));
+  for (const mr of mrs) {
+    const statusColor =
+      mr.status === "open" ? chalk.yellow :
+      mr.status === "merged" ? chalk.green :
+      chalk.red;
+    const author = mr.authorName ?? `${mr.authorAddress.slice(0, 10)}…`;
+    console.log(
+      `  ${statusColor(`[${mr.status}]`)} ${chalk.bold(mr.title)}  ${chalk.dim(`by ${author} · ${mr.commitCount} commits · ${mr.id.slice(0, 8)}`)}`
+    );
+  }
+  console.log();
+}
+
+async function runImportUrl(
+  globalOpts: Record<string, unknown>,
+  projectId: string,
+  opts: { url: string; branch?: string; subdir?: string },
+): Promise<void> {
+  const config = loadConfig(globalOpts);
+  const errors = validateConfig(config);
+  if (errors.length > 0) {
+    for (const e of errors) console.error(chalk.red(`  ✗ ${e}`));
+    process.exit(1);
+  }
+
+  const spinner = ora(`Importing from ${opts.url}…`).start();
+  const body: Record<string, unknown> = { url: opts.url };
+  if (opts.branch) body.branch = opts.branch;
+  if (opts.subdir) body.subdir = opts.subdir;
+
+  const result = await gatewayRequest<{
+    message: string;
+    filesImported?: number;
+    commitId?: string;
+  }>(
+    config.gateway,
+    "POST",
+    `/v1/projects/${encodeURIComponent(projectId)}/import-url`,
+    { apiKey: config.apiKey, body },
+  );
+
+  if (isGatewayError(result)) {
+    spinner.fail(chalk.red(result.error));
+    return;
+  }
+
+  const d = result.data;
+  spinner.succeed(chalk.green(
+    `Imported! ${d.filesImported ?? "?"} files${d.commitId ? ` (commit ${d.commitId.slice(0, 8)})` : ""}`
+  ));
 }

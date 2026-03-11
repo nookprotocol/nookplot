@@ -1,23 +1,24 @@
 /**
- * Docker container execution service.
+ * E2B cloud sandbox execution service.
  *
- * Runs user code in isolated Docker containers with strict resource limits:
- * - 512MB RAM, 1 CPU, 60s timeout (max 300s)
- * - No network access (NetworkMode: "none")
- * - Dropped capabilities + no-new-privileges
- * - Secret scanning before mounting files
- * - Allowlisted official images only
+ * Runs user code in isolated E2B Firecracker microVMs:
+ * - Cloud-hosted (no Docker required on gateway)
+ * - 300s default timeout (max 300s)
+ * - Secret scanning before sending files
+ * - Allowlisted official images mapped to E2B templates
+ *
+ * Falls back gracefully when E2B_API_KEY is not set.
  *
  * @module services/execService
  */
 
 import Docker from "dockerode";
-import fs from "fs/promises";
-import path from "path";
-import os from "os";
 import { logSecurityEvent } from "../middleware/auditLog.js";
 
-/** Allowed Docker images for execution. */
+// Dynamic import of E2B SDK to avoid hard failure when not installed
+type E2BSandbox = import("e2b").Sandbox;
+
+/** Allowed Docker images for execution (validated before mapping). */
 const ALLOWED_IMAGES = new Set([
   "node:20-slim",
   "node:22-slim",
@@ -26,13 +27,21 @@ const ALLOWED_IMAGES = new Set([
   "denoland/deno:2.0",
 ]);
 
+/** Map Docker image names to E2B sandbox templates.
+ *  E2B's default "base" template includes Node.js, Python, and common runtimes.
+ *  All images map to "base" since E2B doesn't have separate node/python templates. */
+const IMAGE_TO_TEMPLATE: Record<string, string> = {
+  "node:20-slim": "base",
+  "node:22-slim": "base",
+  "python:3.12-slim": "base",
+  "python:3.13-slim": "base",
+  "denoland/deno:2.0": "base",
+};
+
 /** Default resource limits. */
 const DEFAULTS = {
-  memoryBytes: 512 * 1024 * 1024, // 512MB
-  cpus: 1,
   timeoutMs: 60_000,
   maxTimeoutMs: 300_000,
-  pidLimit: 256,
 };
 
 /** Max concurrent executions. */
@@ -40,7 +49,7 @@ const MAX_PER_AGENT = 5;
 const MAX_GLOBAL = 20;
 
 /** Secret patterns to scan for in mounted files. */
-const SECRET_PATTERNS: [string, RegExp][] = [
+export const SECRET_PATTERNS: [string, RegExp][] = [
   ["private-key", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
   ["eth-key", /(?:private.?key|PRIVATE.?KEY)\s*[=:]\s*0x[0-9a-fA-F]{64}/],
   ["github-pat", /gh[ps]_[A-Za-z0-9_]{36,}/],
@@ -68,20 +77,21 @@ export class ExecService {
   private activeGlobal = 0;
 
   constructor(dockerSocket?: string) {
+    // Keep Docker instance for PreviewDeploymentService
     this.docker = new Docker(dockerSocket ? { socketPath: dockerSocket } : undefined);
   }
 
-  /** Check if Docker is available */
-  async isAvailable(): Promise<boolean> {
-    try {
-      await this.docker.ping();
-      return true;
-    } catch {
-      return false;
-    }
+  /** Expose Docker instance for reuse by PreviewDeploymentService */
+  getDocker(): Docker {
+    return this.docker;
   }
 
-  /** Start an execution and stream output */
+  /** Check if sandbox execution is available (E2B API key configured) */
+  async isAvailable(): Promise<boolean> {
+    return !!process.env.E2B_API_KEY;
+  }
+
+  /** Start an execution and stream output via E2B cloud sandbox */
   async startExecution(
     opts: ExecOptions,
     onStdout: (data: string) => void,
@@ -141,8 +151,11 @@ export class ExecService {
       }
     }
 
-    // Create temp workspace
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "nk-exec-"));
+    // Check E2B API key
+    const apiKey = process.env.E2B_API_KEY;
+    if (!apiKey) {
+      throw new Error("Sandbox execution is not available. E2B_API_KEY is not configured.");
+    }
 
     // Track concurrency
     this.activeByAgent.set(opts.agentId, agentActive + 1);
@@ -150,126 +163,77 @@ export class ExecService {
 
     const startTime = Date.now();
     let exitCode = -1;
+    let sandbox: E2BSandbox | null = null;
 
     try {
-      // Write files to temp dir (with resolved path containment check)
-      for (const [filePath, content] of Object.entries(opts.files)) {
-        const fullPath = path.resolve(tmpDir, filePath);
-        // Defense-in-depth: verify resolved path is inside tmpDir
-        if (!fullPath.startsWith(tmpDir + path.sep) && fullPath !== tmpDir) {
-          throw new Error(`Path escape detected: ${filePath} resolves outside workspace`);
-        }
-        await fs.mkdir(path.dirname(fullPath), { recursive: true });
-        await fs.writeFile(fullPath, content, "utf8");
-      }
+      // Dynamic import of E2B SDK
+      const e2b = await import("e2b");
 
-      // Make workspace writable by container user (UID 1000)
-      await fs.chmod(tmpDir, 0o777);
-      for (const [filePath] of Object.entries(opts.files)) {
-        const fullPath = path.resolve(tmpDir, filePath);
-        await fs.chmod(fullPath, 0o666);
-        let dir = path.dirname(fullPath);
-        while (dir !== tmpDir && dir.startsWith(tmpDir)) {
-          await fs.chmod(dir, 0o777);
-          dir = path.dirname(dir);
-        }
-      }
+      // Map Docker image to E2B template
+      const template = IMAGE_TO_TEMPLATE[opts.image] ?? "base";
+      const timeoutSec = Math.ceil(timeoutMs / 1000);
 
-      // Create container
-      const container = await this.docker.createContainer({
-        Image: opts.image,
-        Cmd: ["sh", "-c", opts.command],
-        WorkingDir: "/workspace",
-        User: "1000:1000",
-        HostConfig: {
-          Binds: [`${tmpDir}:/workspace:rw`],
-          Memory: DEFAULTS.memoryBytes,
-          NanoCpus: DEFAULTS.cpus * 1e9,
-          PidsLimit: DEFAULTS.pidLimit,
-          NetworkMode: "none",
-          CapDrop: ["ALL"],
-          SecurityOpt: ["no-new-privileges"],
-          AutoRemove: false,
-          ReadonlyRootfs: true,
-          Tmpfs: { "/tmp": "rw,noexec,nosuid,size=64m" },
-        },
-        Tty: false,
-        OpenStdin: false,
+      // Create E2B sandbox
+      sandbox = await e2b.Sandbox.create(template, {
+        apiKey,
+        timeoutMs: timeoutMs + 30_000, // sandbox lifetime > command timeout
       });
 
-      // Start container
-      await container.start();
+      // Write files to sandbox — files.write() auto-creates parent dirs
+      const workDir = "/home/user";
+      const fileEntries = Object.entries(opts.files);
+      if (fileEntries.length > 0) {
+        for (const [filePath, content] of fileEntries) {
+          await sandbox.files.write(`${workDir}/${filePath}`, content);
+        }
+      }
 
-      // Stream logs
-      const logStream = await container.logs({
-        follow: true,
-        stdout: true,
-        stderr: true,
-      });
-
-      // Demux stdout/stderr (Docker multiplexes them)
-      // Cap total output to prevent memory exhaustion from malicious containers
-      const MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB total
+      // Execute command with streaming, capped output
+      const MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB
       let totalOutputBytes = 0;
       let outputTruncated = false;
-      logStream.on("data", (chunk: Buffer) => {
+
+      const capOutput = (data: string, handler: (data: string) => void): void => {
         if (outputTruncated) return;
-        // Docker stream header: 8 bytes (type[1] + 0[3] + size[4])
-        let offset = 0;
-        while (offset < chunk.length) {
-          if (offset + 8 > chunk.length) break;
-          const streamType = chunk[offset]; // 1=stdout, 2=stderr
-          const size = chunk.readUInt32BE(offset + 4);
-          offset += 8;
-          if (offset + size > chunk.length) break;
-          const payload = chunk.subarray(offset, offset + size).toString("utf8");
-          totalOutputBytes += size;
-          if (totalOutputBytes > MAX_OUTPUT_BYTES) {
-            outputTruncated = true;
-            onStderr("\n[output truncated — 10MB limit exceeded]\n");
-            return;
-          }
-          if (streamType === 2) {
-            onStderr(payload);
+        totalOutputBytes += Buffer.byteLength(data, "utf8");
+        if (totalOutputBytes > MAX_OUTPUT_BYTES) {
+          outputTruncated = true;
+          onStderr("\n[output truncated — 10MB limit exceeded]\n");
+          return;
+        }
+        handler(data);
+      };
+
+      try {
+        const result = await sandbox.commands.run(opts.command, {
+          cwd: workDir,
+          timeoutMs: timeoutSec * 1000,
+          onStdout: (data: string) => capOutput(data, onStdout),
+          onStderr: (data: string) => capOutput(data, onStderr),
+        });
+        exitCode = result.exitCode;
+      } catch (err: unknown) {
+        // E2B throws CommandExitError for non-zero exits
+        if (err && typeof err === "object" && "exitCode" in err) {
+          exitCode = (err as { exitCode: number }).exitCode;
+        } else {
+          const message = err instanceof Error ? err.message : String(err);
+          if (message.includes("timed out") || message.includes("Timeout")) {
+            onStderr(`\nExecution timed out after ${timeoutMs / 1000}s\n`);
+            exitCode = 124; // Standard timeout exit code
           } else {
-            onStdout(payload);
+            throw err;
           }
-          offset += size;
         }
-      });
-
-      // Wait for container with timeout
-      const waitPromise = container.wait();
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Execution timed out")), timeoutMs),
-      );
-
-      try {
-        const result = await Promise.race([waitPromise, timeoutPromise]);
-        exitCode = result.StatusCode;
-      } catch (err) {
-        // Timeout — kill container
-        try {
-          await container.kill();
-        } catch {
-          // Container may already be stopped
-        }
-        onStderr(`\nExecution timed out after ${timeoutMs / 1000}s\n`);
-        exitCode = 124; // Standard timeout exit code
-      }
-
-      // Remove container
-      try {
-        await container.remove({ force: true });
-      } catch {
-        // Best effort
       }
     } finally {
-      // Clean up temp dir
-      try {
-        await fs.rm(tmpDir, { recursive: true, force: true });
-      } catch {
-        // Best effort
+      // Kill sandbox
+      if (sandbox) {
+        try {
+          await sandbox.kill();
+        } catch {
+          // Best effort
+        }
       }
 
       // Release concurrency slot

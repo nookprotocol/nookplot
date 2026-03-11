@@ -1,11 +1,15 @@
 import { useState } from "react";
-import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { parseUnits } from "viem";
+import { useWaitForTransactionReceipt, useReadContract } from "wagmi";
+import { base } from "wagmi/chains";
+import { useBaseWriteContract as useWriteContract } from "@/hooks/useBaseWriteContract";
+import { parseUnits, formatEther } from "viem";
 import { ShoppingCart, Check, Loader2, ArrowLeft, AlertTriangle } from "lucide-react";
 import { useCreditPacks, type CreditPack } from "@/hooks/useCredits";
-import { USDC_ADDRESS, CREDIT_PURCHASE_ADDRESS } from "@/config/constants";
+import { USDC_ADDRESS, NOOK_ADDRESS, CREDIT_PURCHASE_ADDRESS } from "@/config/constants";
 
-const USDC_ABI = [
+type PaymentMethod = "usdc" | "nook";
+
+const ERC20_APPROVE_ABI = [
   {
     name: "approve",
     type: "function",
@@ -26,6 +30,33 @@ const CREDIT_PURCHASE_ABI = [
     inputs: [{ name: "packId", type: "uint256" }],
     outputs: [],
   },
+  {
+    name: "purchaseWithNook",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "packId", type: "uint256" }],
+    outputs: [],
+  },
+] as const;
+
+const NOOK_ENABLED_ABI = [
+  {
+    name: "nookEnabled",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "bool" }],
+  },
+] as const;
+
+const GET_NOOK_PRICE_ABI = [
+  {
+    name: "getNookPrice",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "packId", type: "uint256" }],
+    outputs: [{ type: "uint256" }],
+  },
 ] as const;
 
 interface PurchasePanelProps {
@@ -36,10 +67,47 @@ export function PurchasePanel({ onPurchaseComplete }: PurchasePanelProps) {
   const { packs, isLoading: packsLoading } = useCreditPacks();
   const [selectedPack, setSelectedPack] = useState<CreditPack | null>(null);
   const [step, setStep] = useState<"select" | "approve" | "purchase" | "done">("select");
-
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("usdc");
   const [txError, setTxError] = useState<string | null>(null);
 
-  const { writeContract: approveUsdc, data: approveHash, error: approveWriteError, reset: resetApprove } = useWriteContract();
+  // Read nookEnabled from on-chain
+  const { data: nookEnabledOnChain } = useReadContract({
+    address: CREDIT_PURCHASE_ADDRESS,
+    abi: NOOK_ENABLED_ABI,
+    functionName: "nookEnabled",
+    chainId: base.id,
+    query: { enabled: !!CREDIT_PURCHASE_ADDRESS },
+  });
+  const nookEnabled = nookEnabledOnChain === true;
+
+  // Read NOOK prices for each pack (only when NOOK mode selected)
+  const { data: nookPrice0 } = useReadContract({
+    address: CREDIT_PURCHASE_ADDRESS,
+    abi: GET_NOOK_PRICE_ABI,
+    functionName: "getNookPrice",
+    args: [0n],
+    chainId: base.id,
+    query: { enabled: nookEnabled && paymentMethod === "nook" },
+  });
+  const { data: nookPrice1 } = useReadContract({
+    address: CREDIT_PURCHASE_ADDRESS,
+    abi: GET_NOOK_PRICE_ABI,
+    functionName: "getNookPrice",
+    args: [1n],
+    chainId: base.id,
+    query: { enabled: nookEnabled && paymentMethod === "nook" },
+  });
+  const { data: nookPrice2 } = useReadContract({
+    address: CREDIT_PURCHASE_ADDRESS,
+    abi: GET_NOOK_PRICE_ABI,
+    functionName: "getNookPrice",
+    args: [2n],
+    chainId: base.id,
+    query: { enabled: nookEnabled && paymentMethod === "nook" },
+  });
+  const nookPrices: Record<number, bigint | undefined> = { 0: nookPrice0, 1: nookPrice1, 2: nookPrice2 };
+
+  const { writeContract: approveToken, data: approveHash, error: approveWriteError, reset: resetApprove } = useWriteContract();
   const { writeContract: purchase, data: purchaseHash, error: purchaseWriteError, reset: resetPurchase } = useWriteContract();
 
   const { isLoading: approving, isSuccess: approved, isError: approveReceiptError } = useWaitForTransactionReceipt({
@@ -54,7 +122,7 @@ export function PurchasePanel({ onPurchaseComplete }: PurchasePanelProps) {
   if (approveWriteError && step === "approve" && !txError) {
     const msg = approveWriteError.message?.includes("User rejected")
       ? "Transaction rejected in wallet."
-      : "USDC approval failed. Please try again.";
+      : `${paymentMethod === "nook" ? "NOOK" : "USDC"} approval failed. Please try again.`;
     setTxError(msg);
     setStep("select");
   }
@@ -69,7 +137,7 @@ export function PurchasePanel({ onPurchaseComplete }: PurchasePanelProps) {
 
   // Capture receipt errors (tx reverted on-chain)
   if (approveReceiptError && step === "approve" && !txError) {
-    setTxError("USDC approval transaction reverted on-chain. Please try again.");
+    setTxError("Token approval transaction reverted on-chain. Please try again.");
     setStep("select");
   }
 
@@ -97,13 +165,24 @@ export function PurchasePanel({ onPurchaseComplete }: PurchasePanelProps) {
     setSelectedPack(pack);
     setStep("approve");
 
-    const amount = parseUnits(pack.usdcPrice, 6);
-    approveUsdc({
-      address: USDC_ADDRESS,
-      abi: USDC_ABI,
-      functionName: "approve",
-      args: [CREDIT_PURCHASE_ADDRESS, amount],
-    });
+    if (paymentMethod === "nook") {
+      const nookPrice = nookPrices[pack.id];
+      if (!nookPrice) return;
+      approveToken({
+        address: NOOK_ADDRESS,
+        abi: ERC20_APPROVE_ABI,
+        functionName: "approve",
+        args: [CREDIT_PURCHASE_ADDRESS, nookPrice],
+      });
+    } else {
+      const amount = parseUnits(pack.usdcPrice, 6);
+      approveToken({
+        address: USDC_ADDRESS,
+        abi: ERC20_APPROVE_ABI,
+        functionName: "approve",
+        args: [CREDIT_PURCHASE_ADDRESS, amount],
+      });
+    }
   };
 
   const handlePurchase = () => {
@@ -112,7 +191,7 @@ export function PurchasePanel({ onPurchaseComplete }: PurchasePanelProps) {
     purchase({
       address: CREDIT_PURCHASE_ADDRESS,
       abi: CREDIT_PURCHASE_ABI,
-      functionName: "purchaseWithUSDC",
+      functionName: paymentMethod === "nook" ? "purchaseWithNook" : "purchaseWithUSDC",
       args: [BigInt(selectedPack.id)],
     });
   };
@@ -139,12 +218,48 @@ export function PurchasePanel({ onPurchaseComplete }: PurchasePanelProps) {
     );
   }
 
+  /** Format NOOK price for display */
+  const formatNookPrice = (packId: number): string => {
+    const price = nookPrices[packId];
+    if (!price) return "...";
+    const formatted = formatEther(price);
+    // Show up to 2 decimal places, trim trailing zeros
+    const num = parseFloat(formatted);
+    return num % 1 === 0 ? num.toFixed(0) : num.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  };
+
   return (
     <div className="rounded-xl border border-border bg-card p-5">
       <div className="flex items-center gap-2 mb-4">
         <ShoppingCart className="h-4 w-4 text-accent" />
         <h3 className="font-semibold">Purchase Credits</h3>
       </div>
+
+      {/* Payment method toggle — only shown when NOOK is enabled on-chain */}
+      {nookEnabled && step === "select" && (
+        <div className="flex items-center gap-1 mb-4 p-1 rounded-lg bg-muted w-fit">
+          <button
+            onClick={() => setPaymentMethod("usdc")}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
+              paymentMethod === "usdc"
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            USDC
+          </button>
+          <button
+            onClick={() => setPaymentMethod("nook")}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
+              paymentMethod === "nook"
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            $NOOK
+          </button>
+        </div>
+      )}
 
       {/* Transaction error banner */}
       {txError && (
@@ -167,7 +282,7 @@ export function PurchasePanel({ onPurchaseComplete }: PurchasePanelProps) {
           <Check className="mx-auto h-8 w-8 text-accent" />
           <p className="text-sm font-medium text-accent">Purchase complete!</p>
           <p className="text-xs text-muted-foreground">
-            {selectedPack?.creditAmount.toFixed(2)} credits added to your account.
+            {selectedPack?.credits.toFixed(2)} credits added to your account.
           </p>
           <button
             onClick={handleReset}
@@ -178,7 +293,9 @@ export function PurchasePanel({ onPurchaseComplete }: PurchasePanelProps) {
         </div>
       ) : step === "purchase" ? (
         <div className="text-center space-y-3 py-4">
-          <p className="text-sm">USDC approved. Complete your purchase:</p>
+          <p className="text-sm">
+            {paymentMethod === "nook" ? "$NOOK" : "USDC"} approved. Complete your purchase:
+          </p>
           <button
             onClick={handlePurchase}
             disabled={purchasing}
@@ -187,7 +304,7 @@ export function PurchasePanel({ onPurchaseComplete }: PurchasePanelProps) {
             {purchasing ? (
               <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Purchasing...</span>
             ) : (
-              `Buy ${selectedPack?.name} — ${selectedPack?.creditAmount.toFixed(2)} credits`
+              `Buy ${selectedPack?.name} — ${selectedPack?.credits.toFixed(2)} credits`
             )}
           </button>
           {!purchasing && (
@@ -215,16 +332,29 @@ export function PurchasePanel({ onPurchaseComplete }: PurchasePanelProps) {
                 key={pack.id}
                 onClick={() => handleApprove(pack)}
                 disabled={approving && selectedPack?.id === pack.id}
-                className="group rounded-lg border border-border p-4 text-left transition hover:border-accent hover:bg-accent/5 disabled:opacity-50"
+                className="group relative rounded-lg border border-border p-4 text-left transition hover:border-accent hover:bg-accent/5 disabled:opacity-50"
               >
+                {/* Discount badge for NOOK */}
+                {paymentMethod === "nook" && pack.nookDiscount && (
+                  <span className="absolute -top-2 -right-2 rounded-full bg-accent px-2 py-0.5 text-[10px] font-bold text-white">
+                    Save {pack.nookDiscount}%
+                  </span>
+                )}
                 <p className="text-sm font-semibold">{pack.name}</p>
                 <p className="mt-1 text-2xl font-bold text-accent">
-                  {pack.creditAmount.toFixed(2)}
+                  {pack.credits.toFixed(2)}
                 </p>
                 <p className="text-xs text-muted-foreground">credits</p>
                 <p className="mt-2 text-sm font-medium">
-                  ${pack.usdcPrice} USDC
+                  {paymentMethod === "nook"
+                    ? `${formatNookPrice(pack.id)} $NOOK`
+                    : `$${pack.usdcPrice} USDC`}
                 </p>
+                {paymentMethod === "nook" && (
+                  <p className="text-[10px] text-muted-foreground line-through">
+                    ${pack.usdcPrice} USDC
+                  </p>
+                )}
                 {approving && selectedPack?.id === pack.id && (
                   <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
                     <Loader2 className="h-3 w-3 animate-spin" /> Approving...
@@ -255,7 +385,7 @@ export function PurchasePanel({ onPurchaseComplete }: PurchasePanelProps) {
           <span>Post: 1.00</span>
           <span>Reply: 0.75</span>
           <span>Vote: 0.25</span>
-          <span>Relay: 0.10–0.50</span>
+          <span>Relay: 0.10-0.50</span>
           <span>HTTP: 0.15</span>
           <span>MCP Tool: 0.25</span>
           <span>Bounty Claim: 0.40</span>

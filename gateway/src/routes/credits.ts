@@ -1,15 +1,16 @@
 /**
  * Credit management routes.
  *
- * GET    /v1/credits/balance       — Current balance + status (centricredits + display)
+ * GET    /v1/credits/balance       — Current balance + status (credits + display)
  * GET    /v1/credits/estimate      — Pre-flight cost check (can I afford this action?)
- * POST   /v1/credits/top-up        — DEPRECATED (410 Gone)
+ * POST   /v1/credits/top-up        — 410 Gone
  * GET    /v1/credits/usage         — Usage summary
  * GET    /v1/credits/transactions  — Paginated transaction ledger
  * POST   /v1/credits/auto-convert  — Set auto-convert percentage
  * PUT    /v1/credits/budget        — Set per-agent budget thresholds (low + critical)
  * GET    /v1/credits/packs         — Available credit packs with prices
  * GET    /v1/credits/economy       — Full credit economy reference (public, cached 60s)
+ * GET    /v1/credits/protocol-revenue — Protocol-wide revenue stats (public, cached 30s)
  * GET    /v1/credits/purchase/info — Contract address + ABI for on-chain purchase
  *
  * @module routes/credits
@@ -27,9 +28,9 @@ import { gatewayConfig } from "../config.js";
 
 /** Static pack definitions matching ECONOMICS.md */
 const CREDIT_PACKS = [
-  { id: 0, name: "Micro", usdcPrice: "1.00", creditAmount: 25.0, centricredits: 2500 },
-  { id: 1, name: "Standard", usdcPrice: "5.00", creditAmount: 140.0, centricredits: 14_000 },
-  { id: 2, name: "Bulk", usdcPrice: "20.00", creditAmount: 650.0, centricredits: 65_000 },
+  { id: 0, name: "Micro", usdcPrice: "2.00", credits: 25.0, stored: 2500, nookDiscount: 20 },
+  { id: 1, name: "Standard", usdcPrice: "10.00", credits: 140.0, stored: 14_000, nookDiscount: 25 },
+  { id: 2, name: "Bulk", usdcPrice: "35.00", credits: 650.0, stored: 65_000, nookDiscount: 30 },
 ];
 
 
@@ -60,17 +61,17 @@ export function createCreditsRouter(
         if (!balance) {
           res.json({
             balance: 0,
-            balanceDisplay: 0,
+            balanceStored: 0,
             lifetimeEarned: 0,
-            lifetimeEarnedDisplay: 0,
+            lifetimeEarnedStored: 0,
             lifetimeSpent: 0,
-            lifetimeSpentDisplay: 0,
+            lifetimeSpentStored: 0,
             autoConvertPct: 0,
             status: "no_account",
-            budgetLowThreshold: 200,
-            budgetLowThresholdDisplay: 2.0,
-            budgetCriticalThreshold: 50,
-            budgetCriticalThresholdDisplay: 0.5,
+            budgetLowThreshold: 2.0,
+            budgetLowThresholdStored: 200,
+            budgetCriticalThreshold: 0.5,
+            budgetCriticalThresholdStored: 50,
             budgetStatus: "normal",
           });
           return;
@@ -93,14 +94,18 @@ export function createCreditsRouter(
           "normal";
 
         res.json({
-          ...balance,
-          balanceDisplay: CreditManager.toDisplay(balance.balance),
-          lifetimeEarnedDisplay: CreditManager.toDisplay(balance.lifetimeEarned),
-          lifetimeSpentDisplay: CreditManager.toDisplay(balance.lifetimeSpent),
-          budgetLowThreshold: lowThreshold,
-          budgetLowThresholdDisplay: CreditManager.toDisplay(lowThreshold),
-          budgetCriticalThreshold: criticalThreshold,
-          budgetCriticalThresholdDisplay: CreditManager.toDisplay(criticalThreshold),
+          balance: CreditManager.toDisplay(balance.balance),
+          balanceStored: balance.balance,
+          lifetimeEarned: CreditManager.toDisplay(balance.lifetimeEarned),
+          lifetimeEarnedStored: balance.lifetimeEarned,
+          lifetimeSpent: CreditManager.toDisplay(balance.lifetimeSpent),
+          lifetimeSpentStored: balance.lifetimeSpent,
+          autoConvertPct: balance.autoConvertPct,
+          status: balance.status,
+          budgetLowThreshold: CreditManager.toDisplay(lowThreshold),
+          budgetLowThresholdStored: lowThreshold,
+          budgetCriticalThreshold: CreditManager.toDisplay(criticalThreshold),
+          budgetCriticalThresholdStored: criticalThreshold,
           budgetStatus,
         });
       } catch (error) {
@@ -133,7 +138,22 @@ export function createCreditsRouter(
         );
 
         if (agentRows.length === 0) {
-          res.status(404).json({ error: "Agent not found for this address." });
+          // Return zero-balance for unregistered wallets (avoids noisy 404s from frontend polling)
+          res.json({
+            address: address.toLowerCase(),
+            balance: 0,
+            balanceStored: 0,
+            lifetimeEarned: 0,
+            lifetimeEarnedStored: 0,
+            lifetimeSpent: 0,
+            lifetimeSpentStored: 0,
+            status: "no_account",
+            budgetLowThreshold: 2.0,
+            budgetLowThresholdStored: 200,
+            budgetCriticalThreshold: 0.5,
+            budgetCriticalThresholdStored: 50,
+            budgetStatus: "normal",
+          });
           return;
         }
 
@@ -144,16 +164,16 @@ export function createCreditsRouter(
           res.json({
             address: address.toLowerCase(),
             balance: 0,
-            balanceDisplay: 0,
+            balanceStored: 0,
             lifetimeEarned: 0,
-            lifetimeEarnedDisplay: 0,
+            lifetimeEarnedStored: 0,
             lifetimeSpent: 0,
-            lifetimeSpentDisplay: 0,
+            lifetimeSpentStored: 0,
             status: "no_account",
-            budgetLowThreshold: 200,
-            budgetLowThresholdDisplay: 2.0,
-            budgetCriticalThreshold: 50,
-            budgetCriticalThresholdDisplay: 0.5,
+            budgetLowThreshold: 2.0,
+            budgetLowThresholdStored: 200,
+            budgetCriticalThreshold: 0.5,
+            budgetCriticalThresholdStored: 50,
             budgetStatus: "normal",
           });
           return;
@@ -177,14 +197,18 @@ export function createCreditsRouter(
 
         res.json({
           address: address.toLowerCase(),
-          ...balance,
-          balanceDisplay: CreditManager.toDisplay(balance.balance),
-          lifetimeEarnedDisplay: CreditManager.toDisplay(balance.lifetimeEarned),
-          lifetimeSpentDisplay: CreditManager.toDisplay(balance.lifetimeSpent),
-          budgetLowThreshold: lowThreshold,
-          budgetLowThresholdDisplay: CreditManager.toDisplay(lowThreshold),
-          budgetCriticalThreshold: criticalThreshold,
-          budgetCriticalThresholdDisplay: CreditManager.toDisplay(criticalThreshold),
+          balance: CreditManager.toDisplay(balance.balance),
+          balanceStored: balance.balance,
+          lifetimeEarned: CreditManager.toDisplay(balance.lifetimeEarned),
+          lifetimeEarnedStored: balance.lifetimeEarned,
+          lifetimeSpent: CreditManager.toDisplay(balance.lifetimeSpent),
+          lifetimeSpentStored: balance.lifetimeSpent,
+          autoConvertPct: balance.autoConvertPct,
+          status: balance.status,
+          budgetLowThreshold: CreditManager.toDisplay(lowThreshold),
+          budgetLowThresholdStored: lowThreshold,
+          budgetCriticalThreshold: CreditManager.toDisplay(criticalThreshold),
+          budgetCriticalThresholdStored: criticalThreshold,
           budgetStatus,
         });
       } catch (error) {
@@ -257,9 +281,9 @@ export function createCreditsRouter(
 
         res.json({
           action,
-          cost: { centricredits: cost, display: (cost / 100).toFixed(2) },
-          currentBalance: { centricredits: currentBalance, display: (currentBalance / 100).toFixed(2) },
-          balanceAfter: { centricredits: balanceAfter, display: (balanceAfter / 100).toFixed(2) },
+          cost: { credits: CreditManager.toDisplay(cost), stored: cost },
+          currentBalance: { credits: CreditManager.toDisplay(currentBalance), stored: currentBalance },
+          balanceAfter: { credits: CreditManager.toDisplay(balanceAfter), stored: balanceAfter },
           canAfford: balanceAfter >= 0,
           source,
         });
@@ -272,7 +296,7 @@ export function createCreditsRouter(
   );
 
   // -------------------------------------------------------
-  //  POST /v1/credits/top-up — DEPRECATED (free top-ups removed)
+  //  POST /v1/credits/top-up — Returns 410 Gone
   // -------------------------------------------------------
   router.post(
     "/credits/top-up",
@@ -280,7 +304,7 @@ export function createCreditsRouter(
     async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
       res.status(410).json({
         error: "Gone",
-        message: "Free top-ups have been removed. Purchase credit packs via GET /v1/credits/packs.",
+        message: "Purchase credit packs via GET /v1/credits/packs.",
       });
     },
   );
@@ -381,13 +405,13 @@ export function createCreditsRouter(
       // Validate inputs
       if (lowThreshold !== undefined) {
         if (!Number.isInteger(lowThreshold) || lowThreshold <= 0) {
-          res.status(400).json({ error: "lowThreshold must be a positive integer (centricredits)." });
+          res.status(400).json({ error: "lowThreshold must be a positive integer (credits)." });
           return;
         }
       }
       if (criticalThreshold !== undefined) {
         if (!Number.isInteger(criticalThreshold) || criticalThreshold <= 0) {
-          res.status(400).json({ error: "criticalThreshold must be a positive integer (centricredits)." });
+          res.status(400).json({ error: "criticalThreshold must be a positive integer (credits)." });
           return;
         }
       }
@@ -440,13 +464,13 @@ export function createCreditsRouter(
         });
 
         res.json({
-          budgetLowThreshold: newLow,
-          budgetLowThresholdDisplay: CreditManager.toDisplay(newLow),
-          budgetCriticalThreshold: newCritical,
-          budgetCriticalThresholdDisplay: CreditManager.toDisplay(newCritical),
+          budgetLowThreshold: CreditManager.toDisplay(newLow),
+          budgetLowThresholdStored: newLow,
+          budgetCriticalThreshold: CreditManager.toDisplay(newCritical),
+          budgetCriticalThresholdStored: newCritical,
           budgetStatus,
-          balance,
-          balanceDisplay: CreditManager.toDisplay(balance),
+          balance: CreditManager.toDisplay(balance),
+          balanceStored: balance,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -465,6 +489,7 @@ export function createCreditsRouter(
       res.json({
         packs: CREDIT_PACKS,
         contractAddress: creditPurchaseAddress || null,
+        nookTokenAddress: gatewayConfig.nookTokenAddress || null,
       });
     },
   );
@@ -484,15 +509,15 @@ export function createCreditsRouter(
         return;
       }
 
-      const toDisplay = (c: number) => (c / 100).toFixed(2);
+      const toDisplay = (c: number) => CreditManager.toDisplay(c);
 
       // Pull action costs from ActionRegistry (live source of truth)
-      const actions: Record<string, { centricredits: number; display: string; description: string; category: string }> = {};
+      const actions: Record<string, { credits: number; stored: number; description: string; category: string }> = {};
       if (actionRegistry) {
         for (const tool of actionRegistry.list()) {
           actions[tool.name] = {
-            centricredits: tool.cost,
-            display: toDisplay(tool.cost),
+            credits: toDisplay(tool.cost),
+            stored: tool.cost,
             description: tool.description,
             category: tool.category,
           };
@@ -501,8 +526,8 @@ export function createCreditsRouter(
 
       // MCP tool call cost (not in ActionRegistry — static in McpBridge)
       actions["mcp_tool_call"] = {
-        centricredits: 25,
-        display: "0.25",
+        credits: 0.25,
+        stored: 25,
         description: "Call a tool via MCP bridge",
         category: "mcp",
       };
@@ -514,52 +539,54 @@ export function createCreditsRouter(
             tier: 0,
             name: "New",
             requirement: "No DID registered",
-            costPerRelay: { centricredits: gatewayConfig.relayTier0CreditCost, display: toDisplay(gatewayConfig.relayTier0CreditCost) },
+            costPerRelay: { credits: toDisplay(gatewayConfig.relayTier0CreditCost), stored: gatewayConfig.relayTier0CreditCost },
             dailyCap: gatewayConfig.relayTier0Cap,
           },
           {
             tier: 1,
             name: "Registered",
             requirement: "Has DID on-chain",
-            costPerRelay: { centricredits: gatewayConfig.relayTier1CreditCost, display: toDisplay(gatewayConfig.relayTier1CreditCost) },
+            costPerRelay: { credits: toDisplay(gatewayConfig.relayTier1CreditCost), stored: gatewayConfig.relayTier1CreditCost },
             dailyCap: gatewayConfig.relayTier1Cap,
           },
           {
             tier: 2,
             name: "Purchased",
             requirement: "Has purchased credits (any pack)",
-            costPerRelay: { centricredits: gatewayConfig.relayTier2CreditCost, display: toDisplay(gatewayConfig.relayTier2CreditCost) },
+            costPerRelay: { credits: toDisplay(gatewayConfig.relayTier2CreditCost), stored: gatewayConfig.relayTier2CreditCost },
             dailyCap: gatewayConfig.relayTier2Cap,
           },
         ],
       };
 
       const data = {
-        currency: "centricredits",
-        displayMultiplier: 100,
-        note: "All costs are in centricredits. Divide by 100 for display credits (e.g. 100 centricredits = 1.00 credit).",
+        currency: "credits",
+        note: "All 'credits' values are display credits (e.g. 1.25 credits). The 'stored' field is the internal integer (125 stored = 1.25 credits).",
         initialBalance: {
-          centricredits: gatewayConfig.creditInitialAmount,
-          display: toDisplay(gatewayConfig.creditInitialAmount),
+          credits: toDisplay(gatewayConfig.creditInitialAmount),
+          stored: gatewayConfig.creditInitialAmount,
         },
         refills: false,
-        maxDailySpend: {
-          centricredits: gatewayConfig.creditMaxDailySpend,
-          display: toDisplay(gatewayConfig.creditMaxDailySpend),
-        },
+        maxDailySpend: gatewayConfig.creditMaxDailySpend === 0
+          ? { credits: 0, stored: 0, unlimited: true }
+          : {
+              credits: toDisplay(gatewayConfig.creditMaxDailySpend),
+              stored: gatewayConfig.creditMaxDailySpend,
+            },
         actions,
         relay,
         packs: CREDIT_PACKS.map((p) => ({
           id: p.id,
           name: p.name,
           usdcPrice: p.usdcPrice,
-          credits: p.creditAmount.toFixed(2),
-          centricredits: p.centricredits,
+          credits: p.credits,
+          stored: p.stored,
+          nookDiscount: p.nookDiscount,
         })),
         tips: [
           "You start with " + toDisplay(gatewayConfig.creditInitialAmount) + " credits and get NO refills — spend wisely",
           "Voting (0.25) and egress HTTP (0.15) are the cheapest actions",
-          "Publishing a post (1.00) is the most expensive single action",
+          "Publishing a post (1.25) is the most expensive single action",
           "Register a DID to drop relay costs from 0.50 to 0.25 per transaction",
           "Buying any credit pack unlocks Tier 2: 200 relays/day at 0.10 each",
           "Use GET /v1/credits/balance to check your balance before expensive operations",
@@ -568,6 +595,143 @@ export function createCreditsRouter(
 
       economyCache = { data, expiresAt: Date.now() + ECONOMY_CACHE_TTL_MS };
       res.json(data);
+    },
+  );
+
+  // -------------------------------------------------------
+  //  GET /v1/credits/protocol-revenue — Public protocol-wide revenue stats
+  // -------------------------------------------------------
+  let revenueCache: { data: unknown; expiresAt: number } | null = null;
+  const REVENUE_CACHE_TTL_MS = 30_000;
+
+  router.get(
+    "/credits/protocol-revenue",
+    async (_req: Request, res: Response): Promise<void> => {
+      if (revenueCache && Date.now() < revenueCache.expiresAt) {
+        res.json(revenueCache.data);
+        return;
+      }
+
+      try {
+        // All queries run in parallel for speed
+        const [purchaseRes, servicesRes, bountiesRes, hiredRes, onChainRes, bountySettleRes, mktSettleRes] = await Promise.all([
+          // 1. Total purchase revenue by payment token (USDC 6 decimals, NOOK 18 decimals)
+          pool.query<{ payment_token: string; total: string; count: string }>(
+            `SELECT payment_token, COALESCE(SUM(price_paid::NUMERIC), 0)::TEXT AS total,
+                    COUNT(*)::TEXT AS count
+             FROM credit_purchases
+             GROUP BY payment_token`,
+          ),
+          // 2. Services paid (completed or settled agreements)
+          pool.query<{ count: string }>(
+            `SELECT COUNT(*)::TEXT AS count
+             FROM service_agreements
+             WHERE status IN ('completed', 'settled')`,
+          ),
+          // 3. Bounties claimed
+          pool.query<{ count: string }>(
+            `SELECT COUNT(*)::TEXT AS count FROM bounty_completions`,
+          ),
+          // 4. Agents hired by humans (agreements where buyer is human agent_type=1)
+          pool.query<{ count: string }>(
+            `SELECT COUNT(*)::TEXT AS count
+             FROM service_agreements sa
+             JOIN agents a ON a.id = sa.buyer_agent_id
+             LEFT JOIN idx_agents ia ON LOWER(ia.id) = LOWER(a.address)
+             WHERE sa.status IN ('completed', 'settled', 'agreed', 'delivered')
+               AND ia.agent_type = 1`,
+          ),
+          // 5. Total on-chain revenue distributed (from indexer)
+          pool.query<{ total: string }>(
+            `SELECT COALESCE(SUM(total_credited::NUMERIC), 0)::TEXT AS total
+             FROM idx_earnings_accounts`,
+          ),
+          // 6. Bounty settlement totals by token
+          pool.query<{ token_address: string | null; total: string; count: string }>(
+            `SELECT token_address, COALESCE(SUM(reward_amount::NUMERIC), 0)::TEXT AS total,
+                    COUNT(*)::TEXT AS count
+             FROM bounty_completions
+             GROUP BY token_address`,
+          ).catch(() => ({ rows: [] as { token_address: string | null; total: string; count: string }[] })),
+          // 7. Marketplace settlement totals by token
+          pool.query<{ escrow_token: string | null; total: string; count: string }>(
+            `SELECT escrow_token, COALESCE(SUM(escrow_amount::NUMERIC), 0)::TEXT AS total,
+                    COUNT(*)::TEXT AS count
+             FROM service_agreements
+             WHERE status IN ('completed', 'settled')
+             GROUP BY escrow_token`,
+          ).catch(() => ({ rows: [] as { escrow_token: string | null; total: string; count: string }[] })),
+        ]);
+
+        // Parse purchase totals by token
+        let totalUsdc = "0";
+        let totalNook = "0";
+        let purchaseCount = 0;
+        for (const row of purchaseRes.rows) {
+          purchaseCount += parseInt(row.count, 10);
+          if (row.payment_token === "usdc") {
+            // USDC has 6 decimals — convert to display dollars
+            const raw = BigInt(row.total.split(".")[0]);
+            totalUsdc = (Number(raw) / 1e6).toFixed(2);
+          } else if (row.payment_token === "nook") {
+            // NOOK has 18 decimals — convert to display tokens
+            const raw = BigInt(row.total.split(".")[0]);
+            totalNook = (Number(raw) / 1e18).toFixed(4);
+          }
+        }
+
+        // Parse bounty settlement totals
+        const bountySettlements: { token: string; total: string; count: number }[] = [];
+        for (const row of bountySettleRes.rows) {
+          bountySettlements.push({
+            token: row.token_address ?? "unknown",
+            total: row.total,
+            count: parseInt(row.count, 10),
+          });
+        }
+
+        // Parse marketplace settlement totals
+        const marketplaceSettlements: { token: string; total: string; count: number }[] = [];
+        for (const row of mktSettleRes.rows) {
+          marketplaceSettlements.push({
+            token: row.escrow_token ?? "unknown",
+            total: row.total,
+            count: parseInt(row.count, 10),
+          });
+        }
+
+        const data = {
+          purchases: {
+            totalUsdc,
+            totalNook,
+            count: purchaseCount,
+          },
+          servicesPaid: parseInt(servicesRes.rows[0]?.count ?? "0", 10),
+          bountiesClaimed: parseInt(bountiesRes.rows[0]?.count ?? "0", 10),
+          agentsHiredByHumans: parseInt(hiredRes.rows[0]?.count ?? "0", 10),
+          onChainRevenue: {
+            totalWei: onChainRes.rows[0]?.total ?? "0",
+          },
+          bountySettlements,
+          marketplaceSettlements,
+        };
+
+        revenueCache = { data, expiresAt: Date.now() + REVENUE_CACHE_TTL_MS };
+        res.json(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Graceful degradation — tables may not exist yet
+        logSecurityEvent("warn", "protocol-revenue-query-failed", { error: message });
+        res.json({
+          purchases: { totalUsdc: "0", totalNook: "0", count: 0 },
+          servicesPaid: 0,
+          bountiesClaimed: 0,
+          agentsHiredByHumans: 0,
+          onChainRevenue: { totalWei: "0" },
+          bountySettlements: [],
+          marketplaceSettlements: [],
+        });
+      }
     },
   );
 
@@ -584,11 +748,15 @@ export function createCreditsRouter(
 
       res.json({
         contractAddress: creditPurchaseAddress,
-        chainId: 84532, // Base Sepolia
+        chainId: 8453, // Base Mainnet
         abi: [
           "function purchaseWithUSDC(uint256 packId) external",
+          "function purchaseWithNook(uint256 packId) external",
+          "function nookEnabled() external view returns (bool)",
+          "function getNookPrice(uint256 packId) external view returns (uint256)",
           "function getActivePacks() external view returns (tuple(string name, uint256 usdcPrice, uint256 creditAmount, bool active)[], uint256[])",
         ],
+        nookTokenAddress: gatewayConfig.nookTokenAddress || null,
         packs: CREDIT_PACKS,
       });
     },

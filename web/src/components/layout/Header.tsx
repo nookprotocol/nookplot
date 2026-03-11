@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Menu, Search, Moon, Sun, LogOut, Wallet, User } from "lucide-react";
+import { Menu, Search, Moon, Sun, LogOut, Wallet, User, MessageSquare, Settings } from "lucide-react";
 import { useDisconnect } from "wagmi";
 import { useUIStore } from "@/store/uiStore";
 import { useAuth } from "@/hooks/useAuth";
@@ -8,19 +8,31 @@ import { CURRENT_WAVE } from "@/config/waves";
 import type { WaveLevel } from "@/config/waves";
 import { truncateAddress } from "@/lib/format";
 import { SearchDialog } from "@/components/shared/SearchDialog";
+import { isAuthenticated as hasGatewaySession, endSession } from "@/lib/authSession";
 
-const NAV_PILLS: { to: string; label: string; wave?: WaveLevel }[] = [
-  { to: "/", label: "Dashboard" },
-  { to: "/marketplace", label: "Network", wave: 3 },
-  { to: "/channels", label: "Feed", wave: 1 },
+const NAV_LINKS: { to: string; label: string; wave?: WaveLevel; matchPrefixes: string[] }[] = [
+  { to: "/", label: "Explore", matchPrefixes: ["/leaderboard", "/papers", "/bundles", "/guilds", "/citation-map", "/models", "/resources", "/c/", "/communities"] },
+  { to: "/projects", label: "Projects", matchPrefixes: ["/projects", "/sandbox"] },
+  { to: "/marketplace", label: "Hire", matchPrefixes: ["/marketplace"] },
+  { to: "/economy", label: "Economy", matchPrefixes: ["/economy", "/bounties", "/subscriptions"] },
+  { to: "/docs", label: "Docs", matchPrefixes: ["/docs"] },
+  { to: "/about", label: "About", matchPrefixes: ["/about"] },
 ];
+
+function isNavActive(link: typeof NAV_LINKS[number], pathname: string): boolean {
+  if (link.to === "/") {
+    // Explore is active on homepage or any of its sub-pages
+    return pathname === "/" || link.matchPrefixes.some((p) => pathname.startsWith(p));
+  }
+  return link.matchPrefixes.some((p) => pathname === p || pathname.startsWith(p + "/") || pathname.startsWith(p));
+}
 
 export function Header() {
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const theme = useUIStore((s) => s.theme);
   const toggleTheme = useUIStore((s) => s.toggleTheme);
   const { pathname } = useLocation();
-  const { isAuthenticated, canTransact, user, walletAddress, logout } = useAuth();
+  const { isAuthenticated, canTransact, isPrivyUser, user, walletAddress, sessionInfo, logout } = useAuth();
   const { disconnect } = useDisconnect();
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -52,6 +64,19 @@ export function Header() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Auto-open search from ?search=discover (post-registration onboarding)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("search") === "discover") {
+      setSearchOpen(true);
+      params.delete("search");
+      const newUrl = params.toString()
+        ? `${window.location.pathname}?${params.toString()}`
+        : window.location.pathname;
+      window.history.replaceState({}, "", newUrl);
+    }
+  }, []);
+
   return (
     <header
       className="sticky top-0 z-50 h-[52px] flex items-center gap-4 px-5 border-b border-border backdrop-blur-[20px]"
@@ -61,13 +86,13 @@ export function Header() {
       <button
         onClick={toggleSidebar}
         className="lg:hidden p-2 hover:bg-accent-soft rounded-lg"
-        aria-label="Toggle sidebar"
+        aria-label="Toggle menu"
       >
         <Menu className="h-5 w-5" />
       </button>
 
       {/* Logo */}
-      <Link to="/" className="flex items-center gap-2 mr-8 shrink-0">
+      <Link to="/?view=network" className="flex items-center gap-2 mr-6 shrink-0">
         <img
           src="/nookplot.png"
           alt="nookplot"
@@ -81,35 +106,44 @@ export function Header() {
         </span>
       </Link>
 
-      {/* Nav pills */}
-      <nav
-        className="hidden md:flex gap-1 rounded-lg p-[3px]"
-        style={{ background: "var(--color-bg-surface)" }}
-      >
-        {NAV_PILLS.filter((p) => (p.wave ?? 0) <= CURRENT_WAVE).map(({ to, label }) => {
-          const isActive =
-            to === "/"
-              ? pathname === "/"
-              : pathname === to || pathname.startsWith(to + "/");
+      {/* Nav links */}
+      <nav className="hidden md:flex items-center gap-1">
+        {NAV_LINKS.filter((l) => (l.wave ?? 0) <= CURRENT_WAVE).map((link) => {
+          const active = isNavActive(link, pathname);
           return (
             <Link
-              key={to}
-              to={to}
-              className={`font-mono text-[0.72rem] font-medium tracking-wide px-3.5 py-1.5 rounded-md transition-all ${
-                isActive
-                  ? "text-foreground bg-card shadow-sm"
+              key={link.to}
+              to={link.to}
+              className={`font-mono text-[0.70rem] font-medium tracking-[0.06em] uppercase px-3.5 py-1.5 rounded-md transition-all whitespace-nowrap ${
+                active
+                  ? "text-foreground bg-accent-soft"
                   : "text-muted hover:text-muted-foreground hover:bg-accent-soft"
               }`}
             >
-              {label}
+              {link.label}
             </Link>
           );
         })}
       </nav>
 
-      {/* Spacer */}
-      <div className="ml-auto flex items-center gap-3">
-        {/* Search */}
+      {/* Spacer between nav and right controls */}
+      <div className="flex-1 min-w-[32px]" />
+
+      {/* Right section */}
+      <div className="flex items-center gap-3">
+        {/* Inbox / Messages icon (wave 1+) */}
+        {CURRENT_WAVE >= 1 && (
+          <Link
+            to="/messages"
+            className="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-muted hover:text-muted-foreground hover:border-border-hover hover:bg-accent-soft transition-all"
+            title="Messages"
+            aria-label="Messages"
+          >
+            <MessageSquare className="h-[15px] w-[15px]" />
+          </Link>
+        )}
+
+        {/* Desktop search bar */}
         <button
           onClick={() => setSearchOpen(true)}
           className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-muted text-[0.78rem] min-w-[180px] hover:border-border-hover transition-colors cursor-pointer"
@@ -120,6 +154,15 @@ export function Header() {
           <kbd className="ml-auto font-mono text-[0.65rem] text-muted px-1.5 py-px rounded border border-border bg-background">
             /
           </kbd>
+        </button>
+
+        {/* Mobile search button */}
+        <button
+          onClick={() => setSearchOpen(true)}
+          className="sm:hidden p-2 hover:bg-accent-soft rounded-lg"
+          aria-label="Search"
+        >
+          <Search className="h-5 w-5 text-muted" />
         </button>
 
         {/* Theme toggle */}
@@ -191,8 +234,94 @@ export function Header() {
                   </button>
                 )}
 
+                <Link
+                  to="/settings"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent-soft transition-colors"
+                >
+                  <Settings className="h-4 w-4" />
+                  Settings
+                </Link>
+
                 <button
                   onClick={() => { logout(); setMenuOpen(false); }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent-soft transition-colors"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Sign Out
+                </button>
+              </div>
+            )}
+          </div>
+        ) : isPrivyUser && sessionInfo ? (
+          /* Privy user (email/social login) — show dashboard dropdown */
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setMenuOpen((o) => !o)}
+              className="flex items-center gap-2 rounded-lg border border-border px-2 py-1.5 hover:bg-accent-soft transition-colors"
+            >
+              <div className="h-6 w-6 rounded-full bg-accent/20 flex items-center justify-center text-xs font-bold text-accent">
+                {(sessionInfo.displayName?.[0] ?? "H").toUpperCase()}
+              </div>
+              <span className="font-mono text-[0.72rem] text-muted-foreground hidden sm:inline">
+                {sessionInfo.displayName ?? truncateAddress(sessionInfo.address)}
+              </span>
+            </button>
+
+            {menuOpen && (
+              <div
+                className="absolute right-0 top-full mt-2 w-56 rounded-lg border border-border shadow-lg py-2 z-50"
+                style={{ background: "var(--color-bg-surface)" }}
+              >
+                <div className="px-3 py-2 border-b border-border">
+                  <p className="text-sm font-medium">{sessionInfo.displayName ?? "Account"}</p>
+                  <p className="text-xs text-muted-foreground font-mono truncate">
+                    {truncateAddress(sessionInfo.address)}
+                  </p>
+                </div>
+
+                <Link
+                  to="/dashboard"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent-soft transition-colors"
+                >
+                  <User className="h-4 w-4" />
+                  Dashboard
+                </Link>
+
+                <Link
+                  to="/marketplace"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent-soft transition-colors"
+                >
+                  <Wallet className="h-4 w-4" />
+                  Hire Agents
+                </Link>
+
+                <Link
+                  to="/settings"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent-soft transition-colors"
+                >
+                  <Settings className="h-4 w-4" />
+                  Settings
+                </Link>
+
+                <button
+                  onClick={async () => {
+                    setMenuOpen(false);
+                    // Clear gateway session cookie + localStorage
+                    await endSession();
+                    localStorage.removeItem("nookplot_auth_source");
+                    // Clear Privy session if available
+                    try {
+                      const { default: privyLogout } = await import("@/lib/privyLogout");
+                      await privyLogout();
+                    } catch {
+                      // Privy not loaded — fine
+                    }
+                    window.location.href = "/register";
+                  }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent-soft transition-colors"
                 >
                   <LogOut className="h-4 w-4" />
@@ -237,6 +366,15 @@ export function Header() {
                   My Profile
                 </Link>
 
+                <Link
+                  to="/settings"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent-soft transition-colors"
+                >
+                  <Settings className="h-4 w-4" />
+                  Settings
+                </Link>
+
                 <button
                   onClick={() => { disconnect(); setMenuOpen(false); }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent-soft transition-colors"
@@ -258,7 +396,11 @@ export function Header() {
       </div>
 
       {/* Global search dialog */}
-      <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <SearchDialog
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        isAuthenticated={hasGatewaySession()}
+      />
     </header>
   );
 }

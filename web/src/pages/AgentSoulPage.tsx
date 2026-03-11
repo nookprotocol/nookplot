@@ -1,7 +1,11 @@
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, ArrowRight, Brain, Target, Shield, Users } from "lucide-react";
-import { useSpawnTree } from "@/hooks/useDeployments";
 import { usePedigree } from "@/hooks/usePedigree";
+
+/** Stub: spawn tree will be fetched from gateway in a future release. */
+function useSpawnTree(_address?: string) {
+  return { children: [] as any[], isLoading: false };
+}
 import { PedigreeDetail } from "@/components/agent/PedigreeDetail";
 import { ProceduralAvatar } from "@/components/avatar/ProceduralAvatar";
 

@@ -1,4 +1,5 @@
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { keepPreviousData } from "@tanstack/react-query";
+import { useGatewayQuery } from "./useGatewayQuery";
 
 export interface SubgraphBundle {
   id: string;
@@ -11,6 +12,13 @@ export interface SubgraphBundle {
   cidCount: number;
   createdAt: string;
   isActive: boolean;
+  bundleType?: string | null;
+  tags?: string[];
+  summary?: string | null;
+  domain?: string | null;
+  bundleMetadata?: Record<string, unknown> | null;
+  citationCount?: number;
+  bundleScore?: number;
   contributors?: Array<{
     id: string;
     contributor: { id: string };
@@ -18,117 +26,107 @@ export interface SubgraphBundle {
   }>;
 }
 
-interface BundleListResult {
-  knowledgeBundles: SubgraphBundle[];
+/** Gateway GET /v1/bundles response */
+interface GatewayBundlesResult {
+  bundles: SubgraphBundle[];
+  first: number;
+  skip: number;
 }
 
-interface BundleDetailResult {
-  knowledgeBundles: SubgraphBundle[];
-}
+/**
+ * List bundles — gateway-first (benefits from 72h stale cache).
+ */
+export function useBundles(page = 0, pageSize = 20, sort?: string) {
+  const params = new URLSearchParams();
+  params.set("first", String(pageSize));
+  params.set("skip", String(page * pageSize));
+  if (sort) params.set("sort", sort);
 
-const LIST_QUERY = `
-  query BundleList($first: Int!, $skip: Int!) {
-    knowledgeBundles(
-      where: { isActive: true }
-      orderBy: createdAt
-      orderDirection: desc
-      first: $first
-      skip: $skip
-    ) {
-      id
-      bundleId
-      creator { id }
-      name
-      descriptionCid
-      contentCids
-      contributorCount
-      cidCount
-      createdAt
-      isActive
-    }
-  }
-`;
-
-export function useBundles(page = 0, pageSize = 20) {
-  const result = useSubgraphQuery<BundleListResult>(
-    ["bundles", String(page)],
-    LIST_QUERY,
-    { first: pageSize, skip: page * pageSize },
-    { staleTime: 15_000 },
+  const result = useGatewayQuery<GatewayBundlesResult>(
+    ["bundles", String(page), sort ?? "newest"],
+    `/v1/bundles?${params}`,
+    { staleTime: 300_000, placeholderData: keepPreviousData },
   );
 
   return {
-    bundles: result.data?.knowledgeBundles ?? [],
+    bundles: result.data?.bundles ?? [],
+    isLoading: result.isLoading,
+    isError: result.isError,
+  };
+}
+
+/**
+ * Fetch the single highest-scored bundle (server-side composite scoring).
+ */
+export function useTopBundle() {
+  const result = useGatewayQuery<GatewayBundlesResult>(
+    ["bundles", "top"],
+    "/v1/bundles?sort=score&first=1",
+    { staleTime: 300_000 },
+  );
+
+  return {
+    topBundle: result.data?.bundles?.[0] ?? undefined,
     isLoading: result.isLoading,
   };
 }
 
+/**
+ * Single bundle detail — gateway-first.
+ */
 export function useBundle(bundleId: string | undefined) {
-  const query = `
-    query BundleDetail($bundleId: BigInt!) {
-      knowledgeBundles(where: { bundleId: $bundleId }, first: 1) {
-        id
-        bundleId
-        creator { id }
-        name
-        descriptionCid
-        contentCids
-        contributorCount
-        cidCount
-        createdAt
-        isActive
-        contributors {
-          id
-          contributor { id }
-          weightBps
-        }
-      }
-    }
-  `;
-
-  const result = useSubgraphQuery<BundleDetailResult>(
+  const result = useGatewayQuery<SubgraphBundle | null>(
     ["bundle", bundleId ?? ""],
-    query,
-    { bundleId: bundleId ?? "0" },
-    { enabled: !!bundleId, staleTime: 15_000 },
+    `/v1/bundles/${bundleId}`,
+    { enabled: !!bundleId, staleTime: 300_000 },
   );
 
   return {
-    bundle: result.data?.knowledgeBundles?.[0] ?? null,
+    bundle: result.data ?? null,
     isLoading: result.isLoading,
   };
+}
+
+/**
+ * Bundles by creator — now uses the gateway index endpoint.
+ */
+
+/** Shape returned by GET /v1/index/bundles/creator/:addr */
+interface IndexBundlesByCreatorResponse {
+  bundles: Array<{
+    id: string;
+    bundle_id: string;
+    creator_id: string;
+    name: string;
+    cid_count: number;
+    contributor_count: number;
+    created_at: string;
+    is_active: boolean;
+  }>;
 }
 
 export function useBundlesByCreator(address: string | undefined) {
-  const query = `
-    query BundlesByCreator($creator: Bytes!, $first: Int!) {
-      knowledgeBundles(
-        where: { creator: $creator, isActive: true }
-        orderBy: createdAt
-        orderDirection: desc
-        first: $first
-      ) {
-        id
-        bundleId
-        creator { id }
-        name
-        cidCount
-        contributorCount
-        createdAt
-        isActive
-      }
-    }
-  `;
-
-  const result = useSubgraphQuery<BundleListResult>(
+  const result = useGatewayQuery<IndexBundlesByCreatorResponse>(
     ["bundles-by-creator", address ?? ""],
-    query,
-    { creator: address?.toLowerCase() ?? "", first: 50 },
-    { enabled: !!address, staleTime: 15_000 },
+    `/v1/index/bundles/creator/${address?.toLowerCase()}`,
+    { enabled: !!address, staleTime: 300_000 },
   );
 
+  const bundles: SubgraphBundle[] = (result.data?.bundles ?? []).map((b) => ({
+    id: b.id,
+    bundleId: b.bundle_id,
+    creator: { id: b.creator_id },
+    name: b.name,
+    descriptionCid: "",
+    contentCids: [],
+    contributorCount: b.contributor_count,
+    cidCount: b.cid_count,
+    createdAt: b.created_at,
+    isActive: b.is_active,
+  }));
+
   return {
-    bundles: result.data?.knowledgeBundles ?? [],
+    bundles,
     isLoading: result.isLoading,
   };
 }

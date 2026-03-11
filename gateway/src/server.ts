@@ -17,17 +17,21 @@
  */
 
 import { gatewayConfig } from "./config.js";
+import { TOOL_MAP } from "@nookplot/mcp/tools";
 import express from "express";
 import helmet from "helmet";
+import compression from "compression";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { ethers } from "ethers";
 
-import { getPool, runMigrations } from "./db.js";
+import { getPool, runMigrations, closePool } from "./db.js";
+import { QueryCache } from "./services/queryCache.js";
 import { initSdkFactory, getRelayer, getProvider, type SdkFactoryConfig } from "./sdkFactory.js";
-import { createIpRateLimiter, createKeyRateLimiter, createReadKeyRateLimiter, createRegistrationRateLimiter, createSubgraphIpRateLimiter, createAuthIpRateLimiter, createMethodAwareRateLimiter } from "./middleware/rateLimit.js";
+import { createIpRateLimiter, createKeyRateLimiter, createReadKeyRateLimiter, createRegistrationRateLimiter, createAuthIpRateLimiter, createMethodAwareRateLimiter } from "./middleware/rateLimit.js";
 import { auditLog, setLogLevel, logSecurityEvent } from "./middleware/auditLog.js";
 import { creditHeadersMiddleware } from "./middleware/creditHeaders.js";
 import { createCloudflareMiddleware } from "./middleware/cloudflare.js";
@@ -41,15 +45,21 @@ import { createProjectsRouter } from "./routes/projects.js";
 import { createGithubRouter } from "./routes/github.js";
 import { createWsTicketRouter } from "./routes/wsTicket.js";
 import { createContributionsRouter } from "./routes/contributions.js";
+import { createMatchingRouter } from "./routes/matching.js";
 import { createBountiesRouter } from "./routes/bounties.js";
 import { createBundlesRouter } from "./routes/bundles.js";
-import { createDeploymentsRouter } from "./routes/deployments.js";
-import { ContributionScorer } from "./services/contributionScorer.js";
+
 import { ExpertiseProfiler } from "./services/expertiseProfiler.js";
+import { CollaborationTracker } from "./services/collaborationTracker.js";
+import { SkillMatchingService } from "./services/skillMatchingService.js";
+import { TeamAssemblyService } from "./services/teamAssemblyService.js";
 import { OnChainSync } from "./services/onChainSync.js";
 import { GitHubClient } from "./services/githubClient.js";
 import { CollabServer } from "./services/collabServer.js";
 import { ExecService } from "./services/execService.js";
+import { PreviewDeploymentService } from "./services/previewDeploymentService.js";
+import { createPreviewsRouter } from "./routes/previews.js";
+import { createPreviewProxyMiddleware } from "./middleware/previewProxy.js";
 import { ExecServer } from "./services/execServer.js";
 import { CreditManager } from "./services/creditManager.js";
 import { encryptSecret, decryptSecret } from "./secretManager.js";
@@ -58,19 +68,32 @@ import { InferenceProxy } from "./services/inferenceProxy.js";
 import { AnthropicProvider } from "./services/inference/anthropicProvider.js";
 import { OpenAIProvider } from "./services/inference/openaiProvider.js";
 import { MiniMaxProvider } from "./services/inference/minimaxProvider.js";
+import { OpenRouterProvider } from "./services/inference/openRouterProvider.js";
 import { MockProvider } from "./services/inference/mockProvider.js";
+import { VeniceProvider } from "./services/inference/veniceProvider.js";
+import { registerVeniceTools } from "./services/veniceTools.js";
 import { createCreditsRouter } from "./routes/credits.js";
+import { createTokensRouter } from "./routes/tokens.js";
+import { createTokenPriceRouter } from "./routes/tokenPrice.js";
 import { createInferenceRouter } from "./routes/inference.js";
 import { createRevenueRouter } from "./routes/revenue.js";
-import { createCliquesRouter } from "./routes/cliques.js";
+import { createGuildsRouter } from "./routes/guilds.js";
 import { createRelayRouter } from "./routes/relay.js";
+import { PolicyEngine } from "./services/policyEngine.js";
+import { createPoliciesRouter } from "./routes/policies.js";
+import { DelegationService } from "./services/delegationService.js";
+import { createDelegationsRouter } from "./routes/delegations.js";
+import { TreasuryOpsService } from "./services/treasuryOpsService.js";
+import { createTreasuryOpsRouter } from "./routes/treasury-ops.js";
+import { createProvisionRouter } from "./routes/provision.js";
 import { ERC8004MintService } from "./services/erc8004MintService.js";
 import { ValidationService } from "./services/validationService.js";
 import { BasicTestRunner } from "./services/validators/basicTestRunner.js";
 import { InferenceTestRunner } from "./services/validators/inferenceTestRunner.js";
 import { createValidationRouter } from "./routes/validation.js";
 import { createPrepareRouter } from "./routes/prepare.js";
-import { CliqueDetector } from "./services/cliqueDetector.js";
+import { NonceTracker } from "./services/nonceTracker.js";
+import { GuildDetector } from "./services/guildDetector.js";
 import { OpportunityScanner } from "./services/opportunityScanner.js";
 import { DecisionEngine } from "./services/decisionEngine.js";
 import { ProactiveScheduler } from "./services/proactiveScheduler.js";
@@ -88,12 +111,19 @@ import { InProcessMessageBus } from "./services/messageBus.js";
 import { ChannelService } from "./services/channelService.js";
 import { ChannelBroadcaster } from "./services/channelBroadcaster.js";
 import { ChannelSyncer } from "./services/channelSyncer.js";
+import { ResourceEnricher } from "./services/resourceEnricher.js";
 import { createChannelsRouter } from "./routes/channels.js";
 import { MarketplaceService } from "./services/marketplaceService.js";
 import { createMarketplaceRouter } from "./routes/marketplace.js";
+import { GpuAvailabilityService } from "./services/gpuAvailabilityService.js";
+import { GpuChallengeService } from "./services/gpuChallengeService.js";
+import { createGpuRouter } from "./routes/gpu.js";
+import { ApiProxyService } from "./services/apiProxyService.js";
+import { createApiMarketplaceRouter } from "./routes/api-marketplace.js";
 import { ActionRegistry, registerBuiltInTools, registerEgressTool } from "./services/actionRegistry.js";
 import { ActionExecutor } from "./services/actionExecutor.js";
 import { EgressProxy } from "./services/egressProxy.js";
+import { ToolDispatcher } from "./services/toolDispatcher.js";
 import { createActionsRouter } from "./routes/actions.js";
 import { createDirectivesRouter } from "./routes/directives.js";
 import { WebhookManager } from "./services/webhookManager.js";
@@ -105,27 +135,106 @@ import { createMcpRouter } from "./routes/mcp.js";
 import { createIpfsRouter } from "./routes/ipfs.js";
 import { FileManager } from "./services/fileManager.js";
 import { createFilesRouter } from "./routes/files.js";
-import { RelayGuard } from "./services/relayGuard.js";
+import { createTasksRouter } from "./routes/tasks.js";
+import { createBroadcastsRouter } from "./routes/broadcasts.js";
+import { createSharingRouter } from "./routes/sharing.js";
+import { createBountyBridgeRouter } from "./routes/bountyBridge.js";
 import { PurchaseWatcher } from "./services/purchaseWatcher.js";
+import { SubscriptionService } from "./services/subscriptionService.js";
+import { createSubscriptionsRouter } from "./routes/subscriptions.js";
 import { createGoogleAuthRouter } from "./routes/googleAuth.js";
 import { createTwitterAuthRouter } from "./routes/twitterAuth.js";
-import { createSubgraphRouter } from "./routes/subgraph.js";
-import { SubgraphGateway } from "./services/subgraphGateway.js";
-import { SybilDetector } from "./services/sybilDetector.js";
-import { createSybilRouter } from "./routes/sybil.js";
+import { createIndexRouter } from "./routes/indexRoutes.js";
+
 import { QualityScorer } from "./services/qualityScorer.js";
 import { ExternalClaimService } from "./services/externalClaimService.js";
 import { createClaimsRouter } from "./routes/claims.js";
 import { OrcidVerifier } from "./services/verifiers/orcidVerifier.js";
 import { PedigreeService } from "./services/pedigreeService.js";
 import { createPedigreeRouter } from "./routes/pedigree.js";
+import { SearchService } from "./services/searchService.js";
+import { createSearchRouter } from "./routes/search.js";
+import { createGuildProjectsRouter } from "./routes/guildProjects.js";
+import { InterestEngine } from "./services/interestEngine.js";
+import { OnboardingService } from "./services/onboardingService.js";
+import { createInterestsRouter } from "./routes/interests.js";
+import { createTagsRouter } from "./routes/tags.js";
+import { VerificationTierService } from "./services/verificationTierService.js";
+import { createRequireVerified, createRequireTrusted } from "./middleware/tierGate.js";
+import { GitHubVerifier } from "./services/verifiers/githubVerifier.js";
+import { GitHubKnowledgeService } from "./services/githubKnowledgeService.js";
+import { createGithubKnowledgeRouter } from "./routes/githubKnowledge.js";
+import { createHumanVerificationRouter } from "./routes/humanVerification.js";
+import { createSessionRouter } from "./routes/session.js";
 
 import { SemanticScholarClient } from "./services/semanticScholarClient.js";
 import { GrokipediaClient } from "./services/grokipediaClient.js";
 import { PaperQualityScorer } from "./services/paperQualityScorer.js";
 import { ArxivIngestionService } from "./services/arxivIngestionService.js";
 import { createIngestionRouter } from "./routes/ingestion.js";
-import citationsRouter from "./routes/citations.js";
+import { createCitationsRouter } from "./routes/citations.js";
+import { BundleDiscoveryService } from "./services/bundleDiscoveryService.js";
+import { BundleCitationDetector } from "./services/bundleCitationDetector.js";
+import { KnowledgeResourceService } from "./services/knowledgeResourceService.js";
+import { FacultyBundleService } from "./services/facultyBundleService.js";
+import { ResourceCitationDetector } from "./services/resourceCitationDetector.js";
+import { createResourcesRouter } from "./routes/resources.js";
+import { TeachingExchangeService } from "./services/teachingExchangeService.js";
+import { createTeachingRouter } from "./routes/teaching.js";
+import { AgentMemoryService } from "./services/agentMemoryService.js";
+import { createAgentMemoryRouter } from "./routes/agentMemory.js";
+import { CodeReviewService } from "./services/codeReviewService.js";
+import { createCodeReviewRouter } from "./routes/codeReviews.js";
+import { WeeklyRewardService } from "./services/weeklyRewardService.js";
+import { createRewardsRouter } from "./routes/rewards.js";
+import { EmbeddingService } from "./services/embeddingService.js";
+import { KnowledgeQueryService } from "./services/knowledgeQueryService.js";
+import { createKnowledgeQueryRouter } from "./routes/knowledgeQuery.js";
+import { createOgRouter } from "./routes/og.js";
+import { WorkspaceService } from "./services/workspaceService.js";
+import { WorkspaceBroadcaster } from "./services/workspaceBroadcaster.js";
+import { ProposalService } from "./services/proposalService.js";
+import { createWorkspaceRouter } from "./routes/workspace.js";
+import { InsightService } from "./services/insightService.js";
+import { createInsightRouter } from "./routes/insights.js";
+import { SkillRegistryService } from "./services/skillRegistryService.js";
+import { createSkillRegistryRouter } from "./routes/skillRegistry.js";
+import { TreasuryService } from "./services/treasuryService.js";
+import { createTreasuryRouter } from "./routes/treasury.js";
+import { SwarmService } from "./services/swarmService.js";
+import { createSwarmRouter } from "./routes/swarms.js";
+import { SpecializationService } from "./services/specializationService.js";
+import { createSpecializationRouter } from "./routes/specialization.js";
+import { GuildWeeklyRewardService } from "./services/guildWeeklyRewardService.js";
+import { MerkleRewardService } from "./services/merkleRewardService.js";
+import { MerkleRootPublisher } from "./services/merkleRootPublisher.js";
+import { createMerkleRewardsRouter } from "./routes/merkleRewards.js";
+import { IntentService } from "./services/intentService.js";
+import { createIntentsRouter } from "./routes/intents.js";
+import { OracleService } from "./services/oracleService.js";
+import { createOracleRouter } from "./routes/oracle.js";
+
+import { AcpService } from "./services/acpService.js";
+import { createAcpRouter } from "./routes/acp.js";
+import { createSemanticMatchRouter } from "./routes/semanticMatch.js";
+import { CreditHireService } from "./services/creditHireService.js";
+import { createCreditHireRouter } from "./routes/creditHire.js";
+import { EmailService } from "./services/emailService.js";
+import { createEmailRouter } from "./routes/email.js";
+import { createResendWebhookRouter } from "./routes/resend-webhook.js";
+
+import { createExecRouter } from "./routes/exec.js";
+import { ConvergenceBackflowService } from "./services/convergenceBackflowService.js";
+import { createConvergenceRouter } from "./routes/convergence.js";
+import { ResearchHubBountyService } from "./services/researchHubBountyService.js";
+import { createResearchHubRouter } from "./routes/researchhub.js";
+
+// Read gateway version from package.json at module load
+const __server_filename = fileURLToPath(import.meta.url);
+const __server_dirname = path.dirname(__server_filename);
+export const GATEWAY_VERSION: string = JSON.parse(
+  fs.readFileSync(path.join(__server_dirname, "..", "package.json"), "utf-8"),
+).version;
 
 async function startServer() {
   // ============================================================
@@ -154,21 +263,14 @@ async function startServer() {
   const provider = getProvider();
   const relayer = getRelayer();
 
-  // Centralized subgraph gateway (rate-limited + cached + DB-persisted)
-  const subgraphGateway = new SubgraphGateway(
-    gatewayConfig.subgraphUrl,
-    {
-      dailyLimit: gatewayConfig.subgraphDailyQueryLimit,
-      cacheTtlMs: gatewayConfig.subgraphCacheTtlMs,
-      staleTtlMs: gatewayConfig.subgraphStaleTtlMs,
-    },
-    pool,
+  // NonceTracker — per-agent nonce cache with mutex to prevent race conditions
+  // when agents make rapid concurrent prepare calls (e.g. upvote + comment).
+  const nonceTracker = new NonceTracker(
+    (address: string) => relayer.getNonce(address),
   );
-  // Seed in-memory cache from Postgres so restarts are never cold
-  await subgraphGateway.loadPersistedCache();
 
-  // Pedigree signal (off-chain computation from subgraph data)
-  const pedigreeService = new PedigreeService(subgraphGateway);
+  // Pedigree signal (off-chain computation from idx_* tables)
+  const pedigreeService = new PedigreeService(pool);
 
   // Validate encryption key on startup (fail fast if misconfigured)
   if (gatewayConfig.secretEncryptionKey) {
@@ -195,17 +297,24 @@ async function startServer() {
   const execServer = new ExecServer(pool, execService, gatewayConfig.apiKeyHmacSecret);
 
   // Contribution scoring services
-  const contributionScorer = new ContributionScorer(pool);
   const expertiseProfiler = new ExpertiseProfiler(pool);
+  // Wired later after specializationService is created (line ~771)
+  const collaborationTracker = new CollaborationTracker(pool);
+  const skillMatchingService = new SkillMatchingService(pool, collaborationTracker);
+  const teamAssemblyService = gatewayConfig.skillMatchingEnabled
+    ? new TeamAssemblyService(pool, skillMatchingService)
+    : undefined;
 
-  // Periodic contribution score recomputation (every 5 minutes)
+  // Periodic expertise profiling + collaboration tracking (every 5 minutes)
   const SCORE_RECOMPUTE_MS = 5 * 60 * 1000;
   const scoreInterval = setInterval(async () => {
     try {
-      const scored = await contributionScorer.computeAllScores();
-      if (scored > 0) {
-        await expertiseProfiler.profileAllAgents();
-        console.log(`[scores] Recomputed ${scored} contribution scores`);
+      await expertiseProfiler.profileAllAgents();
+      // Track collaborations (independent of score changes)
+      try {
+        await collaborationTracker.trackAll();
+      } catch (collabErr) {
+        console.error("[collab] Collaboration tracking failed:", collabErr);
       }
     } catch (err) {
       console.error("[scores] Periodic recompute failed:", err);
@@ -213,13 +322,6 @@ async function startServer() {
   }, SCORE_RECOMPUTE_MS);
   // Run once on startup after a short delay (let migrations finish)
   setTimeout(async () => {
-    try {
-      const scored = await contributionScorer.computeAllScores();
-      if (scored > 0) await expertiseProfiler.profileAllAgents();
-      console.log(`[scores] Initial score computation: ${scored} agents`);
-    } catch (err) {
-      console.error("[scores] Initial computation failed:", err);
-    }
     // Backfill project_created activity for projects that predate the activity table
     try {
       const { rowCount } = await pool.query(
@@ -292,6 +394,38 @@ async function startServer() {
     } catch (err) {
       console.error("[channels] Channel backfill query failed:", err);
     }
+
+    // Backfill display_name from DID docs for agents that have did_cid but NULL display_name
+    try {
+      const { rows: nameless } = await pool.query<{ address: string; did_cid: string }>(
+        `SELECT address, did_cid FROM agents
+         WHERE display_name IS NULL AND did_cid IS NOT NULL
+         LIMIT 50`,
+      );
+      let filled = 0;
+      for (const agent of nameless) {
+        try {
+          const resp = await fetch(`${gatewayConfig.ipfsReadGateway}/${agent.did_cid}`, {
+            headers: { Accept: "application/json" },
+            signal: AbortSignal.timeout(5_000),
+          });
+          if (!resp.ok) continue;
+          const doc = (await resp.json()) as { name?: string };
+          if (doc?.name) {
+            await pool.query(
+              `UPDATE agents SET display_name = $1 WHERE LOWER(address) = $2 AND display_name IS NULL`,
+              [doc.name, agent.address.toLowerCase()],
+            );
+            filled++;
+          }
+        } catch { /* skip this agent */ }
+      }
+      if (filled > 0) {
+        console.log(`[names] Backfilled ${filled}/${nameless.length} agent display names from DID docs`);
+      }
+    } catch (err) {
+      console.error("[names] Display name backfill failed:", err);
+    }
   }, 10_000);
 
   // On-chain sync (only if CONTRIBUTION_REGISTRY_ADDRESS + SYNC_OWNER_KEY set)
@@ -326,17 +460,24 @@ async function startServer() {
   const creditManager = new CreditManager(pool, {
     pricing: {
       anthropic: {
-        "claude-sonnet-4-5-20250929": { promptPerMToken: 3000, completionPerMToken: 15000 },
-        "claude-haiku-4-5-20251001": { promptPerMToken: 800, completionPerMToken: 4000 },
-        "claude-opus-4-6": { promptPerMToken: 15000, completionPerMToken: 75000 },
+        "claude-sonnet-4-5-20250929": { promptPerMToken: 19700, completionPerMToken: 98500 },
+        "claude-haiku-4-5-20251001": { promptPerMToken: 5250, completionPerMToken: 26250 },
+        "claude-opus-4-6": { promptPerMToken: 98500, completionPerMToken: 492500 },
       },
       openai: {
-        "gpt-4o": { promptPerMToken: 2500, completionPerMToken: 10000 },
-        "gpt-4o-mini": { promptPerMToken: 150, completionPerMToken: 600 },
-        "o3-mini": { promptPerMToken: 1100, completionPerMToken: 4400 },
+        "gpt-4o": { promptPerMToken: 16400, completionPerMToken: 65650 },
+        "gpt-4o-mini": { promptPerMToken: 985, completionPerMToken: 3940 },
+        "o3-mini": { promptPerMToken: 7225, completionPerMToken: 28900 },
       },
       minimax: {
-        "MiniMax-M1": { promptPerMToken: 800, completionPerMToken: 4000 },
+        "MiniMax-M1": { promptPerMToken: 5250, completionPerMToken: 26250 },
+      },
+      venice: {
+        "llama-3.3-70b": { promptPerMToken: 4600, completionPerMToken: 18400 },
+        "deepseek-v3.2": { promptPerMToken: 2625, completionPerMToken: 6575 },
+        "qwen3-235b-a22b-instruct-2507": { promptPerMToken: 985, completionPerMToken: 4925 },
+        "venice-uncensored": { promptPerMToken: 1315, completionPerMToken: 5910 },
+        "qwen3-coder-480b-a35b-instruct": { promptPerMToken: 4925, completionPerMToken: 19700 },
       },
       mock: {
         "mock-echo": { promptPerMToken: 100, completionPerMToken: 100 },
@@ -344,38 +485,33 @@ async function startServer() {
     },
     defaultInitialCredits: gatewayConfig.creditInitialAmount,
     maxDailySpend: gatewayConfig.creditMaxDailySpend,
+    minBalance: gatewayConfig.creditMinBalance,
   });
 
-  // Relay guard (anti-abuse relay protection)
-  const relayGuard = new RelayGuard(pool, creditManager, {
-    hourlyGasBudgetWei: ethers.parseEther(String(gatewayConfig.relayHourlyGasBudgetEth)),
-    dailyGasBudgetWei: ethers.parseEther(String(gatewayConfig.relayDailyGasBudgetEth)),
-    refillIntervalMs: gatewayConfig.relayRefillIntervalMs,
-    tiers: [
-      {
-        cap: gatewayConfig.relayTier0Cap,
-        creditCost: gatewayConfig.relayTier0CreditCost,
-        dailyRefill: gatewayConfig.relayTier0DailyRefill,
-        maxBalance: gatewayConfig.relayTier0MaxBalance,
-        initialCredits: gatewayConfig.relayTier0InitialCredits,
-      },
-      {
-        cap: gatewayConfig.relayTier1Cap,
-        creditCost: gatewayConfig.relayTier1CreditCost,
-        dailyRefill: gatewayConfig.relayTier1DailyRefill,
-        maxBalance: gatewayConfig.relayTier1MaxBalance,
-        initialCredits: gatewayConfig.relayTier1InitialCredits,
-      },
-      {
-        cap: gatewayConfig.relayTier2Cap,
-        creditCost: gatewayConfig.relayTier2CreditCost,
-        dailyRefill: gatewayConfig.relayTier2DailyRefill,
-        maxBalance: gatewayConfig.relayTier2MaxBalance,
-        initialCredits: gatewayConfig.relayTier2InitialCredits,
-      },
-    ],
-  });
-  await relayGuard.initCircuitBreaker();
+  // Human verification tier service — only active when OAuth providers are configured
+  const verificationTierService = new VerificationTierService(pool, creditManager);
+  const oauthConfigured = !!(gatewayConfig.githubClientId || gatewayConfig.twitterClientId);
+  const requireVerified = oauthConfigured
+    ? createRequireVerified(verificationTierService, pool)
+    : undefined;
+  const requireTrusted = oauthConfigured
+    ? createRequireTrusted(verificationTierService, pool)
+    : undefined;
+  if (!oauthConfigured) {
+    console.log("[tier-gate] No OAuth provider configured — verification tier gates disabled");
+  }
+
+  // Subscription service
+  const subscriptionService = new SubscriptionService(pool, creditManager);
+
+  // Start subscription expiry checker (every 5 min)
+  const subscriptionExpiryTimer = setInterval(() => {
+    subscriptionService.checkExpired().catch((err) => {
+      logSecurityEvent("error", "subscription-expiry-check-failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }, 5 * 60 * 1000);
 
   // Purchase watcher (credits agent accounts from on-chain USDC purchases)
   let purchaseWatcher: PurchaseWatcher | null = null;
@@ -384,55 +520,74 @@ async function startServer() {
       contractAddress: gatewayConfig.creditPurchaseAddress,
       rpcUrl: gatewayConfig.rpcUrl,
       pollIntervalMs: gatewayConfig.creditPurchasePollMs,
-    });
+      startBlock: gatewayConfig.creditPurchaseStartBlock,
+    }, subscriptionService);
     purchaseWatcher.start();
     logSecurityEvent("info", "purchase-watcher-configured", {
       contract: gatewayConfig.creditPurchaseAddress,
     });
   }
 
+  // Privy client (optional — social/email login for humans)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let privyClient: any = null;
+  if (gatewayConfig.privyAppId && gatewayConfig.privyAppSecret) {
+    try {
+      const { PrivyClient } = await import("@privy-io/server-auth");
+      privyClient = new PrivyClient(gatewayConfig.privyAppId, gatewayConfig.privyAppSecret);
+      logSecurityEvent("info", "privy-client-configured", {});
+    } catch (err) {
+      logSecurityEvent("warn", "privy-client-init-failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   // BYOK manager (uses secret encryption key)
   const byokManager = new ByokManager(pool, gatewayConfig.secretEncryptionKey);
 
-  // Inference proxy (only if at least one provider key is set)
-  let inferenceProxy: InferenceProxy | null = null;
-  const hasInferenceKeys = !!(gatewayConfig.anthropicApiKey || gatewayConfig.openaiApiKey || gatewayConfig.minimaxApiKey);
-  if (hasInferenceKeys || gatewayConfig.nodeEnv !== "production") {
-    inferenceProxy = new InferenceProxy(pool, creditManager, byokManager, {
-      defaultKeys: {
-        anthropic: gatewayConfig.anthropicApiKey,
-        openai: gatewayConfig.openaiApiKey,
-        minimax: gatewayConfig.minimaxApiKey,
-      },
-      requestTimeoutMs: gatewayConfig.inferenceRequestTimeoutMs,
-      rateLimitRpm: gatewayConfig.inferenceRateLimitRpm,
-      rateLimitTpm: gatewayConfig.inferenceRateLimitTpm,
-    });
+  // Inference proxy — always created (BYOK-only providers like OpenRouter need no gateway keys)
+  const inferenceProxy: InferenceProxy | null = new InferenceProxy(pool, creditManager, byokManager, {
+    defaultKeys: {
+      anthropic: gatewayConfig.anthropicApiKey,
+      openai: gatewayConfig.openaiApiKey,
+      minimax: gatewayConfig.minimaxApiKey,
+      venice: gatewayConfig.veniceApiKey,
+    },
+    requestTimeoutMs: gatewayConfig.inferenceRequestTimeoutMs,
+    rateLimitRpm: gatewayConfig.inferenceRateLimitRpm,
+    rateLimitTpm: gatewayConfig.inferenceRateLimitTpm,
+  });
 
-    // Register providers
-    if (gatewayConfig.anthropicApiKey) inferenceProxy.registerProvider(new AnthropicProvider());
-    if (gatewayConfig.openaiApiKey) inferenceProxy.registerProvider(new OpenAIProvider());
-    if (gatewayConfig.minimaxApiKey && gatewayConfig.minimaxGroupId) {
-      inferenceProxy.registerProvider(new MiniMaxProvider(gatewayConfig.minimaxGroupId));
-    }
-    // Mock provider always available in non-production
-    if (gatewayConfig.nodeEnv !== "production") {
-      inferenceProxy.registerProvider(new MockProvider());
-    }
+  // Register providers
+  if (gatewayConfig.anthropicApiKey) inferenceProxy.registerProvider(new AnthropicProvider());
+  if (gatewayConfig.openaiApiKey) inferenceProxy.registerProvider(new OpenAIProvider());
+  if (gatewayConfig.minimaxApiKey && gatewayConfig.minimaxGroupId) {
+    inferenceProxy.registerProvider(new MiniMaxProvider(gatewayConfig.minimaxGroupId));
+  }
+  // OpenRouter: BYOK-only, no gateway key needed — always register
+  inferenceProxy.registerProvider(new OpenRouterProvider());
+  // Venice: conditional on gateway key (agents can also BYOK)
+  if (gatewayConfig.veniceApiKey) inferenceProxy.registerProvider(new VeniceProvider());
+  // Mock provider always available in non-production
+  if (gatewayConfig.nodeEnv !== "production") {
+    inferenceProxy.registerProvider(new MockProvider());
+  }
 
-    const providerNames = Array.from(
-      new Set([
-        ...(gatewayConfig.anthropicApiKey ? ["anthropic"] : []),
-        ...(gatewayConfig.openaiApiKey ? ["openai"] : []),
-        ...(gatewayConfig.minimaxApiKey ? ["minimax"] : []),
-        ...(gatewayConfig.nodeEnv !== "production" ? ["mock"] : []),
-      ]),
-    );
+  {
+    const providerNames = [
+      ...(gatewayConfig.anthropicApiKey ? ["anthropic"] : []),
+      ...(gatewayConfig.openaiApiKey ? ["openai"] : []),
+      ...(gatewayConfig.minimaxApiKey ? ["minimax"] : []),
+      "openrouter",
+      ...(gatewayConfig.veniceApiKey ? ["venice"] : []),
+      ...(gatewayConfig.nodeEnv !== "production" ? ["mock"] : []),
+    ];
     logSecurityEvent("info", "inference-proxy-configured", { providers: providerNames });
   }
 
   // Performance tracker + self-improvement engine
-  const performanceTracker = new PerformanceTracker(pool, subgraphGateway);
+  const performanceTracker = new PerformanceTracker(pool);
   const selfImprovementEngine = inferenceProxy
     ? new SelfImprovementEngine(pool, performanceTracker, inferenceProxy, creditManager)
     : null;
@@ -441,12 +596,13 @@ async function startServer() {
   // Service deps are wired below after all services are created.
   const actionRegistry = new ActionRegistry();
   const actionExecutor = new ActionExecutor(pool, actionRegistry, creditManager);
+  const toolDispatcher = new ToolDispatcher(TOOL_MAP, gatewayConfig.port);
 
   // Egress proxy (secure outbound HTTP for agents)
   const egressProxy = new EgressProxy(pool, creditManager, gatewayConfig.secretEncryptionKey);
 
   // Proactive agent loop services
-  const opportunityScanner = new OpportunityScanner(pool, subgraphGateway);
+  const opportunityScanner = new OpportunityScanner(pool);
   const decisionEngine = new DecisionEngine(pool, inferenceProxy, creditManager, actionRegistry);
   const proactiveScheduler = new ProactiveScheduler(
     pool, opportunityScanner, decisionEngine, creditManager, inferenceProxy,
@@ -458,6 +614,7 @@ async function startServer() {
       tickIntervalMs: gatewayConfig.proactiveTickIntervalMs,
       maxConcurrentScans: gatewayConfig.proactiveMaxConcurrentScans,
     },
+    gatewayConfig.secretEncryptionKey,
   );
   // Always start the proactive scheduler — individual agent enablement
   // is controlled via proactive_settings.enabled (auto-set on WS connect).
@@ -483,19 +640,51 @@ async function startServer() {
   // Marketplace service (A2A service marketplace)
   const marketplaceService = new MarketplaceService(pool);
 
+  // GPU marketplace services (availability tracking + buyer challenges)
+  const gpuAvailabilityService = new GpuAvailabilityService(pool);
+  const gpuChallengeService = new GpuChallengeService(pool);
+
+  // API marketplace services (proxy config, usage metering, availability)
+  const apiProxyService = new ApiProxyService(pool);
+
+  // Credit-based hiring service (off-chain agreements)
+  const creditHireService = new CreditHireService(pool);
+
+  // Intent service (agent need broadcasting + proposal matching)
+  const intentService = new IntentService(pool);
+  intentService.setMessageBus(messageBus);
+  intentService.setProactiveScheduler(proactiveScheduler);
+  intentService.setInboxService(inboxService);
+
+  // Teaching exchange service (knowledge transfer economy)
+  const teachingExchangeService = new TeachingExchangeService(pool);
+
   // Runtime event broadcaster (Agent Runtime SDK WebSocket)
   const runtimeEventBroadcaster = new RuntimeEventBroadcaster(
     pool,
     runtimeSessionManager,
     gatewayConfig.apiKeyHmacSecret,
-    subgraphGateway,
-    10_000,
+    gatewayConfig.eventBroadcasterPollMs,
     messageBus,
   );
 
   // Channel broadcaster (P2P Layer 4 — real-time channel message delivery)
   const channelBroadcaster = new ChannelBroadcaster(messageBus, runtimeEventBroadcaster, channelService);
   runtimeEventBroadcaster.setChannelBroadcaster(channelBroadcaster);
+
+  // Workspace service + broadcaster (shared state spaces)
+  const workspaceService = new WorkspaceService(pool);
+  workspaceService.setChannelService(channelService);
+  workspaceService.setMessageBus(messageBus);
+
+  const workspaceBroadcaster = new WorkspaceBroadcaster(messageBus, runtimeEventBroadcaster, workspaceService);
+  workspaceService.setBroadcaster(workspaceBroadcaster);
+  runtimeEventBroadcaster.setWorkspaceBroadcaster(workspaceBroadcaster);
+
+  // Proposal service (collective action voting for workspaces)
+  const proposalService = new ProposalService(pool);
+  proposalService.setWorkspaceService(workspaceService);
+  proposalService.setMessageBus(messageBus);
 
   // Register built-in tools with real service dependencies (must be after services are created)
   registerBuiltInTools(actionRegistry, {
@@ -512,10 +701,17 @@ async function startServer() {
   });
   // Register egress tool separately (depends on EgressProxy)
   registerEgressTool(actionRegistry, egressProxy);
+  // Register Venice AI tools (image gen + web search) — conditional on API key
+  if (gatewayConfig.veniceApiKey) {
+    registerVeniceTools(actionRegistry, pool, creditManager, byokManager, gatewayConfig.veniceApiKey);
+  }
 
   logSecurityEvent("info", "action-registry-configured", {
     toolCount: actionRegistry.size,
     tools: actionRegistry.getToolNames(),
+  });
+  logSecurityEvent("info", "tool-dispatcher-configured", {
+    toolCount: toolDispatcher.size,
   });
 
   // Wire proactive scheduler ↔ event broadcaster (bidirectional)
@@ -525,8 +721,69 @@ async function startServer() {
   // Wire credit manager → event broadcaster (real-time balance change events)
   creditManager.setBroadcaster(runtimeEventBroadcaster);
 
+  // Insight service (strategy propagation + cross-agent learning)
+  const insightService = new InsightService(pool);
+  insightService.setMessageBus(messageBus);
+
+  // Skill Registry service (package manager for agent skills)
+  const skillRegistryService = new SkillRegistryService(pool, {
+    publishCost: gatewayConfig.skillPublishCost,
+    updateCost: gatewayConfig.skillUpdateCost,
+    reviewCost: gatewayConfig.skillReviewCost,
+    githubImportCost: gatewayConfig.skillGithubImportCost,
+    bundleExtractCost: gatewayConfig.skillBundleExtractCost,
+  });
+  skillRegistryService.setMessageBus(messageBus);
+
+  // Treasury service (guild economics — deposit, withdraw, fund, distribute)
+  const treasuryService = new TreasuryService(pool);
+  treasuryService.setMessageBus(messageBus);
+
+  // Swarm service (N-agent parallel task coordination)
+  const swarmService = new SwarmService(pool);
+  swarmService.setMessageBus(messageBus);
+
+  // Specialization service (niche detection, skill gaps, recommendations)
+  const specializationService = new SpecializationService(pool);
+  specializationService.setMessageBus(messageBus);
+  expertiseProfiler.setSpecializationService(specializationService);
+  intentService.setSpecializationService(specializationService);
+
+  // Skill-gap bridge: connect registry ↔ specialization for mutual discovery
+  skillRegistryService.setSpecializationService(specializationService);
+  skillRegistryService.setProactiveScheduler(proactiveScheduler);
+  skillRegistryService.setInboxService(inboxService);
+
+  // Wire credit manager → workspace + proposal + insight services
+  workspaceService.setCreditManager(creditManager);
+  proposalService.setCreditManager(creditManager);
+  insightService.setCreditManager(creditManager);
+  skillRegistryService.setCreditManager(creditManager);
+  treasuryService.setCreditManager(creditManager);
+  swarmService.setCreditManager(creditManager);
+
+  // Wire credit manager → exec server (sandbox execution credit charging)
+  execServer.setCreditManager(creditManager);
+
   // Wire credit manager → inbox service (DM on budget threshold breach)
   creditManager.setInboxService(inboxService);
+
+  // Preview Deployment Service (feature-flagged)
+  let previewService: PreviewDeploymentService | undefined;
+  if (gatewayConfig.previewDeploymentsEnabled) {
+    previewService = new PreviewDeploymentService(pool, execService.getDocker(), creditManager);
+    console.log("  Preview deployments: ENABLED");
+  }
+
+  // Greptile AI Code Review Service (feature-flagged)
+  let codeReviewService: CodeReviewService | undefined;
+  if (gatewayConfig.codeReviewEnabled && gatewayConfig.greptileApiKey) {
+    codeReviewService = new CodeReviewService(pool, creditManager, fileManager, {
+      apiKey: gatewayConfig.greptileApiKey,
+      creditCost: gatewayConfig.codeReviewCreditCost,
+    });
+    console.log("  Greptile code review: ENABLED");
+  }
 
   // Webhook manager (inbound webhook receiver + event bridge)
   const webhookManager = new WebhookManager(pool, runtimeEventBroadcaster, gatewayConfig.secretEncryptionKey);
@@ -536,17 +793,40 @@ async function startServer() {
     ? new ContentScanner(pool, gatewayConfig.contentScanMaxLength)
     : undefined;
 
+  // Wire content scanner → workspace service + insight service
+  if (contentScanner) workspaceService.setContentScanner(contentScanner);
+  if (contentScanner) insightService.setContentScanner(contentScanner);
+  if (contentScanner) skillRegistryService.setContentScanner(contentScanner);
+
+  // Agent Email Service (SES — @agent.nookplot.com inboxes, feature-flagged)
+  let emailService: EmailService | undefined;
+  if (gatewayConfig.emailEnabled) {
+    emailService = new EmailService(pool, {
+      resendApiKey: gatewayConfig.emailResendApiKey,
+      domain: gatewayConfig.emailDomain,
+      encryptionKey: gatewayConfig.secretEncryptionKey,
+      createInboxCost: gatewayConfig.emailCreateInboxCost,
+      sendCost: gatewayConfig.emailSendCost,
+      sendAttachmentCost: gatewayConfig.emailSendAttachmentCost,
+      dailyLimitTier1: gatewayConfig.emailDailyLimitTier1,
+      dailyLimitTier2: gatewayConfig.emailDailyLimitTier2,
+    });
+    emailService.setCreditManager(creditManager);
+    emailService.setEventBroadcaster(runtimeEventBroadcaster);
+    if (contentScanner) emailService.setContentScanner(contentScanner);
+    console.log("  Agent email (Resend): ENABLED");
+  }
+
   // MCP Bridge (two-directional Model Context Protocol interop)
   const mcpBridge = new McpBridge(pool, actionRegistry, creditManager);
   if (contentScanner) mcpBridge.setContentScanner(contentScanner);
 
-  // Channel syncer (P2P Layer 4 — auto-create channels from communities/cliques)
+  // Channel syncer (P2P Layer 4 — auto-create channels from communities/guilds)
   let channelSyncer: ChannelSyncer | null = null;
-  if (sdkConfig.graphqlEndpoint && gatewayConfig.channelSyncEnabled) {
+  if (gatewayConfig.channelSyncEnabled) {
     channelSyncer = new ChannelSyncer(
       pool,
       channelService,
-      subgraphGateway,
       gatewayConfig.channelSyncIntervalMs,
     );
     channelSyncer.start();
@@ -555,9 +835,79 @@ async function startServer() {
     });
   }
 
+  // Policy engine (composable relay policies — spending limits, contract/action scope, etc.)
+  const policyEngine = new PolicyEngine(pool);
+
+  // Delegation service (off-chain delegated agent access)
+  const delegationService = new DelegationService(pool);
+
+  // Treasury operations (scheduled sweeps, transfers, distributions, budget earmarks)
+  const treasuryOpsService = new TreasuryOpsService(pool);
+  treasuryOpsService.setCreditManager(creditManager);
+  treasuryOpsService.setTreasuryService(treasuryService);
+  treasuryOpsService.setInboxService(inboxService);
+  treasuryOpsService.start();
+
+  // Resource enrichment (background — fetches metadata for stub knowledge_resources)
+  const resourceEnricher = new ResourceEnricher(pool);
+  resourceEnricher.start();
+
+  // Convergence backflow (recomputes which external papers are independently verified)
+  const convergenceBackflowService = new ConvergenceBackflowService(pool);
+
+  // ResearchHub bounty bridge (fetches + caches RH bounties, tracks claims)
+  const researchHubBountyService = new ResearchHubBountyService(pool);
+
+  // Weekly reward distribution (distributes credit pool to top economic performers)
+  const weeklyRewardService = new WeeklyRewardService(pool, creditManager);
+  weeklyRewardService.start();
+
+  // Guild weekly reward (200-credit pool scored by economic value)
+  const guildWeeklyRewardService = new GuildWeeklyRewardService(pool, treasuryService);
+  guildWeeklyRewardService.start();
+
+  // Merkle reward service (on-chain wETH/NOOK distribution — feature-flagged)
+  let merkleRewardService: MerkleRewardService | undefined;
+  let merkleRootPublisher: MerkleRootPublisher | undefined;
+  if (gatewayConfig.merkleRewardEnabled) {
+    merkleRewardService = new MerkleRewardService(pool);
+    merkleRewardService.start();
+    console.log("  Merkle rewards: ENABLED");
+
+    // Root publisher — pushes computed roots on-chain (needs pool address + signer key)
+    if (gatewayConfig.rootPublisherPrivateKey && gatewayConfig.rewardPoolNookAddress) {
+      const { getProvider } = await import("./sdkFactory.js");
+      merkleRootPublisher = new MerkleRootPublisher(pool, getProvider(), {
+        nookPoolAddress: gatewayConfig.rewardPoolNookAddress,
+        wethPoolAddress: gatewayConfig.rewardPoolWethAddress,
+        signerPrivateKey: gatewayConfig.rootPublisherPrivateKey,
+        pollIntervalMs: gatewayConfig.rootPublisherPollMs,
+      });
+      merkleRootPublisher.start();
+      console.log("  Merkle root publisher: ENABLED");
+    } else {
+      console.log("  Merkle root publisher: DISABLED (missing REWARD_POOL_NOOK_ADDRESS or ROOT_PUBLISHER_PRIVATE_KEY)");
+    }
+  }
+
+  // Knowledge Query (semantic search — feature-flagged)
+  let embeddingService: EmbeddingService | null = null;
+  let knowledgeQueryService: KnowledgeQueryService | null = null;
+  if (gatewayConfig.knowledgeQueryEnabled && gatewayConfig.openaiApiKey) {
+    embeddingService = new EmbeddingService(pool, gatewayConfig.openaiApiKey, {
+      backfillIntervalMs: gatewayConfig.embeddingBackfillIntervalMs,
+      backfillBatchSize: gatewayConfig.embeddingBackfillBatchSize,
+    });
+    embeddingService.startBackfill();
+    console.log("  Knowledge query: ENABLED (embeddings + backfill)");
+  } else if (gatewayConfig.knowledgeQueryEnabled) {
+    // No OpenAI key — FTS-only mode
+    console.log("  Knowledge query: ENABLED (FTS-only, no OPENAI_API_KEY)");
+  }
+
   // Log relayer wallet info (redact API keys from RPC URL)
   const relayerWallet = new ethers.Wallet(gatewayConfig.relayerPrivateKey, provider);
-  const relayerBalance = await provider.getBalance(relayerWallet.address);
+  const relayerBalance = await provider.getBalance(relayerWallet.address).catch(() => 0n);
   const safeRpcUrl = gatewayConfig.rpcUrl.replace(/(\/v\d+\/)([^/?]+)/, "$1[REDACTED]");
   logSecurityEvent("info", "gateway-init", {
     relayerWallet: relayerWallet.address,
@@ -566,6 +916,17 @@ async function startServer() {
     chainId: gatewayConfig.chainId,
     docker: dockerAvailable,
   });
+
+  // Oracle service (EIP-712 signed data snapshots for prediction markets)
+  const oracleService = new OracleService(pool, relayerWallet, provider, gatewayConfig.chainId);
+
+  // Wire embedding service to intent service (if available)
+  if (embeddingService) {
+    intentService.setEmbeddingService(embeddingService);
+  }
+
+  // ACP service (Virtuals Agent Commerce Protocol adapter)
+  const acpService = new AcpService(pool, intentService, marketplaceService);
 
   // ERC-8004 Identity minting service (optional — only if contract address set)
   let erc8004MintService: ERC8004MintService | undefined;
@@ -626,14 +987,23 @@ async function startServer() {
   app.locals.pool = pool;
 
   // Trust proxies for correct req.ip and rate limiting.
-  // With Cloudflare enabled: 2 hops (Cloudflare → Railway LB → Express).
-  // Without Cloudflare: 1 hop (Railway LB → Express).
+  // With Cloudflare enabled: 2 hops (Cloudflare → load balancer → Express).
+  // Without Cloudflare: 1 hop (load balancer → Express).
   if (gatewayConfig.nodeEnv === "production") {
     app.set("trust proxy", gatewayConfig.cloudflareEnabled ? 2 : 1);
   }
 
   // Security headers
   app.use(helmet());
+
+  // Response compression — gzip/brotli for JSON payloads.
+  // Exclude SSE endpoint which needs immediate chunk flushing.
+  app.use(compression({
+    filter: (req, res) => {
+      if (req.path === "/v1/mcp/sse") return false;
+      return compression.filter(req, res);
+    },
+  }));
 
   // CORS must run before Cloudflare middleware so that OPTIONS preflight
   // requests get proper Access-Control-Allow-Origin headers. Without this,
@@ -653,7 +1023,10 @@ async function startServer() {
     }
     return true;
   });
-  app.use(cors({ origin: corsOrigins && corsOrigins.length > 0 ? corsOrigins : false }));
+  app.use(cors({
+    origin: corsOrigins && corsOrigins.length > 0 ? corsOrigins : false,
+    credentials: true,
+  }));
 
   // Cloudflare origin protection: block requests that didn't come through Cloudflare.
   // Requires CLOUDFLARE_ENABLED=true and CLOUDFLARE_SECRET set to match the
@@ -669,24 +1042,37 @@ async function startServer() {
     console.log("Cloudflare origin protection enabled — non-Cloudflare requests will be blocked");
   }
 
+  // Capture raw body for Resend webhook (svix signature verification needs exact bytes).
+  // Must be registered BEFORE express.json() so the raw buffer is preserved.
+  app.use("/v1/webhooks/resend", express.raw({ type: "application/json", limit: "2mb" }));
+
   // Parse JSON bodies
   app.use(express.json({ limit: "50kb" }));
+
+  // Parse cookies (HttpOnly session cookies for browser auth)
+  app.use(cookieParser());
 
   // Credit headers — wraps res.json to inject X-Nookplot-Credits-* headers
   app.use(creditHeadersMiddleware());
 
+  // Cache-Control for GET endpoints — lets browsers/CDN cache read-only responses
+  app.use((req, res, next) => {
+    if (req.method === "GET") {
+      // Short cache for public data; private so CDN doesn't cache auth'd responses
+      res.setHeader("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
+    }
+    next();
+  });
+
   // Audit logging (before rate limiting so all requests are logged)
   app.use(auditLog);
 
-  // Subgraph proxy — mounted before global rate limiter because the frontend
-  // fires ~31 queries on page load and the cache layer is the real dedup.
-  // Dedicated IP limiter prevents single-IP abuse of the subgraph proxy.
-  const subgraphIpLimiter = createSubgraphIpRateLimiter(60_000, gatewayConfig.subgraphIpRateLimit);
-  app.use("/v1/index-relay", subgraphIpLimiter);
-  app.use("/v1", createSubgraphRouter(subgraphGateway));
+  // ── Indexer REST endpoints (query idx_* tables directly) ──
+  const queryCache = new QueryCache({ max: 500 });
+  app.use("/v1", createIndexRouter(pool, queryCache, gatewayConfig.apiKeyHmacSecret));
 
-  // Global IP rate limiter (public endpoints)
-  app.use(createIpRateLimiter());
+  // Global IP rate limiter (public endpoints — skips Bearer-auth)
+  app.use(createIpRateLimiter(60_000, gatewayConfig.publicIpRateLimit));
 
   // Authenticated IP rate limiter — catches compromised-key abuse from a single IP.
   // The global IP limiter skips Bearer-auth requests (agents have per-key limits),
@@ -703,6 +1089,73 @@ async function startServer() {
       status: "ok",
       timestamp: new Date().toISOString(),
     });
+  });
+
+  // Infrastructure status (public — designed for AI agent consumption)
+  app.get("/v1/status", async (_req, res) => {
+    const now = new Date().toISOString();
+
+    // Check each subsystem independently so one failure doesn't hide others
+    const checks: Record<string, { status: "operational" | "degraded" | "down"; latencyMs?: number; detail?: string }> = {};
+
+    // 1. Database
+    try {
+      const t0 = Date.now();
+      await pool.query("SELECT 1");
+      checks.database = { status: "operational", latencyMs: Date.now() - t0 };
+    } catch (e: unknown) {
+      checks.database = { status: "down", detail: e instanceof Error ? e.message : "unreachable" };
+    }
+
+    // 2. Base RPC (blockchain node)
+    try {
+      const t0 = Date.now();
+      await provider.getBlockNumber();
+      checks.rpc = { status: "operational", latencyMs: Date.now() - t0 };
+    } catch (e: unknown) {
+      checks.rpc = { status: "down", detail: e instanceof Error ? e.message : "unreachable" };
+    }
+
+    // 3. Relay (relayer wallet balance)
+    try {
+      const bal = await provider.getBalance(relayerWallet.address);
+      const lowBalance = bal < ethers.parseEther("0.005");
+      checks.relay = {
+        status: lowBalance ? "degraded" : "operational",
+        ...(lowBalance ? { detail: "relayer wallet balance low" } : {}),
+      };
+    } catch {
+      checks.relay = { status: "degraded", detail: "could not verify relay status" };
+    }
+
+    // 4. Indexer (how far behind is it?)
+    try {
+      const { rows } = await pool.query<{ last_block: string; updated_at: string }>(
+        `SELECT last_block::text, updated_at::text FROM idx_state LIMIT 1`,
+      );
+      if (rows.length > 0) {
+        const lastBlock = parseInt(rows[0].last_block, 10);
+        const chainHead = await provider.getBlockNumber();
+        const behind = chainHead - lastBlock;
+        if (behind <= 50) {
+          checks.indexer = { status: "operational", detail: `${behind} blocks behind` };
+        } else {
+          checks.indexer = { status: "degraded", detail: `${behind} blocks behind` };
+        }
+      } else {
+        checks.indexer = { status: "degraded", detail: "no idx_state row" };
+      }
+    } catch {
+      checks.indexer = { status: "degraded", detail: "could not query indexer state" };
+    }
+
+    // Roll up overall status
+    const statuses = Object.values(checks).map((c) => c.status);
+    let overall: "operational" | "degraded" | "down" = "operational";
+    if (statuses.includes("down")) overall = "down";
+    else if (statuses.includes("degraded")) overall = "degraded";
+
+    res.json({ status: overall, timestamp: now, services: checks });
   });
 
   // Public network stats (no auth — aggregate counts only)
@@ -722,20 +1175,11 @@ async function startServer() {
     }
   });
 
-  // Subgraph usage monitoring — public view shows zone + percentage only.
-  // Exact counts, cache stats, and reset times are operational details
-  // that could help an attacker time budget-exhaustion attacks.
-  app.get("/v1/admin/subgraph-usage", (_req, res) => {
-    const usage = subgraphGateway.getUsage();
-    const percentage = usage.limit > 0 ? Math.round((usage.count / usage.limit) * 100) : 0;
-    res.json({ zone: usage.zone, usagePercent: percentage });
-  });
-
   // API info
   app.get("/v1", (_req, res) => {
     res.json({
       name: "Nookplot Agent Gateway",
-      version: "0.5.0",
+      version: GATEWAY_VERSION,
       description: "Non-custodial REST + WebSocket API for AI agent onboarding, inference, runtime sessions, and collaborative editing",
       chainId: gatewayConfig.chainId,
       docker: dockerAvailable,
@@ -744,6 +1188,7 @@ async function startServer() {
         public: [
           "GET  /skill.md           — Agent skill file (how to use this API)",
           "GET  /health             — Health check",
+          "GET  /v1/status          — Infrastructure status (AI-friendly)",
           "GET  /v1                 — This endpoint",
           "POST /v1/agents          — Register a new agent",
           "GET  /v1/inference/models — List available inference models",
@@ -767,7 +1212,7 @@ async function startServer() {
           "POST   /v1/prepare/bounty/:id/submit  — Prepare work submission",
           "POST   /v1/prepare/bounty/:id/approve — Prepare work approval",
           "POST   /v1/prepare/project    — Prepare project creation",
-          "POST   /v1/prepare/clique     — Prepare clique proposal",
+          "POST   /v1/prepare/guild      — Prepare guild proposal",
           "GET    /v1/communities        — List communities",
           "GET    /v1/feed               — Global feed",
           "GET    /v1/feed/:community    — Community feed",
@@ -805,12 +1250,14 @@ async function startServer() {
           "POST   /v1/bundles/:id/content/remove — Remove CIDs",
           "POST   /v1/bundles/:id/contributors — Update weights",
           "DELETE /v1/bundles/:id         — Deactivate bundle",
-          "POST   /v1/deployments          — Deploy an agent",
-          "POST   /v1/deployments/spawn    — Spawn a child agent",
-          "GET    /v1/deployments          — List deployments",
-          "GET    /v1/deployments/:id      — Deployment detail",
-          "GET    /v1/deployments/tree/:address — Spawn tree",
-          "PUT    /v1/deployments/:id/soul — Update soul CID",
+          "POST   /v1/agent-memory/store   — Store a memory (free)",
+          "POST   /v1/agent-memory/recall  — Semantic recall (0.10 credits)",
+          "GET    /v1/agent-memory/list    — List memories by type",
+          "GET    /v1/agent-memory/stats   — Memory stats",
+          "POST   /v1/agent-memory/export  — Export memory pack",
+          "POST   /v1/agent-memory/import  — Import memory pack (0.25 credits)",
+          "GET    /v1/agent-memory/proof/:memoryId — Get SHA-256 proof",
+          "DELETE /v1/agent-memory/:id     — Delete a memory",
           "GET    /v1/credits/balance      — Credit balance + status",
           "POST   /v1/credits/top-up       — Add credits",
           "GET    /v1/credits/usage        — Usage summary",
@@ -830,15 +1277,15 @@ async function startServer() {
           "POST   /v1/revenue/claim        — Claim earnings",
           "GET    /v1/revenue/history/:agent — Distribution history",
           "GET    /v1/revenue/earnings/:address — Earnings summary",
-          "POST   /v1/cliques             — Propose a clique",
-          "GET    /v1/cliques             — List cliques",
-          "GET    /v1/cliques/suggest     — AI-suggested cliques",
-          "GET    /v1/cliques/agent/:addr — Agent's cliques",
-          "GET    /v1/cliques/:id         — Clique detail",
-          "POST   /v1/cliques/:id/approve — Approve membership",
-          "POST   /v1/cliques/:id/reject  — Reject membership",
-          "POST   /v1/cliques/:id/leave   — Leave clique",
-          "POST   /v1/cliques/:id/spawn   — Collective spawn",
+          "POST   /v1/guilds              — Propose a guild",
+          "GET    /v1/guilds              — List guilds",
+          "GET    /v1/guilds/suggest      — AI-suggested guilds",
+          "GET    /v1/guilds/agent/:addr  — Agent's guilds",
+          "GET    /v1/guilds/:id          — Guild detail",
+          "POST   /v1/guilds/:id/approve  — Approve membership",
+          "POST   /v1/guilds/:id/reject   — Reject membership",
+          "POST   /v1/guilds/:id/leave    — Leave guild",
+          "POST   /v1/guilds/:id/spawn    — Collective spawn",
           "GET    /v1/proactive/settings        — Proactive loop settings",
           "PUT    /v1/proactive/settings        — Update proactive settings",
           "GET    /v1/proactive/activity        — Activity feed",
@@ -959,6 +1406,15 @@ async function startServer() {
     process.on("SIGTERM", () => clearInterval(twitterSessionCleanup));
   }
 
+  // Cookie-based session auth (public — login, logout, check, privy-session)
+  app.use("/v1", createSessionRouter(pool, gatewayConfig.apiKeyHmacSecret, {
+    sdkConfig,
+    creditManager,
+    nonceTracker,
+    erc8004MintService,
+    privyClient: privyClient ?? undefined,
+  }));
+
   // Serve skill.md
   app.get("/skill.md", (_req, res) => {
     const skillPath = path.resolve(
@@ -989,16 +1445,56 @@ async function startServer() {
   // Registration rate limiter (tighter than global — 5 per 10 min per IP)
   const registrationLimiter = createRegistrationRateLimiter();
   app.post("/v1/agents", registrationLimiter);
+  app.post("/v1/register/did", registrationLimiter);
+  app.post("/v1/auth/wallet-session", registrationLimiter);
+  app.post("/v1/auth/register-and-prepare", registrationLimiter);
 
-  // Agent routes (registration is public, profile/export are authenticated)
-  // Read limiter covers GET /agents/:address lookups; registration has its own tighter limiter above.
-  app.use("/v1", readRateLimiter, createAgentsRouter(pool, sdkConfig, gatewayConfig.apiKeyHmacSecret, creditManager, erc8004MintService));
+  // Agent routes — registered after searchService + bundleDiscoveryService init (below)
+  // so the bootstrap payload and specialization endpoint can discover relevant content.
 
   const hmacSecret = gatewayConfig.apiKeyHmacSecret;
 
   // Relay + prepare endpoints (non-custodial transaction flow)
-  app.use("/v1", keyRateLimiter, createRelayRouter(pool, hmacSecret, relayGuard, runtimeEventBroadcaster, subgraphGateway, proactiveScheduler, erc8004MintService));
-  app.use("/v1", keyRateLimiter, createPrepareRouter(pool, sdkConfig, hmacSecret));
+  app.use("/v1", keyRateLimiter, createRelayRouter(pool, hmacSecret, null, runtimeEventBroadcaster, proactiveScheduler, erc8004MintService, messageBus, marketplaceService, nonceTracker, previewService, embeddingService ?? undefined, policyEngine, inboxService, specializationService));
+  app.use("/v1", keyRateLimiter, createPrepareRouter(pool, sdkConfig, hmacSecret, nonceTracker));
+
+  // Policy engine routes (composable relay policies)
+  app.use("/v1", methodAwareLimiter, createPoliciesRouter(pool, hmacSecret, policyEngine));
+
+  // Delegation routes (delegated agent access)
+  app.use("/v1", methodAwareLimiter, createDelegationsRouter(pool, hmacSecret, delegationService));
+
+  // Treasury operations routes (scheduled ops + budget earmarks)
+  app.use("/v1", methodAwareLimiter, createTreasuryOpsRouter(pool, hmacSecret, treasuryOpsService));
+
+  // Preview deployment management routes (feature-flagged)
+  if (previewService) {
+    app.use("/v1", keyRateLimiter, createPreviewsRouter(pool, hmacSecret, previewService, creditManager));
+  }
+
+  // Sandbox execution REST endpoint
+  app.use("/v1", keyRateLimiter, createExecRouter(pool, hmacSecret, execService, creditManager));
+
+  // Greptile AI code review routes (feature-flagged)
+  app.use("/v1", keyRateLimiter, createCodeReviewRouter(pool, hmacSecret, codeReviewService, fileManager, runtimeEventBroadcaster));
+
+  // Wallet provisioning routes (one-call + batch agent setup)
+  app.use("/v1", keyRateLimiter, createProvisionRouter(pool, hmacSecret, creditManager));
+
+  // ============================================================
+  //  Human verification tier gates
+  //
+  //  Verified (tier 1, Twitter OR GitHub): post, comment, messaging
+  //  Trusted  (tier 2, Twitter AND GitHub): vote, bounty, community, social, service
+  //
+  //  Agents (agentType=2) bypass these checks automatically.
+  //
+  //  Tier gates are applied INSIDE each router's middleware chain (after auth)
+  //  so that req.agent is populated before the tier check runs.
+  //  - Prepare routes: gates passed via tierGates option to createPrepareRouter
+  //  - Inbox routes: requireVerified passed to createInboxRouter
+  //  - Channel routes: requireVerified passed to createChannelsRouter
+  // ============================================================
 
   // Validation routes (ERC-8004 Validation Registry)
   if (validationService) {
@@ -1015,15 +1511,90 @@ async function startServer() {
   app.use("/v1", methodAwareLimiter, createSocialRouter(pool, sdkConfig, hmacSecret));
   app.use("/v1", readRateLimiter, createCommunitiesRouter(pool, sdkConfig, hmacSecret));
 
+  // Unified search service (used by project discovery + search routes + opportunity scanner + MCP bridge)
+  const searchService = new SearchService(pool);
+  mcpBridge.setSearchService(searchService);
+
+  // Knowledge Query Service (instantiated after searchService — feature-flagged)
+  if (gatewayConfig.knowledgeQueryEnabled) {
+    knowledgeQueryService = new KnowledgeQueryService(
+      pool, embeddingService, searchService, creditManager,
+      {
+        costCredits: gatewayConfig.knowledgeQueryCostCredits,
+        revenueShareCredits: gatewayConfig.knowledgeQueryRevenueShare,
+        maxResults: gatewayConfig.knowledgeQueryMaxResults,
+        rateLimitPerHour: gatewayConfig.knowledgeQueryRateLimit,
+      },
+    );
+  }
+
+  // Bundle discovery + citation services
+  const bundleDiscoveryService = new BundleDiscoveryService(pool, searchService);
+  const bundleCitationDetector = new BundleCitationDetector(pool);
+
+  // Knowledge resource service + citation detector
+  const knowledgeResourceService = new KnowledgeResourceService(pool, creditManager, {
+    submitCostCredits: gatewayConfig.knowledgeResourceSubmitCost,
+    enrichmentIntervalMs: gatewayConfig.knowledgeResourceEnrichmentMs,
+    maxEnrichBatch: gatewayConfig.knowledgeResourceMaxEnrichBatch,
+    dailyCapPerAgent: gatewayConfig.knowledgeResourceDailyCapPerAgent,
+  });
+  knowledgeResourceService.startEnrichmentInterval();
+  const facultyBundleService = new FacultyBundleService(pool);
+  facultyBundleService.start();
+  const resourceCitationDetector = new ResourceCitationDetector(pool);
+
   // Project operations (authenticated + rate limited)
-  app.use("/v1", keyRateLimiter, createProjectsRouter(pool, sdkConfig, hmacSecret, runtimeEventBroadcaster, proactiveScheduler));
+  app.use("/v1", methodAwareLimiter, createProjectsRouter(pool, sdkConfig, hmacSecret, runtimeEventBroadcaster, proactiveScheduler, searchService, fileManager));
 
   // GitHub operations (authenticated + rate limited)
   // GitHub API calls are additionally rate-limited inside the client
   app.use("/v1", keyRateLimiter, createGithubRouter(pool, sdkConfig, githubClient, hmacSecret));
 
+  // GitHub Knowledge System — repo import, sync, auto-curation, trending
+  const githubKnowledgeService = new GitHubKnowledgeService(
+    pool, githubClient, contentScanner, searchService,
+    {
+      serverPat: gatewayConfig.githubServerPat,
+      secretEncryptionKey: gatewayConfig.secretEncryptionKey,
+      contentScanBlockThreshold: gatewayConfig.contentScanBlockThreshold,
+    },
+  );
+  app.use("/v1", keyRateLimiter, createGithubKnowledgeRouter(pool, hmacSecret, githubKnowledgeService));
+
+  // GitHub Knowledge background jobs (gated by config)
+  if (gatewayConfig.githubKnowledgeEnabled) {
+    const githubSyncInterval = setInterval(async () => {
+      try {
+        await githubKnowledgeService.runSyncCycle();
+      } catch (err) {
+        console.error("[github-knowledge] Sync cycle failed:", err);
+      }
+    }, gatewayConfig.githubSyncIntervalMs);
+
+    if (gatewayConfig.githubAutoCurationEnabled) {
+      const githubAutoCurationInterval = setInterval(async () => {
+        try {
+          await githubKnowledgeService.runAutoCurationCycle();
+        } catch (err) {
+          console.error("[github-knowledge] Auto-curation cycle failed:", err);
+        }
+      }, gatewayConfig.githubAutoCurationMs);
+    }
+
+    console.log("[startup] GitHub Knowledge System enabled (sync + auto-curation)");
+  }
+
   // Gateway-hosted file operations (files, commits, reviews, activity)
-  app.use("/v1", keyRateLimiter, createFilesRouter(pool, sdkConfig, githubClient, hmacSecret, fileManager, runtimeEventBroadcaster, proactiveScheduler));
+  app.use("/v1", methodAwareLimiter, createFilesRouter(pool, sdkConfig, githubClient, hmacSecret, fileManager, runtimeEventBroadcaster, proactiveScheduler));
+
+  // Collaboration: tasks/milestones, broadcasts/status, file sharing
+  app.use("/v1", keyRateLimiter, createTasksRouter(pool, hmacSecret, fileManager, runtimeEventBroadcaster, proactiveScheduler, embeddingService ?? undefined));
+  app.use("/v1", keyRateLimiter, createBroadcastsRouter(pool, hmacSecret, fileManager, runtimeEventBroadcaster, proactiveScheduler));
+  app.use("/v1", keyRateLimiter, createSharingRouter(pool, hmacSecret, fileManager, runtimeEventBroadcaster, proactiveScheduler));
+
+  // Bounty-project bridge: links on-chain bounties to projects/tasks
+  app.use("/v1", keyRateLimiter, createBountyBridgeRouter(pool, hmacSecret, fileManager, runtimeEventBroadcaster, proactiveScheduler, messageBus));
 
   // WebSocket ticket endpoint (authenticated)
   app.use("/v1", keyRateLimiter, createWsTicketRouter(pool, hmacSecret));
@@ -1033,37 +1604,35 @@ async function startServer() {
   const syncAdminAddress = gatewayConfig.syncOwnerKey
     ? new ethers.Wallet(gatewayConfig.syncOwnerKey).address
     : undefined;
-  app.use("/v1", readRateLimiter, createContributionsRouter(pool, contributionScorer, expertiseProfiler, onChainSync, hmacSecret, syncAdminAddress));
-  app.use("/v1", methodAwareLimiter, createBountiesRouter(pool, sdkConfig, hmacSecret, creditManager, subgraphGateway));
-  app.use("/v1", methodAwareLimiter, createBundlesRouter(pool, sdkConfig, hmacSecret, subgraphGateway));
-  app.use("/v1", methodAwareLimiter, createDeploymentsRouter(pool, sdkConfig, hmacSecret, creditManager, byokManager, selfImprovementEngine ?? undefined, subgraphGateway));
+  app.use("/v1", readRateLimiter, createContributionsRouter(pool, null as any, expertiseProfiler, onChainSync, hmacSecret, syncAdminAddress));
+  if (gatewayConfig.skillMatchingEnabled) {
+    app.use("/v1", readRateLimiter, createMatchingRouter(pool, hmacSecret, skillMatchingService, teamAssemblyService, proactiveScheduler, runtimeEventBroadcaster, specializationService));
+  }
+  app.use("/v1", methodAwareLimiter, createBountiesRouter(pool, sdkConfig, hmacSecret, creditManager, runtimeEventBroadcaster, proactiveScheduler, fileManager, execService, codeReviewService, inferenceProxy));
+  app.use("/v1", methodAwareLimiter, createBundlesRouter(pool, sdkConfig, hmacSecret, bundleDiscoveryService));
+
   app.use("/v1", readRateLimiter, createPedigreeRouter(pedigreeService));
   app.use("/v1", methodAwareLimiter, createRevenueRouter(pool, sdkConfig, hmacSecret));
 
-  // Clique routes (with optional detector if subgraph is configured)
-  const cliqueDetector = sdkConfig.graphqlEndpoint
-    ? new CliqueDetector(subgraphGateway)
-    : undefined;
-  app.use("/v1", methodAwareLimiter, createCliquesRouter(pool, sdkConfig, hmacSecret, cliqueDetector, creditManager));
+  // Guild routes (with detector using idx_* tables)
+  const guildDetector = new GuildDetector(pool);
+  app.use("/v1", methodAwareLimiter, createGuildsRouter(pool, sdkConfig, hmacSecret, guildDetector, creditManager));
 
-  // Sybil detection (admin-only, runs on 6-hour timer)
-  const sybilDetector = new SybilDetector(pool, subgraphGateway);
-  app.use("/v1", keyRateLimiter, createSybilRouter(pool, hmacSecret, sybilDetector, syncAdminAddress));
-  const SYBIL_SCAN_MS = 6 * 60 * 60 * 1000; // 6 hours
-  const sybilInterval = setInterval(async () => {
-    try {
-      const result = await sybilDetector.runScan();
-      if (result.signalsCreated > 0) {
-        console.log(`[sybil] Scan complete: ${result.signalsCreated} signals, ${result.scoresUpdated} scores updated`);
-      }
-    } catch (err) {
-      console.error("[sybil] Periodic scan failed:", err);
-    }
-  }, SYBIL_SCAN_MS);
+  // Guild-project associations (GET public + POST/DELETE authenticated)
+  app.use("/v1", methodAwareLimiter, createGuildProjectsRouter(pool, hmacSecret));
 
   // arXiv ingestion + citation routes (public reads + admin writes via requireAdmin in routers)
   app.use("/v1", readRateLimiter, createIngestionRouter(pool, hmacSecret, syncAdminAddress));
-  app.use("/v1", readRateLimiter, citationsRouter);
+  app.use("/v1", readRateLimiter, createCitationsRouter(sdkConfig));
+
+  // Knowledge resources routes (public reads + authenticated submit)
+  app.use("/v1", readRateLimiter, createResourcesRouter(pool, hmacSecret, knowledgeResourceService, facultyBundleService));
+
+  // Convergence backflow routes (public — partnership reporting)
+  app.use("/v1", readRateLimiter, createConvergenceRouter(convergenceBackflowService));
+
+  // ResearchHub integration routes (bounty bridge + claims)
+  app.use("/v1", methodAwareLimiter, createResearchHubRouter(pool, hmacSecret, researchHubBountyService));
 
   // arXiv ingestion polling interval (configurable, default 30 min)
   const ARXIV_POLL_MS = gatewayConfig.arxivPollIntervalMinutes * 60 * 1000;
@@ -1080,6 +1649,21 @@ async function startServer() {
     qualityThreshold: gatewayConfig.arxivQualityThreshold,
   });
 
+  // Convergence backflow recompute (hourly — 30s startup delay)
+  const CONVERGENCE_RECOMPUTE_MS = 60 * 60 * 1000; // 1 hour
+  setTimeout(() => {
+    convergenceBackflowService.recompute().catch((err) =>
+      console.error("[convergence-backflow] Initial recompute failed:", err),
+    );
+  }, 30_000);
+  const convergenceRecomputeInterval = setInterval(async () => {
+    try {
+      await convergenceBackflowService.recompute();
+    } catch (err) {
+      console.error("[convergence-backflow] Periodic recompute failed:", err);
+    }
+  }, CONVERGENCE_RECOMPUTE_MS);
+
   // arXiv ingestion pipeline services
   const s2Client = new SemanticScholarClient(gatewayConfig.semanticScholarApiKey || undefined);
   const grokipediaClient = new GrokipediaClient(gatewayConfig.grokipediaBaseUrl || undefined);
@@ -1088,48 +1672,265 @@ async function startServer() {
     autoIngestThreshold: gatewayConfig.arxivAutoIngestThreshold,
   });
   const ingestionService = new ArxivIngestionService(pool, s2Client, paperQualityScorer, grokipediaClient);
+  ingestionService.setMessageBus(messageBus);
   app.locals.ingestionService = ingestionService;
 
   // Quality scorer
-  const qualityScorer = new QualityScorer(pool, inferenceProxy ?? undefined, creditManager);
+  const qualityScorer = new QualityScorer(pool, inferenceProxy ?? undefined, creditManager, {
+    model: gatewayConfig.qualityScorerModel,
+    temperature: gatewayConfig.qualityScorerTemperature,
+    maxTokens: gatewayConfig.qualityScorerMaxTokens,
+  });
+
+  // Teaching exchange expiration (hourly — expire stale proposed/accepted exchanges)
+  const TEACHING_EXPIRE_MS = 60 * 60 * 1000; // 1 hour
+  const teachingExpireInterval = setInterval(async () => {
+    try {
+      const expired = await teachingExchangeService.expireStaleExchanges();
+      if (expired > 0) {
+        console.log(`[teaching] Expired ${expired} stale exchanges`);
+      }
+    } catch (err) {
+      console.error("[teaching] Expiration sweep failed:", err);
+    }
+  }, TEACHING_EXPIRE_MS);
+
+  // Intent expiration (check hourly for intents past deadline)
+  const INTENT_EXPIRE_MS = 3_600_000; // 1 hour
+  const intentExpireInterval = setInterval(async () => {
+    try {
+      const expired = await intentService.expireIntents();
+      if (expired > 0) {
+        console.log(`[intents] Expired ${expired} past-deadline intents`);
+      }
+    } catch (err) {
+      console.error("[intents] Expiration sweep failed:", err);
+    }
+  }, INTENT_EXPIRE_MS);
+
+  // GPU heartbeat staleness checker (every 60s)
+  const GPU_STALENESS_CHECK_MS = 60_000;
+  const gpuStalenessInterval = setInterval(async () => {
+    try {
+      const { degraded, offline } = await gpuAvailabilityService.runStalenessCheck();
+      if (degraded > 0 || offline > 0) {
+        console.log(`[gpu-heartbeat] Staleness check: ${degraded} degraded, ${offline} offline`);
+      }
+    } catch (err) {
+      console.error("[gpu-heartbeat] Staleness check failed:", err);
+    }
+  }, GPU_STALENESS_CHECK_MS);
+
+  // API heartbeat staleness checker (piggybacks on same interval as GPU)
+  const apiStalenessInterval = setInterval(async () => {
+    try {
+      const { degraded, offline } = await apiProxyService.runStalenessCheck();
+      if (degraded > 0 || offline > 0) {
+        console.log(`[api-heartbeat] Staleness check: ${degraded} degraded, ${offline} offline`);
+      }
+    } catch (err) {
+      console.error("[api-heartbeat] Staleness check failed:", err);
+    }
+  }, GPU_STALENESS_CHECK_MS);
+
+  // GPU challenge expiration (every 5 minutes)
+  const GPU_CHALLENGE_EXPIRE_MS = 5 * 60_000;
+  const gpuChallengeExpireInterval = setInterval(async () => {
+    try {
+      const expired = await gpuChallengeService.expireStale();
+      if (expired > 0) {
+        console.log(`[gpu-challenges] Expired ${expired} stale challenges`);
+      }
+    } catch (err) {
+      console.error("[gpu-challenges] Expiration sweep failed:", err);
+    }
+  }, GPU_CHALLENGE_EXPIRE_MS);
+
+  // ============================================================
+  //  DB pool health monitor — logs every 60s in production
+  // ============================================================
+  const POOL_MONITOR_MS = 60_000;
+  const poolMonitorInterval = setInterval(() => {
+    const total = pool.totalCount;
+    const idle = pool.idleCount;
+    const waiting = pool.waitingCount;
+    if (waiting > 0 || total > 80) {
+      console.warn(
+        `[db-pool] PRESSURE total=${total} idle=${idle} waiting=${waiting}`,
+      );
+    } else if (gatewayConfig.nodeEnv === "production") {
+      console.log(
+        `[db-pool] total=${total} idle=${idle} waiting=${waiting}`,
+      );
+    }
+  }, POOL_MONITOR_MS);
 
   // External claims ("Proof of Prior Work")
   const externalClaimService = new ExternalClaimService(pool, creditManager);
   // ORCID verifier needs no credentials (public API) — always available
   const orcidVerifier = new OrcidVerifier();
+
+  // GitHub verifier — instantiated when OAuth credentials are configured
+  const githubVerifier = gatewayConfig.githubClientId && gatewayConfig.githubClientSecret
+    ? new GitHubVerifier(
+        gatewayConfig.githubClientId,
+        gatewayConfig.githubClientSecret,
+        gatewayConfig.githubCallbackUrl,
+      )
+    : undefined;
+  if (githubVerifier) {
+    console.log("[startup] GitHub OAuth verifier configured");
+  }
+
   app.use("/v1", keyRateLimiter, createClaimsRouter({
     pool,
     hmacSecret,
     claimService: externalClaimService,
     orcidVerifier,
-    // Other verifiers are only instantiated when env vars are set
-    // (githubVerifier, twitterVerifier, emailVerifier, arxivVerifier)
-    // — they are left undefined here and can be wired up when OAuth
-    // credentials are available.
+    verificationTierService,
+    githubVerifier,
+    // Other verifiers wired when env vars are set
+    // (twitterVerifier, emailVerifier, arxivVerifier)
+  }));
+
+  // Human verification routes (wallet-signature auth, no API key needed)
+  const humanVerifyJwtSecret = gatewayConfig.webAuthJwtSecret || gatewayConfig.apiKeyHmacSecret;
+  app.use("/v1", createHumanVerificationRouter({
+    pool,
+    githubVerifier,
+    claimService: externalClaimService,
+    verificationTierService,
+    jwtSecret: humanVerifyJwtSecret,
   }));
 
   // Proactive agent loop routes
   app.use("/v1", keyRateLimiter, createProactiveRouter(pool, hmacSecret, proactiveScheduler, runtimeEventBroadcaster, syncAdminAddress));
 
   // Runtime session routes (Agent Runtime SDK) — read-heavy (status, presence, heartbeat)
-  app.use("/v1", readRateLimiter, createRuntimeRouter(pool, hmacSecret, runtimeSessionManager));
+  app.use("/v1", readRateLimiter, createRuntimeRouter(pool, hmacSecret, runtimeSessionManager, GATEWAY_VERSION, gatewayConfig.clientVersions));
 
   // Memory bridge routes (Agent Runtime SDK) — read-heavy (query, sync)
-  app.use("/v1", readRateLimiter, createMemoryRouter(pool, sdkConfig, hmacSecret, subgraphGateway, contentScanner));
+  app.use("/v1", readRateLimiter, createMemoryRouter(pool, sdkConfig, hmacSecret, contentScanner, nonceTracker));
+
+  // Unified network knowledge search (public, read-only FTS) — gap signals for teaching
+  app.use("/v1", readRateLimiter, createSearchRouter(pool, searchService, teachingExchangeService, hmacSecret));
+
+  // Knowledge query routes (semantic search — feature-flagged)
+  if (knowledgeQueryService) {
+    app.use("/v1", methodAwareLimiter, createKnowledgeQueryRouter(pool, hmacSecret, knowledgeQueryService, embeddingService, creditManager));
+  }
+
+  // Wire search into opportunity scanner for subscription scanning
+  opportunityScanner.setSearchService(searchService);
+
+  // Interest Engine — structured interest subscriptions, tag matching, notifications
+  const interestEngine = new InterestEngine(
+    pool, creditManager, runtimeEventBroadcaster, messageBus, searchService, {
+      freeNotificationsPerDay: 10,
+      notificationCost: 5,        // credits
+      digestCost: 2,
+      maxDailyNotifications: 200,
+      maxSubscriptionsPerAgent: 25,
+      maxRepoWatchesPerAgent: 10,
+      entityBufferMs: 5000,        // micro-batch window
+      repoWatchIntervalMs: 900000, // 15 min
+      digestHourUtc: 8,
+    },
+  );
+  opportunityScanner.setInterestEngine(interestEngine);
+  proactiveScheduler.setInterestEngine(interestEngine);
+
+  // Onboarding service — welcome guide, nudge signals, specialization plans
+  const onboardingService = new OnboardingService(pool);
+  runtimeEventBroadcaster.setOnboardingService(onboardingService);
+  proactiveScheduler.setOnboardingService(onboardingService);
+
+  // Wire messageBus into services that emit entity events
+  marketplaceService.setMessageBus(messageBus);
+  channelService.setMessageBus(messageBus);
+
+  // Wire teaching exchange dependencies
+  teachingExchangeService.setCreditManager(creditManager);
+  teachingExchangeService.setChannelService(channelService);
+
+  // Agent routes (registration is public, profile/specialize are authenticated)
+  // Registered here (after searchService/bundleDiscoveryService/interestEngine init)
+  // so the bootstrap payload and specialization endpoint can discover relevant content.
+  app.use("/v1", readRateLimiter, createAgentsRouter(pool, sdkConfig, gatewayConfig.apiKeyHmacSecret, creditManager, erc8004MintService, verificationTierService, messageBus, searchService, bundleDiscoveryService, interestEngine));
+
+  // Interest subscription CRUD + repo watches (authenticated)
+  app.use("/v1", keyRateLimiter, createInterestsRouter(pool, hmacSecret, interestEngine));
+
+  // Public tag browse/search/suggest
+  app.use("/v1", readRateLimiter, createTagsRouter(interestEngine));
 
   // Inbox routes (Agent Runtime SDK direct messaging)
-  app.use("/v1", keyRateLimiter, createInboxRouter(pool, hmacSecret, inboxService, runtimeEventBroadcaster, messageBus, proactiveScheduler, contentScanner));
+  app.use("/v1", keyRateLimiter, createInboxRouter(pool, hmacSecret, inboxService, runtimeEventBroadcaster, messageBus, proactiveScheduler, contentScanner, requireVerified));
 
   // Channel routes (P2P Layer 4) — uses readKeyRateLimiter (300/min) instead of keyRateLimiter (200/min)
   // because agents chatting in project discussions exhaust the shared write budget fast.
   // Per-agent per-channel send rate limit (default 60 msgs/min, env: CHANNEL_MSG_RATE_LIMIT) still prevents abuse.
-  app.use("/v1", readRateLimiter, createChannelsRouter(pool, hmacSecret, channelService, messageBus, runtimeEventBroadcaster, channelBroadcaster, { channelMsgRateLimit: gatewayConfig.channelMsgRateLimit }, proactiveScheduler, contentScanner));
+  app.use("/v1", readRateLimiter, createChannelsRouter(pool, hmacSecret, channelService, messageBus, runtimeEventBroadcaster, channelBroadcaster, { channelMsgRateLimit: gatewayConfig.channelMsgRateLimit }, proactiveScheduler, contentScanner, requireVerified, bundleCitationDetector, bundleDiscoveryService, resourceCitationDetector));
+
+  // Workspace routes (shared state spaces — feature-gated)
+  if (gatewayConfig.workspaceEnabled) {
+    app.use("/v1", methodAwareLimiter, createWorkspaceRouter(pool, hmacSecret, workspaceService, contentScanner, proposalService));
+  }
+
+  // Insight routes (strategy propagation + cross-agent learning)
+  app.use("/v1", methodAwareLimiter, createInsightRouter(pool, hmacSecret, insightService));
+
+  // Skill Registry routes (package manager for agent skills)
+  app.use("/v1", methodAwareLimiter, createSkillRegistryRouter(pool, hmacSecret, skillRegistryService));
+
+  // Treasury routes (guild economics — nested under /v1/guilds/:guildId/treasury)
+  app.use("/v1", methodAwareLimiter, createTreasuryRouter(pool, hmacSecret, treasuryService));
+
+  // Swarm routes (N-agent parallel task coordination)
+  app.use("/v1", methodAwareLimiter, createSwarmRouter(pool, hmacSecret, swarmService));
+
+  // Specialization routes (niche detection, skill gaps, recommendations)
+  app.use("/v1", methodAwareLimiter, createSpecializationRouter(pool, hmacSecret, specializationService));
 
   // Marketplace routes (A2A service marketplace)
-  app.use("/v1", methodAwareLimiter, createMarketplaceRouter(pool, sdkConfig, hmacSecret, marketplaceService));
+  app.use("/v1", methodAwareLimiter, createMarketplaceRouter(pool, sdkConfig, hmacSecret, marketplaceService, proactiveScheduler));
+
+  // GPU marketplace routes (availability, heartbeats, buyer challenges)
+  app.use("/v1", methodAwareLimiter, createGpuRouter(pool, hmacSecret, gpuAvailabilityService, gpuChallengeService));
+
+  // API marketplace routes (proxy registration, heartbeats, availability, usage)
+  app.use("/v1", methodAwareLimiter, createApiMarketplaceRouter(pool, hmacSecret, apiProxyService));
+
+  // Credit-based hiring routes (off-chain credit agreements)
+  app.use("/v1", methodAwareLimiter, createCreditHireRouter(pool, hmacSecret, creditHireService));
+
+  // Agent Email (Resend — feature-gated)
+  if (emailService) {
+    app.use("/v1", keyRateLimiter, createEmailRouter(pool, hmacSecret, emailService));
+    app.use("/v1", createResendWebhookRouter(emailService, gatewayConfig.emailWebhookSecret));
+  }
+
+  // Intent routes (agent need broadcasting + proposal matching)
+  app.use("/v1", methodAwareLimiter, createIntentsRouter(pool, hmacSecret, intentService, creditManager));
+
+  // Oracle routes (EIP-712 signed data snapshots — all read-only, no auth)
+  app.use("/v1", readRateLimiter, createOracleRouter(pool, oracleService));
+
+  // ACP routes (Virtuals Agent Commerce Protocol adapter)
+  const gatewayUrl = process.env.GATEWAY_URL || "https://gateway.nookplot.com";
+  app.use("/v1", methodAwareLimiter, createAcpRouter(pool, hmacSecret, acpService, gatewayUrl));
+
+  // Semantic match routes (vector similarity agent search)
+  app.use("/v1", methodAwareLimiter, createSemanticMatchRouter(pool, hmacSecret, embeddingService));
+
+  // ACP well-known descriptor
+  app.get("/.well-known/acp.json", (_req, res) => res.json(acpService.getServiceDescriptor(gatewayUrl)));
+
+  // Teaching exchange routes (knowledge transfer economy)
+  app.use("/v1", methodAwareLimiter, createTeachingRouter(pool, hmacSecret, teachingExchangeService, embeddingService ?? undefined));
 
   // Action registry + domain + egress management routes
-  app.use("/v1", keyRateLimiter, createActionsRouter(pool, actionRegistry, actionExecutor, hmacSecret, egressProxy, gatewayConfig.secretEncryptionKey, syncAdminAddress));
+  app.use("/v1", keyRateLimiter, createActionsRouter(pool, actionRegistry, actionExecutor, hmacSecret, egressProxy, gatewayConfig.secretEncryptionKey, syncAdminAddress, toolDispatcher));
 
   // Directive routes (creative autonomy prompts — admin-only for create/delete)
   app.use("/v1", keyRateLimiter, createDirectivesRouter(pool, hmacSecret, syncAdminAddress));
@@ -1145,8 +1946,10 @@ async function startServer() {
   // MCP routes (SSE transport + management — includes both public SSE and authenticated management)
   app.use("/v1", keyRateLimiter, createMcpRouter(pool, hmacSecret, mcpBridge));
 
-  // IPFS upload proxy (keeps Pinata JWT server-side)
-  app.use("/v1", keyRateLimiter, createIpfsRouter(pool, hmacSecret));
+  // IPFS routes — batch reads + upload proxy (keeps Pinata JWT server-side).
+  // Uses readRateLimiter because /v1/ipfs/batch is a read-only POST that the
+  // frontend calls frequently; the write-oriented keyRateLimiter was too strict.
+  app.use("/v1", readRateLimiter, createIpfsRouter(pool, hmacSecret));
 
   // Self-improvement routes
   if (selfImprovementEngine) {
@@ -1155,14 +1958,37 @@ async function startServer() {
     ));
   }
 
-  // Credit + inference routes
+  // Token balance + allowance routes (on-chain ERC-20 queries)
+  app.use("/v1", readRateLimiter, createTokensRouter(pool, hmacSecret));
+
+  // Token price proxy — public DexScreener price feed (no auth)
+  app.use("/v1", readRateLimiter, createTokenPriceRouter());
+
+  // Credit + inference + subscription routes
   app.use("/v1", keyRateLimiter, createCreditsRouter(pool, creditManager, hmacSecret, gatewayConfig.creditPurchaseAddress || undefined, gatewayConfig.rpcUrl, actionRegistry));
+  app.use("/v1", keyRateLimiter, createRewardsRouter(pool, hmacSecret, weeklyRewardService, syncAdminAddress));
+  if (merkleRewardService) {
+    app.use("/v1", readRateLimiter, createMerkleRewardsRouter(merkleRewardService));
+  }
+  app.use("/v1", keyRateLimiter, createSubscriptionsRouter(pool, subscriptionService, hmacSecret));
   if (inferenceProxy) {
     app.use("/v1", keyRateLimiter, createInferenceRouter(pool, inferenceProxy, byokManager, creditManager, hmacSecret));
   }
 
+  // Agent memory (per-agent persistent memory with dream cycles)
+  const agentMemoryService = new AgentMemoryService(pool, embeddingService, creditManager, {
+    openaiApiKey: gatewayConfig.openaiApiKey || undefined,
+  });
+  agentMemoryService.start();
+  app.use("/v1", methodAwareLimiter, createAgentMemoryRouter(pool, hmacSecret, agentMemoryService));
+
   // Feed routes — read-heavy (activity feed, post listings)
   app.use("/v1", readRateLimiter, createFeedRouter(pool, sdkConfig, hmacSecret));
+
+  // ============================================================
+  //  OG image generation (public, no auth)
+  // ============================================================
+  app.use("/og", createOgRouter(pool));
 
   // ============================================================
   //  Error handling
@@ -1199,6 +2025,47 @@ async function startServer() {
   });
 
   // ============================================================
+  //  Preview deployment proxy + billing (feature-flagged)
+  // ============================================================
+  // Workspace TTL sweep (clean up expired keys on interval)
+  let workspaceTtlTimer: ReturnType<typeof setInterval> | undefined;
+  if (gatewayConfig.workspaceEnabled) {
+    workspaceTtlTimer = setInterval(() => {
+      workspaceService.sweepExpiredKeys().catch((err) => {
+        logSecurityEvent("warn", "workspace-ttl-sweep-failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }, gatewayConfig.workspaceTtlSweepMs);
+  }
+
+  // Proposal sweep (expire open proposals past their deadline)
+  let proposalSweepTimer: ReturnType<typeof setInterval> | undefined;
+  if (gatewayConfig.workspaceEnabled) {
+    proposalSweepTimer = setInterval(() => {
+      proposalService.sweepExpiredProposals().catch((err) => {
+        logSecurityEvent("warn", "proposal-sweep-failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }, gatewayConfig.proposalSweepMs);
+  }
+
+  let billingInterval: ReturnType<typeof setInterval> | undefined;
+  if (previewService) {
+    // Mount reverse proxy AFTER all /v1 routes (catch-all for /preview/:id/*)
+    app.use(createPreviewProxyMiddleware(pool, previewService));
+
+    // Start billing ticker
+    billingInterval = setInterval(() => {
+      previewService!.tickBilling().catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        logSecurityEvent("error", "preview-billing-tick-failed", { error: msg });
+      });
+    }, gatewayConfig.previewBillingTickMs);
+  }
+
+  // ============================================================
   //  Start listening
   // ============================================================
 
@@ -1228,25 +2095,14 @@ async function startServer() {
       console.log("NOTE: In production, run behind TLS and set NODE_ENV=production TLS_ENABLED=true.");
     }
 
-    // Warm up subgraph cache with the knowledge graph query (non-blocking)
-    subgraphGateway.warmUp([
-      {
-        query: `{
-          agents(first: 200, orderBy: postCount, orderDirection: desc, where: { isActive: true }) {
-            id didCid registeredAt updatedAt isVerified isActive stakedAmount postCount
-            followingCount followerCount attestationCount attestationsGivenCount
-            totalUpvotesReceived totalDownvotesReceived communitiesActive agentType
-          }
-          communities(first: 100, orderBy: totalPosts, orderDirection: desc, where: { totalPosts_gt: 0 }) {
-            id totalPosts uniqueAuthors totalScore lastPostAt
-          }
-          attestations(first: 500, where: { isActive: true }) {
-            attester { id } subject { id } reason timestamp
-          }
-        }`,
-      },
-    ]).catch(() => { /* warm-up is best-effort */ });
   });
+
+  // Prevent hung connections from accumulating
+  // Keep-alive must be <= Cloudflare's 60s to avoid orphaned sockets
+  // when Cloudflare closes first and the server doesn't know
+  server.keepAliveTimeout = 60_000;   // match Cloudflare's 60s exactly
+  server.headersTimeout = 65_000;     // must be > keepAliveTimeout
+  server.requestTimeout = 120_000;    // 2 min max request duration
 
   // ============================================================
   //  WebSocket upgrade handling
@@ -1274,18 +2130,45 @@ async function startServer() {
     console.log("\nShutting down gracefully...");
     try {
       clearInterval(scoreInterval);
-      clearInterval(sybilInterval);
+
       clearInterval(arxivPollInterval);
+      clearInterval(teachingExpireInterval);
+      clearInterval(intentExpireInterval);
+      clearInterval(poolMonitorInterval);
+      if (billingInterval) clearInterval(billingInterval);
+      if (workspaceTtlTimer) clearInterval(workspaceTtlTimer);
+      if (proposalSweepTimer) clearInterval(proposalSweepTimer);
+      clearInterval(gpuStalenessInterval);
+      clearInterval(gpuChallengeExpireInterval);
+      clearInterval(apiStalenessInterval);
+      clearInterval(convergenceRecomputeInterval);
+      workspaceBroadcaster.shutdown();
       if (purchaseWatcher) purchaseWatcher.stop();
       await proactiveScheduler.stop();
       runtimeSessionManager.stopCleanup();
       runtimeEventBroadcaster.shutdown();
       channelBroadcaster.shutdown();
       if (channelSyncer) channelSyncer.stop();
+      weeklyRewardService.stop();
+      guildWeeklyRewardService.stop();
+      if (merkleRootPublisher) merkleRootPublisher.stop();
+      if (merkleRewardService) merkleRewardService.stop();
+      treasuryOpsService.stop();
+      agentMemoryService.stop();
       messageBus.shutdown();
       await collabServer.shutdown();
       execServer.shutdown();
-      server.close();
+      // Close HTTP server with a drain timeout so in-flight requests finish
+      await new Promise<void>((resolve) => {
+        const drainTimeout = setTimeout(() => {
+          console.warn("Drain timeout reached (10s), forcing close");
+          resolve();
+        }, 10_000);
+        server.close(() => {
+          clearTimeout(drainTimeout);
+          resolve();
+        });
+      });
       await pool.end();
     } catch (err) {
       console.error("Shutdown error:", err);
@@ -1303,10 +2186,50 @@ async function startServer() {
       stack: reason instanceof Error ? reason.stack?.slice(0, 500) : undefined,
     });
   });
+
+  // Catch uncaught exceptions — log and exit cleanly instead of crashing silently
+  process.on("uncaughtException", (err) => {
+    logSecurityEvent("error", "uncaught-exception", {
+      message: err.message,
+      stack: err.stack?.slice(0, 500),
+    });
+    console.error("Uncaught exception, shutting down:", err);
+    shutdown();
+  });
 }
 
-// Launch
-startServer().catch((error) => {
+// Launch with retry — during deploys, the old instance may still
+// hold Postgres connections. Retry a few times before giving up.
+async function launchWithRetry(maxRetries = 3): Promise<void> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await startServer();
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const isTooManyClients =
+        message.includes("too many clients") ||
+        (error as { code?: string }).code === "53300";
+
+      if (isTooManyClients && attempt < maxRetries) {
+        const delay = 5_000 * attempt;
+        console.error(
+          `[startup] Attempt ${attempt}/${maxRetries} failed (too many clients). ` +
+          `Retrying in ${delay / 1000}s...`,
+        );
+        // Close the pool so the next attempt gets a fresh one
+        await closePool();
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+
+      console.error("Failed to start gateway:", error);
+      process.exit(1);
+    }
+  }
+}
+
+launchWithRetry().catch((error) => {
   console.error("Failed to start gateway:", error);
   process.exit(1);
 });

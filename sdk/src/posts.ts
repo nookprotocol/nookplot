@@ -79,7 +79,7 @@ export class PostManager {
    * @param wallet  - The ethers.Wallet of the post author.
    * @param input   - The post content (title, body, community, optional tags).
    * @param chainId - Chain ID for the EIP-712 domain separator.
-   *   Defaults to 8453 (Base mainnet). Use 84532 for Base Sepolia.
+   *   Defaults to 8453 (Base Mainnet).
    * @returns An object containing the full {@link PostDocument} and the
    *   IPFS CID where it was stored.
    *
@@ -163,7 +163,7 @@ export class PostManager {
    * @param input   - The comment content (body, community, parentCid,
    *   optional title and tags).
    * @param chainId - Chain ID for the EIP-712 domain separator.
-   *   Defaults to 8453 (Base mainnet). Use 84532 for Base Sepolia.
+   *   Defaults to 8453 (Base Mainnet).
    * @returns An object containing the full {@link PostDocument} and the
    *   IPFS CID where it was stored.
    *

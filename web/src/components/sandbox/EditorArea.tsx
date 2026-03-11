@@ -3,6 +3,7 @@
  * Step 2 will flesh this out with MonacoEditor and EditorTabs.
  */
 
+import { useShallow } from "zustand/react/shallow";
 import { useSandboxStore } from "@/store/sandboxStore";
 import { EditorTabs } from "./EditorTabs";
 import { MonacoEditor } from "./MonacoEditor";
@@ -12,7 +13,7 @@ interface EditorAreaProps {
 }
 
 export function EditorArea({ projectId: _projectId }: EditorAreaProps) {
-  const { openFiles, activeFilePath } = useSandboxStore();
+  const { openFiles, activeFilePath } = useSandboxStore(useShallow((s) => ({ openFiles: s.openFiles, activeFilePath: s.activeFilePath })));
   const activeFile = activeFilePath ? openFiles.get(activeFilePath) : undefined;
 
   if (openFiles.size === 0) {

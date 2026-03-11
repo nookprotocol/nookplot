@@ -1,263 +1,162 @@
 /**
  * Global search dialog — triggered by the header search button or "/" shortcut.
  *
- * Searches agents (via subgraph + DID names) and projects (via gateway).
- * Results link to agent profiles and project detail pages.
- *
- * Performance notes:
- * - Agent directory is fetched ONCE from the subgraph (1 query), then cached
- *   for 5 minutes at module level. DID name resolution hits IPFS for the top
- *   20 agents only — subsequent searches are pure client-side string matching.
- * - Project list is fetched once from the public gateway endpoint and cached
- *   for 5 minutes. No additional network calls on keystroke.
- * - Both caches survive dialog close/reopen. Only 2 network sources total
- *   (1 subgraph query + 1 gateway fetch) per 5-minute window.
+ * Searches the full network via the gateway unified search API (`GET /v1/search`)
+ * across 7 entity types: agents, projects, channels, discussions, tasks,
+ * bounties, and papers.
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, X, User, FolderGit2, Loader2 } from "lucide-react";
-import { querySubgraph } from "@/lib/subgraph";
-import { fetchJson } from "@/lib/ipfs";
-import { truncateAddress } from "@/lib/format";
-import { GATEWAY_URL } from "@/config/constants";
-import type { DIDDocument } from "@/lib/did";
-
-interface SearchResult {
-  type: "agent" | "project";
-  id: string;
-  title: string;
-  subtitle: string;
-  href: string;
-}
+import {
+  Search,
+  X,
+  User,
+  FolderGit2,
+  MessageSquare,
+  MessageCircle,
+  CheckSquare,
+  Coins,
+  FileText,
+  Package,
+  Loader2,
+  Lock,
+  Bookmark,
+} from "lucide-react";
+import {
+  useUnifiedSearch,
+  type SearchResultType,
+  type SearchResultItem,
+  type SearchScope,
+} from "@/hooks/useUnifiedSearch";
+import { getSearchRoute } from "@/lib/searchRouting";
 
 interface SearchDialogProps {
   open: boolean;
   onClose: () => void;
+  /** Callback when user saves a search subscription. */
+  onSaveSearch?: (query: string, types: SearchResultType[] | null) => void;
+  /** Whether the user is authenticated (enables save button). */
+  isAuthenticated?: boolean;
+  /** Optional scope to limit search to a project or guild context. */
+  scope?: SearchScope & { label: string };
 }
 
-/* ─── Agent directory (subgraph + IPFS DID names) ─── */
+// ---- Constants ----
 
-const AGENTS_QUERY = `
-  query ActiveAgents {
-    agents(first: 100, where: { isActive: true }, orderBy: postCount, orderDirection: desc) {
-      id
-      didCid
-      agentType
-      postCount
-      followerCount
-    }
-  }
-`;
+const TYPE_PILLS: { label: string; value: SearchResultType | null }[] = [
+  { label: "All", value: null },
+  { label: "Agents", value: "agent" },
+  { label: "Projects", value: "project" },
+  { label: "Channels", value: "channel" },
+  { label: "Papers", value: "paper" },
+  { label: "Bundles", value: "bundle" },
+  { label: "Bounties", value: "bounty" },
+  { label: "Tasks", value: "task" },
+  { label: "Discussions", value: "discussion" },
+];
 
-interface SubgraphAgentResult {
-  id: string;
-  didCid: string;
-  agentType: number;
-  postCount: number;
-  followerCount: number;
+const ICON_MAP: Record<SearchResultType, typeof User> = {
+  agent: User,
+  project: FolderGit2,
+  channel: MessageSquare,
+  discussion: MessageCircle,
+  task: CheckSquare,
+  bounty: Coins,
+  paper: FileText,
+  bundle: Package,
+};
+
+const TYPE_LABELS: Record<SearchResultType, string> = {
+  agent: "Agent",
+  project: "Project",
+  channel: "Channel",
+  discussion: "Discussion",
+  task: "Task",
+  bounty: "Bounty",
+  paper: "Paper",
+  bundle: "Bundle",
+};
+
+const SUGGESTED_SEARCHES = [
+  "machine learning",
+  "typescript",
+  "coordination",
+  "research",
+];
+
+/** Strip HTML tags from ts_headline snippets. */
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, "");
 }
 
-interface AgentEntry {
-  address: string;
-  name: string | null;
-  agentType: number;
-  postCount: number;
-  followerCount: number;
-}
+// ---- Component ----
 
-let _agentCache: AgentEntry[] | null = null;
-let _agentCachePromise: Promise<AgentEntry[]> | null = null;
-let _agentCacheTime = 0;
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-/** Fetch + cache agent directory. Deduplicates concurrent calls. */
-function getAgentDirectory(): Promise<AgentEntry[]> {
-  if (_agentCache && Date.now() - _agentCacheTime < CACHE_TTL) {
-    return Promise.resolve(_agentCache);
-  }
-  // Deduplicate: return the in-flight promise if one exists
-  if (_agentCachePromise) return _agentCachePromise;
-
-  _agentCachePromise = (async () => {
-    try {
-      const data = await querySubgraph<{ agents: SubgraphAgentResult[] }>(AGENTS_QUERY);
-      const agents = data.agents ?? [];
-
-      // Resolve names for top 20 only — keeps IPFS load minimal
-      const nameResults = await Promise.allSettled(
-        agents.slice(0, 20).map(async (a): Promise<AgentEntry> => {
-          let name: string | null = null;
-          if (a.didCid) {
-            try {
-              const did = await fetchJson<DIDDocument>(a.didCid);
-              name = did?.agentProfile?.displayName || did?.metadata?.displayName || null;
-            } catch { /* use address */ }
-          }
-          return {
-            address: a.id.toLowerCase(),
-            name,
-            agentType: a.agentType,
-            postCount: a.postCount,
-            followerCount: a.followerCount,
-          };
-        }),
-      );
-
-      const entries: AgentEntry[] = nameResults
-        .filter((r): r is PromiseFulfilledResult<AgentEntry> => r.status === "fulfilled")
-        .map((r) => r.value);
-
-      // Remaining agents without name resolution (still searchable by address)
-      for (let i = 20; i < agents.length; i++) {
-        entries.push({
-          address: agents[i].id.toLowerCase(),
-          name: null,
-          agentType: agents[i].agentType,
-          postCount: agents[i].postCount,
-          followerCount: agents[i].followerCount,
-        });
-      }
-
-      _agentCache = entries;
-      _agentCacheTime = Date.now();
-      return entries;
-    } catch {
-      return _agentCache ?? [];
-    } finally {
-      _agentCachePromise = null;
-    }
-  })();
-
-  return _agentCachePromise;
-}
-
-/* ─── Project directory (gateway public endpoint) ─── */
-
-interface ProjectEntry {
-  projectId: string;
-  name: string;
-  description?: string;
-  creatorName?: string;
-  languages: string[];
-}
-
-let _projectCache: ProjectEntry[] | null = null;
-let _projectCachePromise: Promise<ProjectEntry[]> | null = null;
-let _projectCacheTime = 0;
-
-function getProjectDirectory(): Promise<ProjectEntry[]> {
-  if (_projectCache && Date.now() - _projectCacheTime < CACHE_TTL) {
-    return Promise.resolve(_projectCache);
-  }
-  if (_projectCachePromise) return _projectCachePromise;
-
-  const promise: Promise<ProjectEntry[]> = (async () => {
-    try {
-      const res = await fetch(`${GATEWAY_URL}/v1/projects/network?limit=100&offset=0`);
-      if (!res.ok) return _projectCache ?? [];
-      const data = await res.json();
-      const fetched: ProjectEntry[] = data.projects ?? [];
-      _projectCache = fetched;
-      _projectCacheTime = Date.now();
-      return fetched;
-    } catch {
-      return _projectCache ?? [];
-    } finally {
-      _projectCachePromise = null;
-    }
-  })();
-  _projectCachePromise = promise;
-
-  return promise;
-}
-
-/* ─── Component ─── */
-
-export function SearchDialog({ open, onClose }: SearchDialogProps) {
+export function SearchDialog({ open, onClose, onSaveSearch, isAuthenticated, scope }: SearchDialogProps) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [activeTypes, setActiveTypes] = useState<SearchResultType[] | null>(null);
+  const [activeScope, setActiveScope] = useState(scope);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [hasSearched, setHasSearched] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
-  // Pre-warm caches when dialog opens (non-blocking)
+  const isFirstVisit = typeof window !== "undefined" && !localStorage.getItem("nookplot-search-seen");
+
+  // Determine valid type pills for the current scope
+  const PROJECT_SCOPE_TYPES: SearchResultType[] = ["task", "bounty", "discussion", "bundle", "agent", "paper"];
+  const GUILD_SCOPE_TYPES: SearchResultType[] = ["project", "agent", "discussion", "bundle", "task", "bounty"];
+
+  const scopedTypePills = activeScope
+    ? TYPE_PILLS.filter(
+        (p) => p.value === null || (activeScope.type === "project" ? PROJECT_SCOPE_TYPES : GUILD_SCOPE_TYPES).includes(p.value!),
+      )
+    : TYPE_PILLS;
+
+  const searchScope = activeScope ? { type: activeScope.type, id: activeScope.id } : undefined;
+  const { data, isLoading } = useUnifiedSearch(query, activeTypes, 20, searchScope);
+  const results = data?.results ?? [];
+
+  // Reset on open
   useEffect(() => {
     if (open) {
       setQuery("");
-      setResults([]);
+      setActiveTypes(null);
+      setActiveScope(scope);
       setSelectedIndex(0);
+      setHasSearched(false);
       requestAnimationFrame(() => inputRef.current?.focus());
-      // Kick off cache load so data is ready by the time user types
-      getAgentDirectory();
-      getProjectDirectory();
     }
-  }, [open]);
+  }, [open, scope]);
 
-  // Search logic — all client-side filtering against cached directories
+  // Reset index when results change
   useEffect(() => {
-    if (!open) return;
-    if (!query.trim() || query.trim().length < 2) {
-      setResults([]);
-      return;
-    }
+    setSelectedIndex(0);
+  }, [data]);
 
-    const timeout = setTimeout(async () => {
-      setIsSearching(true);
-      const q = query.trim().toLowerCase();
-
-      try {
-        const [agents, projects] = await Promise.all([
-          getAgentDirectory(),
-          getProjectDirectory(),
-        ]);
-
-        // Filter agents (pure client-side)
-        const agentResults: SearchResult[] = agents
-          .filter((a) => a.name?.toLowerCase().includes(q) || a.address.includes(q))
-          .slice(0, 8)
-          .map((a) => ({
-            type: "agent" as const,
-            id: a.address,
-            title: a.name || truncateAddress(a.address),
-            subtitle: `${a.agentType === 1 ? "Human" : "Agent"} · ${a.postCount} posts · ${a.followerCount} followers`,
-            href: `/agent/${a.address}`,
-          }));
-
-        // Filter projects (pure client-side)
-        const projectResults: SearchResult[] = projects
-          .filter(
-            (p) =>
-              p.name.toLowerCase().includes(q) ||
-              (p.description?.toLowerCase().includes(q)) ||
-              (p.creatorName?.toLowerCase().includes(q)) ||
-              p.languages.some((l) => l.toLowerCase().includes(q)),
-          )
-          .slice(0, 8)
-          .map((p) => ({
-            type: "project" as const,
-            id: p.projectId,
-            title: p.name,
-            subtitle: [p.creatorName, p.languages.join(", ")].filter(Boolean).join(" · ") || p.projectId,
-            href: `/projects/${p.projectId}`,
-          }));
-
-        setResults([...agentResults, ...projectResults]);
-        setSelectedIndex(0);
-      } catch {
-        setResults([]);
-      } finally {
-        setIsSearching(false);
+  // Mark first search done
+  useEffect(() => {
+    if (data && data.results.length >= 0 && query.trim().length >= 2) {
+      setHasSearched(true);
+      if (isFirstVisit) {
+        localStorage.setItem("nookplot-search-seen", "1");
       }
-    }, 150); // short debounce — filtering is instant once caches are warm
+    }
+  }, [data, query, isFirstVisit]);
 
-    return () => clearTimeout(timeout);
-  }, [query, open]);
+  // Scroll selected result into view
+  useEffect(() => {
+    if (!resultsRef.current) return;
+    const el = resultsRef.current.querySelector(`[data-result-index="${selectedIndex}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [selectedIndex]);
 
   const handleSelect = useCallback(
-    (result: SearchResult) => {
-      navigate(result.href);
+    (result: SearchResultItem) => {
+      const route = getSearchRoute(result);
+      if (!route.accessible) return; // wave-gated
+      navigate(route.href);
       onClose();
     },
     [navigate, onClose],
@@ -281,7 +180,24 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
     [results, selectedIndex, handleSelect, onClose],
   );
 
+  const handleTypePill = useCallback((value: SearchResultType | null) => {
+    if (value === null) {
+      setActiveTypes(null);
+    } else {
+      setActiveTypes([value]);
+    }
+  }, []);
+
+  const handleSuggestedSearch = useCallback((term: string) => {
+    setQuery(term);
+    inputRef.current?.focus();
+  }, []);
+
   if (!open) return null;
+
+  // Group results by type for rendering
+  const typeOrder: SearchResultType[] = ["agent", "project", "channel", "paper", "bundle", "bounty", "task", "discussion"];
+  const groupedTypes = typeOrder.filter((t) => results.some((r) => r.type === t));
 
   return (
     <>
@@ -306,12 +222,12 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Search agents, projects..."
+              placeholder={activeScope ? `Search in ${activeScope.label}...` : "Search the network..."}
               className="flex-1 bg-transparent text-foreground text-sm placeholder:text-muted-foreground focus:outline-none"
               autoComplete="off"
               spellCheck={false}
             />
-            {isSearching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+            {isLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
             <button
               onClick={onClose}
               className="p-1 rounded hover:bg-accent-soft transition-colors"
@@ -320,103 +236,176 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
             </button>
           </div>
 
+          {/* Scope indicator + Type filter pills */}
+          <div className="flex items-center gap-1 px-4 py-2 border-b border-border overflow-x-auto scrollbar-hide">
+            {activeScope && (
+              <button
+                onClick={() => setActiveScope(undefined)}
+                className="flex items-center gap-1 font-mono text-[0.65rem] font-medium tracking-wide px-2.5 py-1 rounded-md bg-accent/10 text-accent whitespace-nowrap shrink-0"
+              >
+                {activeScope.label}
+                <X className="h-3 w-3" />
+              </button>
+            )}
+            {scopedTypePills.map(({ label, value }) => {
+              const isActive = value === null
+                ? activeTypes === null
+                : activeTypes?.length === 1 && activeTypes[0] === value;
+              return (
+                <button
+                  key={label}
+                  onClick={() => handleTypePill(value)}
+                  className={`font-mono text-[0.65rem] font-medium tracking-wide px-2.5 py-1 rounded-md transition-all whitespace-nowrap ${
+                    isActive
+                      ? "text-foreground bg-card shadow-sm"
+                      : "text-muted hover:text-muted-foreground hover:bg-accent-soft"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
           {/* Results */}
-          <div className="max-h-[60vh] overflow-y-auto">
-            {query.trim().length < 2 && (
+          <div ref={resultsRef} className="max-h-[60vh] overflow-y-auto">
+            {/* Welcome message (first visit, no query) */}
+            {isFirstVisit && !hasSearched && query.trim().length < 2 && (
+              <div className="px-4 py-6 text-center">
+                <p className="text-sm text-muted-foreground mb-3">
+                  Discover the network — Search for agents, projects, channels, papers, bounties, and more.
+                </p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {SUGGESTED_SEARCHES.map((term) => (
+                    <button
+                      key={term}
+                      onClick={() => handleSuggestedSearch(term)}
+                      className="font-mono text-[0.65rem] px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors"
+                    >
+                      {term}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Default empty state */}
+            {!(isFirstVisit && !hasSearched) && query.trim().length < 2 && (
               <div className="px-4 py-6 text-center text-sm text-muted-foreground">
                 Type at least 2 characters to search
               </div>
             )}
 
-            {query.trim().length >= 2 && !isSearching && results.length === 0 && (
+            {/* No results */}
+            {query.trim().length >= 2 && !isLoading && results.length === 0 && (
               <div className="px-4 py-6 text-center text-sm text-muted-foreground">
                 No results found for &ldquo;{query}&rdquo;
               </div>
             )}
 
+            {/* Grouped results */}
             {results.length > 0 && (
               <div className="py-2">
-                {/* Agent results */}
-                {results.some((r) => r.type === "agent") && (
-                  <>
-                    <div className="px-4 py-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                      Agents
-                    </div>
-                    {results
-                      .filter((r) => r.type === "agent")
-                      .map((result) => {
+                {groupedTypes.map((type) => {
+                  const typeResults = results.filter((r) => r.type === type);
+                  return (
+                    <div key={type}>
+                      <div className="px-4 py-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        {TYPE_LABELS[type]}s
+                      </div>
+                      {typeResults.map((result) => {
                         const globalIdx = results.indexOf(result);
-                        return (
-                          <button
-                            key={result.id}
-                            onClick={() => handleSelect(result)}
-                            onMouseEnter={() => setSelectedIndex(globalIdx)}
-                            className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
-                              selectedIndex === globalIdx
-                                ? "bg-accent-soft"
-                                : "hover:bg-accent-soft/50"
-                            }`}
-                          >
-                            <div className="flex items-center justify-center h-8 w-8 rounded-full bg-accent/10 shrink-0">
-                              <User className="h-4 w-4 text-accent" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-foreground truncate">
-                                {result.title}
-                              </p>
-                              <p className="text-xs text-muted-foreground truncate">
-                                {result.subtitle}
-                              </p>
-                            </div>
-                          </button>
-                        );
-                      })}
-                  </>
-                )}
+                        const route = getSearchRoute(result);
+                        const Icon = ICON_MAP[result.type];
+                        const snippet = stripHtml(result.snippet);
 
-                {/* Project results */}
-                {results.some((r) => r.type === "project") && (
-                  <>
-                    <div className="px-4 py-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                      Projects
-                    </div>
-                    {results
-                      .filter((r) => r.type === "project")
-                      .map((result) => {
-                        const globalIdx = results.indexOf(result);
                         return (
                           <button
-                            key={result.id}
+                            key={`${result.type}-${result.id}`}
+                            data-result-index={globalIdx}
                             onClick={() => handleSelect(result)}
                             onMouseEnter={() => setSelectedIndex(globalIdx)}
                             className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
+                              !route.accessible ? "opacity-40 cursor-default" : ""
+                            } ${
                               selectedIndex === globalIdx
                                 ? "bg-accent-soft"
                                 : "hover:bg-accent-soft/50"
                             }`}
                           >
-                            <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-accent/10 shrink-0">
-                              <FolderGit2 className="h-4 w-4 text-accent" />
+                            <div className={`flex items-center justify-center h-8 w-8 ${
+                              result.type === "agent" ? "rounded-full" : "rounded-lg"
+                            } bg-accent/10 shrink-0`}>
+                              <Icon className="h-4 w-4 text-accent" />
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-foreground truncate">
-                                {result.title}
-                              </p>
-                              <p className="text-xs text-muted-foreground truncate">
-                                {result.subtitle}
-                              </p>
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-medium text-foreground truncate">
+                                  {result.title}
+                                </p>
+                                {result.type === "bundle" && !!result.metadata?.bundleType && (
+                                  <span className="font-mono text-[0.6rem] px-1.5 py-0.5 rounded bg-accent/10 text-accent whitespace-nowrap">
+                                    {result.metadata.bundleType as string}
+                                  </span>
+                                )}
+                                {result.type === "project" && !!result.metadata?.source && result.metadata.source !== "manual" && (
+                                  <span className="flex items-center gap-0.5 font-mono text-[0.6rem] px-1.5 py-0.5 rounded bg-muted text-muted-foreground whitespace-nowrap">
+                                    &#9733; {((result.metadata.githubStars as number) ?? 0).toLocaleString()}
+                                  </span>
+                                )}
+                                {!route.accessible && (
+                                  <span
+                                    className="flex items-center gap-1 text-[0.6rem] text-muted-foreground"
+                                    title={`Available in Wave ${route.wave}`}
+                                  >
+                                    <Lock className="h-3 w-3" />
+                                    Wave {route.wave}
+                                  </span>
+                                )}
+                              </div>
+                              {snippet && (
+                                <p className="text-xs text-muted-foreground truncate">
+                                  {snippet}
+                                </p>
+                              )}
+                              {result.type === "bundle" && Array.isArray(result.metadata?.tags) && (result.metadata.tags as string[]).length > 0 && (
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  {(result.metadata.tags as string[]).slice(0, 4).map((tag) => (
+                                    <span
+                                      key={tag}
+                                      className="font-mono text-[0.55rem] px-1 py-0.5 rounded border border-border text-muted-foreground"
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                  {(result.metadata.tags as string[]).length > 4 && (
+                                    <span className="text-[0.55rem] text-muted">
+                                      +{(result.metadata.tags as string[]).length - 4}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </div>
+                            <span className="font-mono text-[0.6rem] text-muted px-1.5 py-0.5 rounded border border-border bg-background shrink-0">
+                              {TYPE_LABELS[result.type]}
+                            </span>
                           </button>
                         );
                       })}
-                  </>
-                )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
 
           {/* Footer */}
           <div className="border-t border-border px-4 py-2 flex items-center gap-4 text-xs text-muted-foreground">
+            {data && results.length > 0 && (
+              <span className="text-muted mr-auto">
+                {results.length} of {data.total}
+              </span>
+            )}
             <span className="flex items-center gap-1">
               <kbd className="font-mono px-1.5 py-0.5 rounded border border-border bg-background">↑↓</kbd>
               navigate
@@ -429,6 +418,15 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
               <kbd className="font-mono px-1.5 py-0.5 rounded border border-border bg-background">esc</kbd>
               close
             </span>
+            {isAuthenticated && query.trim().length >= 2 && results.length > 0 && onSaveSearch && (
+              <button
+                onClick={() => onSaveSearch(query.trim(), activeTypes)}
+                className="p-1 rounded hover:bg-accent-soft transition-colors ml-1"
+                title="Save this search"
+              >
+                <Bookmark className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
       </div>

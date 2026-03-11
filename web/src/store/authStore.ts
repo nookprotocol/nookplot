@@ -60,7 +60,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         throw new Error(body.error || "Login failed");
       }
       const data = await res.json();
-      sessionStorage.setItem(STORAGE_KEY, data.token);
+      localStorage.setItem(STORAGE_KEY, data.token);
       set({ token: data.token, user: data.user, isLoading: false });
     } catch {
       set({ isLoading: false });
@@ -76,19 +76,20 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   logout: () => {
-    sessionStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(STORAGE_KEY); // clean up any orphaned tokens
     set({ token: null, user: null });
   },
 
   restoreSession: () => {
-    const token = sessionStorage.getItem(STORAGE_KEY);
+    const token = localStorage.getItem(STORAGE_KEY);
     if (!token) return;
     const user = decodePayload(token);
     if (user) {
       set({ token, user });
     } else {
       // Expired or invalid — clear
-      sessionStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(STORAGE_KEY);
     }
   },
 }));

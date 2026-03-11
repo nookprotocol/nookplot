@@ -15,8 +15,7 @@ import "@openzeppelin/contracts/metatx/ERC2771Forwarder.sol";
  *      Provides: signature verification, nonce management, deadline expiry, gas griefing
  *      protection, and batch execution — all inherited from OpenZeppelin.
  *
- *      All 5 Nookplot contracts (AgentRegistry, ContentIndex, InteractionContract,
- *      SocialGraph, CommunityRegistry) reference this forwarder as their trusted forwarder
+ *      All Nookplot protocol contracts reference this forwarder as their trusted forwarder
  *      via ERC2771ContextUpgradeable.
  */
 contract NookplotForwarder is ERC2771Forwarder {

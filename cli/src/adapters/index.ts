@@ -13,6 +13,7 @@ import type { KnowledgeSourceConfig } from "../config.js";
 import { FileAdapter } from "./files.js";
 import { SupabaseAdapter } from "./supabase.js";
 import { JsonAdapter } from "./json.js";
+import { GitHubAdapter } from "./github.js";
 
 // Re-export types for convenience
 export type { KnowledgeAdapter, KnowledgeEntry } from "./types.js";
@@ -53,6 +54,13 @@ const ADAPTER_REGISTRY: Record<
       titleField: config.titleField ?? "title",
       bodyField: config.bodyField ?? "content",
       tagsField: config.tagsField,
+    }),
+
+  github: (config) =>
+    new GitHubAdapter({
+      repos: config.repos ?? [],
+      pat: config.pat,
+      includeReadme: config.includeReadme,
     }),
 };
 

@@ -6,7 +6,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { gatewayFetch } from "@/lib/gateway";
-import { getApiKey } from "@/hooks/useSandboxFiles";
+import { isAuthenticated } from "@/lib/authSession";
 
 // ─── Types ───
 
@@ -83,16 +83,13 @@ export function useProjectFiles(projectId: string) {
   return useQuery<GatewayFileEntry[]>({
     queryKey: ["project-gateway-files", projectId],
     queryFn: async () => {
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("No API key");
       const data = await gatewayFetch<{ files: GatewayFileEntry[] }>(
         `/v1/projects/${encodeURIComponent(projectId)}/gateway-files`,
-        apiKey,
       );
       return data.files ?? [];
     },
-    enabled: !!projectId && !!getApiKey(),
-    staleTime: 15_000,
+    enabled: !!projectId,
+    staleTime: 300_000,
   });
 }
 
@@ -100,15 +97,12 @@ export function useProjectFile(projectId: string, filePath: string) {
   return useQuery<GatewayFileContent>({
     queryKey: ["project-gateway-file", projectId, filePath],
     queryFn: async () => {
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("No API key");
       return gatewayFetch<GatewayFileContent>(
         `/v1/projects/${encodeURIComponent(projectId)}/gateway-files/${filePath}`,
-        apiKey,
       );
     },
-    enabled: !!projectId && !!filePath && !!getApiKey(),
-    staleTime: 10_000,
+    enabled: !!projectId && !!filePath && isAuthenticated(),
+    staleTime: 300_000,
   });
 }
 
@@ -118,16 +112,13 @@ export function useProjectCommits(projectId: string, limit = 20) {
   return useQuery<FileCommit[]>({
     queryKey: ["project-commits", projectId, limit],
     queryFn: async () => {
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("No API key");
       const data = await gatewayFetch<{ commits: FileCommit[] }>(
         `/v1/projects/${encodeURIComponent(projectId)}/commits?limit=${limit}`,
-        apiKey,
       );
       return data.commits ?? [];
     },
-    enabled: !!projectId && !!getApiKey(),
-    staleTime: 15_000,
+    enabled: !!projectId,
+    staleTime: 300_000,
   });
 }
 
@@ -135,15 +126,12 @@ export function useCommitDetail(projectId: string, commitId: string) {
   return useQuery<FileCommitDetail>({
     queryKey: ["commit-detail", projectId, commitId],
     queryFn: async () => {
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("No API key");
       return gatewayFetch<FileCommitDetail>(
         `/v1/projects/${encodeURIComponent(projectId)}/commits/${encodeURIComponent(commitId)}`,
-        apiKey,
       );
     },
-    enabled: !!projectId && !!commitId && !!getApiKey(),
-    staleTime: 10_000,
+    enabled: !!projectId && !!commitId && isAuthenticated(),
+    staleTime: 300_000,
   });
 }
 
@@ -153,16 +141,13 @@ export function useCommitReviews(projectId: string, commitId: string) {
   return useQuery<CommitReview[]>({
     queryKey: ["commit-reviews", projectId, commitId],
     queryFn: async () => {
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("No API key");
       const data = await gatewayFetch<{ reviews: CommitReview[] }>(
         `/v1/projects/${encodeURIComponent(projectId)}/commits/${encodeURIComponent(commitId)}/reviews`,
-        apiKey,
       );
       return data.reviews ?? [];
     },
-    enabled: !!projectId && !!commitId && !!getApiKey(),
-    staleTime: 10_000,
+    enabled: !!projectId && !!commitId && isAuthenticated(),
+    staleTime: 300_000,
   });
 }
 
@@ -172,16 +157,13 @@ export function useProjectActivity(projectId: string, limit = 20) {
   return useQuery<ProjectActivityEvent[]>({
     queryKey: ["project-activity", projectId, limit],
     queryFn: async () => {
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("No API key");
       const data = await gatewayFetch<{ activity: ProjectActivityEvent[] }>(
         `/v1/projects/${encodeURIComponent(projectId)}/activity?limit=${limit}`,
-        apiKey,
       );
       return data.activity ?? [];
     },
-    enabled: !!projectId && !!getApiKey(),
-    staleTime: 15_000,
+    enabled: !!projectId,
+    staleTime: 300_000,
   });
 }
 
@@ -190,16 +172,13 @@ export function useGatewayActivity(limit = 20) {
   return useQuery<ProjectActivityEvent[]>({
     queryKey: ["gateway-activity", limit],
     queryFn: async () => {
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("No API key");
       const data = await gatewayFetch<{ activity: ProjectActivityEvent[] }>(
         `/v1/activity?limit=${limit}`,
-        apiKey,
       );
       return data.activity ?? [];
     },
-    enabled: !!getApiKey(),
-    staleTime: 30_000,
+    enabled: isAuthenticated(),
+    staleTime: 120_000,
   });
 }
 
@@ -209,11 +188,8 @@ export function useCommitFiles(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: { files: { path: string; content: string | null }[]; message: string }) => {
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("No API key");
       return gatewayFetch<Record<string, unknown>>(
         `/v1/projects/${encodeURIComponent(projectId)}/gateway-commit`,
-        apiKey,
         { method: "POST", body: JSON.stringify(input) },
       );
     },
@@ -229,17 +205,32 @@ export function useSubmitReview(projectId: string, commitId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: { verdict: string; body?: string }) => {
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("No API key");
       return gatewayFetch<Record<string, unknown>>(
         `/v1/projects/${encodeURIComponent(projectId)}/commits/${encodeURIComponent(commitId)}/review`,
-        apiKey,
         { method: "POST", body: JSON.stringify(input) },
       );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["commit-reviews", projectId, commitId] });
       queryClient.invalidateQueries({ queryKey: ["commit-detail", projectId, commitId] });
+      queryClient.invalidateQueries({ queryKey: ["project-commits", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["project-activity", projectId] });
+    },
+  });
+}
+
+export function useRequestAIReview(projectId: string, commitId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      return gatewayFetch<{ reviewId: string; verdict: string; summary: string; findingsCount: number; creditsCost: number }>(
+        `/v1/projects/${encodeURIComponent(projectId)}/commits/${encodeURIComponent(commitId)}/ai-review`,
+        { method: "POST" },
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["commit-detail", projectId, commitId] });
+      queryClient.invalidateQueries({ queryKey: ["commit-reviews", projectId, commitId] });
       queryClient.invalidateQueries({ queryKey: ["project-commits", projectId] });
       queryClient.invalidateQueries({ queryKey: ["project-activity", projectId] });
     },

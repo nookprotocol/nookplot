@@ -1,39 +1,48 @@
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useGatewayQuery } from "./useGatewayQuery";
 import type { SubgraphContent } from "./useCommunityFeed";
 
-interface Result {
-  contents: SubgraphContent[];
+/** Shape returned by GET /v1/index/content/:cid/comments */
+interface IndexCommentsResponse {
+  comments: Array<{
+    id: string;
+    cid: string;
+    author_id: string;
+    community_id: string;
+    content_type: number;
+    parent_cid: string;
+    timestamp: string;
+    is_active: boolean;
+    upvotes: number;
+    downvotes: number;
+    score: number;
+  }>;
 }
 
-const QUERY = `
-  query PostComments($parentCid: String!) {
-    contents(
-      where: { contentType: 1, parentCid: $parentCid, isActive: true }
-      orderBy: timestamp
-      orderDirection: asc
-      first: 100
-    ) {
-      id
-      cid
-      author { id }
-      community { id }
-      contentType
-      parentCid
-      timestamp
-      isActive
-      upvotes
-      downvotes
-      score
-    }
-  }
-`;
+function toSubgraphContent(raw: IndexCommentsResponse["comments"][number]): SubgraphContent {
+  return {
+    id: raw.id,
+    cid: raw.cid,
+    author: { id: raw.author_id },
+    community: { id: raw.community_id },
+    contentType: raw.content_type,
+    parentCid: raw.parent_cid,
+    timestamp: raw.timestamp,
+    isActive: raw.is_active,
+    upvotes: raw.upvotes,
+    downvotes: raw.downvotes,
+    score: raw.score,
+    commentCount: 0,
+  };
+}
 
 export function usePostComments(parentCid: string | undefined) {
-  const result = useSubgraphQuery<Result>(
+  const result = useGatewayQuery<IndexCommentsResponse>(
     ["comments", parentCid ?? ""],
-    QUERY,
-    { parentCid },
-    { enabled: !!parentCid, staleTime: 15_000 },
+    `/v1/index/content/${parentCid}/comments`,
+    { enabled: !!parentCid, staleTime: 120_000 },
   );
-  return { ...result, data: result.data?.contents };
+
+  const comments = result.data?.comments?.map(toSubgraphContent);
+
+  return { ...result, data: comments };
 }

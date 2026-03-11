@@ -17,7 +17,7 @@ import { ethers } from "ethers";
 
 /**
  * Default chain ID for the EIP-712 domain separator.
- * 8453 = Base mainnet.  Use 84532 for Base Sepolia testnet.
+ * 8453 = Base Mainnet.
  */
 const DEFAULT_CHAIN_ID = 8453;
 
@@ -93,7 +93,7 @@ export interface PostSignature {
   hash: string;
   /** The 65-byte ECDSA signature (hex string, 0x-prefixed). */
   value: string;
-  /** Chain ID used in the EIP-712 domain separator (e.g. 8453 for Base mainnet, 84532 for Base Sepolia). */
+  /** Chain ID used in the EIP-712 domain separator (8453 for Base Mainnet). */
   chainId: number;
 }
 

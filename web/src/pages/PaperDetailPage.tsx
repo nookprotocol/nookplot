@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { usePageMeta } from "@/hooks/usePageMeta";
-import { usePaperDetail, useCitationDetail, formatAuthors, extractYear } from "@/hooks/usePapers";
+import { usePaperDetail, useCitationDetail, formatAuthors, extractYear, cleanCategories } from "@/hooks/usePapers";
 import { QualityBreakdown } from "@/components/papers/QualityBreakdown";
 import { CitationList } from "@/components/papers/CitationList";
 import { CitationGraph } from "@/components/papers/CitationGraph";
@@ -72,16 +72,18 @@ export function PaperDetailPage() {
         </p>
 
         {/* Categories */}
-        <div className="mt-2 flex flex-wrap gap-1">
-          {paper.categories.map((cat) => (
-            <span
-              key={cat}
-              className="rounded-full bg-card-hover px-2 py-0.5 text-[10px] text-muted-foreground"
-            >
-              {cat}
-            </span>
-          ))}
-        </div>
+        {cleanCategories(paper.categories).length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {cleanCategories(paper.categories).map((cat) => (
+              <span
+                key={cat}
+                className="rounded-full bg-card-hover px-2 py-0.5 text-[10px] text-muted-foreground"
+              >
+                {cat}
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* External links */}
         <div className="mt-3 flex items-center gap-3">

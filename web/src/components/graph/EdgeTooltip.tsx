@@ -1,4 +1,4 @@
-import type { GraphEdge } from "@/lib/graphTypes";
+import type { GraphEdge, AttestationEdge } from "@/lib/graphTypes";
 import { truncateAddress, sanitizeDisplayText } from "@/lib/format";
 
 interface Props {
@@ -33,6 +33,9 @@ export function EdgeTooltip({ edge, x, y }: Props) {
             )}
             <p>
               Attester rep: <span className="text-foreground">{edge.attesterReputation}</span>
+            </p>
+            <p>
+              Relevance: <span className="text-foreground">{Math.round((edge as AttestationEdge).relevance * 100)}%</span>
             </p>
           </div>
         </>

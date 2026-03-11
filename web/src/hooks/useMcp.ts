@@ -99,7 +99,9 @@ export function useMcpTools(apiKey: string | null) {
     setIsLoading(true);
     gatewayFetch<{ data: McpTool[] }>("/v1/agents/me/mcp/tools", apiKey)
       .then((resp) => setTools(resp.data))
-      .catch(() => {})
+      .catch((err) => {
+        console.warn("[useMcp] fetch tools failed:", err);
+      })
       .finally(() => setIsLoading(false));
   }, [apiKey]);
 

@@ -15,6 +15,7 @@
 
 import { encryptPrivateKey, decryptPrivateKey } from "../secretManager.js";
 import { logSecurityEvent } from "../middleware/auditLog.js";
+import { fetchWithTimeout } from "../fetchWithTimeout.js";
 
 /** Maximum file size for read operations (1 MB). */
 const MAX_FILE_SIZE = 1_048_576;
@@ -129,6 +130,69 @@ export interface BranchInfo {
 export interface SecretScanResult {
   clean: boolean;
   matches: string[]; // pattern names only, never actual values
+}
+
+/** Full repository metadata from GitHub API. */
+export interface RepoMetadata {
+  fullName: string;
+  owner: string;
+  repo: string;
+  description: string | null;
+  defaultBranch: string;
+  language: string | null;
+  license: string | null;
+  stars: number;
+  forks: number;
+  openIssues: number;
+  topics: string[];
+  isArchived: boolean;
+  isPrivate: boolean;
+  pushedAt: string | null;
+  createdAt: string | null;
+}
+
+/** Decoded README content. */
+export interface ReadmeContent {
+  content: string;
+  path: string;
+  sha: string;
+  size: number;
+}
+
+/** GitHub search result item. */
+export interface SearchRepoResult {
+  fullName: string;
+  owner: string;
+  repo: string;
+  description: string | null;
+  stars: number;
+  language: string | null;
+  topics: string[];
+  updatedAt: string | null;
+}
+
+/** GitHub release info. */
+export interface ReleaseInfo {
+  tagName: string;
+  name: string;
+  body: string | null;
+  publishedAt: string | null;
+  htmlUrl: string;
+  prerelease: boolean;
+}
+
+/** GitHub contributor info. */
+export interface ContributorInfo {
+  login: string;
+  contributions: number;
+  avatarUrl: string;
+}
+
+/** Rate limit info extracted from GitHub response headers. */
+export interface RateLimitInfo {
+  remaining: number;
+  limit: number;
+  resetAt: Date;
 }
 
 // ============================================================
@@ -490,6 +554,186 @@ export class GitHubClient {
   }
 
   // ------------------------------------------------------------------
+  //  GitHub Knowledge API Methods
+  // ------------------------------------------------------------------
+
+  /**
+   * Get full repository metadata (stars, forks, topics, language, license, pushed_at).
+   */
+  async getRepoMetadata(token: string, owner: string, repo: string): Promise<RepoMetadata> {
+    const response = await this._fetch(token, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`);
+    if (!response.ok) {
+      if (response.status === 404) throw new Error("Repository not found or no access.");
+      if (response.status === 403) throw new Error("Insufficient permissions for this repository.");
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+    const data = await response.json() as Record<string, unknown>;
+    const licenseObj = data.license as { spdx_id?: string } | null;
+    return {
+      fullName: String(data.full_name ?? ""),
+      owner: String((data.owner as { login: string })?.login ?? owner),
+      repo: String(data.name ?? repo),
+      description: data.description ? String(data.description) : null,
+      defaultBranch: String(data.default_branch ?? "main"),
+      language: data.language ? String(data.language) : null,
+      license: licenseObj?.spdx_id ?? null,
+      stars: Number(data.stargazers_count ?? 0),
+      forks: Number(data.forks_count ?? 0),
+      openIssues: Number(data.open_issues_count ?? 0),
+      topics: Array.isArray(data.topics) ? (data.topics as string[]) : [],
+      isArchived: Boolean(data.archived),
+      isPrivate: Boolean(data.private),
+      pushedAt: data.pushed_at ? String(data.pushed_at) : null,
+      createdAt: data.created_at ? String(data.created_at) : null,
+    };
+  }
+
+  /**
+   * Get decoded README content for a repository.
+   */
+  async getReadme(token: string, owner: string, repo: string): Promise<ReadmeContent> {
+    const response = await this._fetch(
+      token,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/readme`,
+    );
+    if (!response.ok) {
+      if (response.status === 404) throw new Error("README not found.");
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+    const data = await response.json() as {
+      content: string; path: string; sha: string; size: number; encoding: string;
+    };
+    const content = Buffer.from(data.content, "base64").toString("utf-8");
+    return {
+      content,
+      path: data.path,
+      sha: data.sha,
+      size: data.size,
+    };
+  }
+
+  /**
+   * Search GitHub repositories by query string.
+   */
+  async searchRepositories(
+    token: string,
+    query: string,
+    sort: "stars" | "updated" | "best-match" = "stars",
+    perPage = 30,
+  ): Promise<SearchRepoResult[]> {
+    const params = new URLSearchParams({
+      q: query,
+      sort: sort === "best-match" ? "" : sort,
+      order: "desc",
+      per_page: String(Math.min(perPage, 100)),
+    });
+    const response = await this._fetch(token, `/search/repositories?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error(`GitHub search API error: ${response.status}`);
+    }
+    const data = await response.json() as { items: Array<Record<string, unknown>> };
+    return (data.items ?? []).map((item) => ({
+      fullName: String(item.full_name ?? ""),
+      owner: String((item.owner as { login: string })?.login ?? ""),
+      repo: String(item.name ?? ""),
+      description: item.description ? String(item.description) : null,
+      stars: Number(item.stargazers_count ?? 0),
+      language: item.language ? String(item.language) : null,
+      topics: Array.isArray(item.topics) ? (item.topics as string[]) : [],
+      updatedAt: item.updated_at ? String(item.updated_at) : null,
+    }));
+  }
+
+  /**
+   * List authenticated user's repositories.
+   */
+  async listUserRepos(
+    token: string,
+    sort: "updated" | "pushed" | "full_name" | "created" = "updated",
+    perPage = 30,
+  ): Promise<SearchRepoResult[]> {
+    const response = await this._fetch(
+      token,
+      `/user/repos?sort=${sort}&direction=desc&per_page=${Math.min(perPage, 100)}&type=owner`,
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+    const data = await response.json() as Array<Record<string, unknown>>;
+    return data.map((item) => ({
+      fullName: String(item.full_name ?? ""),
+      owner: String((item.owner as { login: string })?.login ?? ""),
+      repo: String(item.name ?? ""),
+      description: item.description ? String(item.description) : null,
+      stars: Number(item.stargazers_count ?? 0),
+      language: item.language ? String(item.language) : null,
+      topics: Array.isArray(item.topics) ? (item.topics as string[]) : [],
+      updatedAt: item.updated_at ? String(item.updated_at) : null,
+    }));
+  }
+
+  /**
+   * Get the latest release for a repository.
+   * Returns null if no releases exist.
+   */
+  async getLatestRelease(token: string, owner: string, repo: string): Promise<ReleaseInfo | null> {
+    const response = await this._fetch(
+      token,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/latest`,
+    );
+    if (!response.ok) {
+      if (response.status === 404) return null;
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+    const data = await response.json() as Record<string, unknown>;
+    return {
+      tagName: String(data.tag_name ?? ""),
+      name: String(data.name ?? ""),
+      body: data.body ? String(data.body) : null,
+      publishedAt: data.published_at ? String(data.published_at) : null,
+      htmlUrl: String(data.html_url ?? ""),
+      prerelease: Boolean(data.prerelease),
+    };
+  }
+
+  /**
+   * Get top contributors for a repository.
+   */
+  async getContributors(
+    token: string,
+    owner: string,
+    repo: string,
+    perPage = 30,
+  ): Promise<ContributorInfo[]> {
+    const response = await this._fetch(
+      token,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contributors?per_page=${Math.min(perPage, 100)}`,
+    );
+    if (!response.ok || response.status === 204) {
+      if (response.status === 204 || response.status === 404) return [];
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+    const data = await response.json() as Array<Record<string, unknown>>;
+    if (!Array.isArray(data)) return [];
+    return data.map((c) => ({
+      login: String(c.login ?? ""),
+      contributions: Number(c.contributions ?? 0),
+      avatarUrl: String(c.avatar_url ?? ""),
+    }));
+  }
+
+  /**
+   * Extract rate limit info from a GitHub API response.
+   */
+  extractRateLimit(response: Response): RateLimitInfo {
+    return {
+      remaining: parseInt(response.headers.get("x-ratelimit-remaining") ?? "5000", 10),
+      limit: parseInt(response.headers.get("x-ratelimit-limit") ?? "5000", 10),
+      resetAt: new Date(parseInt(response.headers.get("x-ratelimit-reset") ?? "0", 10) * 1000),
+    };
+  }
+
+  // ------------------------------------------------------------------
   //  Internal Helpers
   // ------------------------------------------------------------------
 
@@ -497,13 +741,14 @@ export class GitHubClient {
    * Make an authenticated GET request to the GitHub API.
    */
   private async _fetch(pat: string, path: string): Promise<Response> {
-    return fetch(`${GITHUB_API}${path}`, {
+    return fetchWithTimeout(`${GITHUB_API}${path}`, {
       headers: {
         Authorization: `Bearer ${pat}`,
         Accept: "application/vnd.github.v3+json",
         "User-Agent": "NookplotGateway/0.1.0",
         "X-GitHub-Api-Version": "2022-11-28",
       },
+      timeoutMs: 30_000,
     });
   }
 
@@ -516,7 +761,7 @@ export class GitHubClient {
     body: unknown,
     method: "POST" | "PATCH" = "POST",
   ): Promise<unknown> {
-    const response = await fetch(`${GITHUB_API}${path}`, {
+    const response = await fetchWithTimeout(`${GITHUB_API}${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${pat}`,
@@ -526,6 +771,7 @@ export class GitHubClient {
         "X-GitHub-Api-Version": "2022-11-28",
       },
       body: JSON.stringify(body),
+      timeoutMs: 30_000,
     });
 
     if (!response.ok) {

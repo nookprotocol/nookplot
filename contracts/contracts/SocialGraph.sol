@@ -56,6 +56,12 @@ contract SocialGraph is
     error TokenTransferFailed();
     error InsufficientStake();
     error ReasonTooLong();
+    error CannotEndorseSelf();
+    error InvalidRating();
+    error SkillTooLong();
+    error SkillTooShort();
+    error ContextTooLong();
+    error NotEndorsed();
 
     // ============================================================
     //                          STRUCTS
@@ -74,6 +80,26 @@ contract SocialGraph is
         address subject;
         string reason;
         uint256 stakedAmount;
+        uint256 timestamp;
+    }
+
+    /**
+     * @notice On-chain skill endorsement record.
+     * @param endorser Agent who gave the endorsement
+     * @param endorsee Agent who received the endorsement
+     * @param skillHash keccak256 of the skill string (used as mapping key)
+     * @param skill Human-readable skill name (e.g., "solidity", "research")
+     * @param rating Skill rating from 1 (basic) to 5 (expert)
+     * @param context Optional context for the endorsement (e.g., "Great work on bounty #42")
+     * @param timestamp When the endorsement was created or last updated
+     */
+    struct Endorsement {
+        address endorser;
+        address endorsee;
+        bytes32 skillHash;
+        string skill;
+        uint8 rating;
+        string context;
         uint256 timestamp;
     }
 
@@ -114,8 +140,17 @@ contract SocialGraph is
     /// @notice Minimum time (seconds) before an attestation can be revoked (0 = immediate)
     uint256 public attestationLockPeriod;
 
+    /// @notice Maps endorser => endorsee => skillHash => endorsement data
+    mapping(address => mapping(address => mapping(bytes32 => Endorsement))) private _endorsements;
+
+    /// @notice Maps agent => number of endorsements they've received
+    mapping(address => uint256) public endorsementsReceivedCount;
+
+    /// @notice Maps agent => number of endorsements they've given
+    mapping(address => uint256) public endorsementsGivenCount;
+
     /// @dev Storage gap for future upgrades
-    uint256[39] private __gap;
+    uint256[36] private __gap;
 
     // ============================================================
     //                          EVENTS
@@ -164,6 +199,25 @@ contract SocialGraph is
         address indexed subject,
         uint256 returnedStake,
         uint256 timestamp
+    );
+
+    /// @notice Emitted when an agent endorses another agent's skill
+    event EndorsementCreated(
+        address indexed endorser,
+        address indexed endorsee,
+        bytes32 indexed skillHash,
+        string skill,
+        uint8 rating,
+        string context,
+        uint256 timestamp
+    );
+
+    /// @notice Emitted when an endorsement is revoked
+    event EndorsementRevoked(
+        address indexed endorser,
+        address indexed endorsee,
+        bytes32 indexed skillHash,
+        string skill
     );
 
     /// @notice Emitted when payment token is updated
@@ -377,6 +431,89 @@ contract SocialGraph is
     }
 
     // ============================================================
+    //                   ENDORSEMENT FUNCTIONS
+    // ============================================================
+
+    /**
+     * @notice Endorse another agent's skill with a rating.
+     * @param endorsee Address of the agent being endorsed.
+     * @param skill Human-readable skill name (e.g., "solidity", "research"). Min 2, max 64 chars.
+     * @param rating Skill rating from 1 (basic) to 5 (expert).
+     * @param context Optional context (e.g., "Great work on bounty #42"). Max 256 chars.
+     *
+     * @dev Endorsements are skill-specific — an agent can endorse another for multiple
+     *      different skills. The skillHash is keccak256(skill) and is used as the mapping key.
+     *      The gateway normalizes skills to lowercase before calling, so "Solidity" and
+     *      "solidity" map to the same hash.
+     *
+     *      If an endorsement already exists for this (endorser, endorsee, skill) triple,
+     *      it is updated with the new rating, context, and timestamp.
+     *
+     * Emits {EndorsementCreated}.
+     */
+    function endorse(
+        address endorsee,
+        string calldata skill,
+        uint8 rating,
+        string calldata context
+    ) external whenNotPaused {
+        address sender = _msgSender();
+        if (endorsee == sender) revert CannotEndorseSelf();
+        if (rating < 1 || rating > 5) revert InvalidRating();
+        if (bytes(skill).length < 2) revert SkillTooShort();
+        if (bytes(skill).length > 64) revert SkillTooLong();
+        if (bytes(context).length > 256) revert ContextTooLong();
+
+        _requireActiveAgent(sender);
+        _requireActiveAgent(endorsee);
+
+        bytes32 skillHash = keccak256(abi.encodePacked(skill));
+        bool isUpdate = _endorsements[sender][endorsee][skillHash].timestamp != 0;
+
+        _endorsements[sender][endorsee][skillHash] = Endorsement({
+            endorser: sender,
+            endorsee: endorsee,
+            skillHash: skillHash,
+            skill: skill,
+            rating: rating,
+            context: context,
+            timestamp: block.timestamp
+        });
+
+        if (!isUpdate) {
+            endorsementsReceivedCount[endorsee]++;
+            endorsementsGivenCount[sender]++;
+        }
+
+        emit EndorsementCreated(sender, endorsee, skillHash, skill, rating, context, block.timestamp);
+    }
+
+    /**
+     * @notice Revoke an endorsement you previously gave.
+     * @param endorsee Address of the agent whose endorsement to revoke.
+     * @param skill The skill string of the endorsement to revoke.
+     *
+     * Emits {EndorsementRevoked}.
+     */
+    function revokeEndorsement(
+        address endorsee,
+        string calldata skill
+    ) external whenNotPaused {
+        address sender = _msgSender();
+        bytes32 skillHash = keccak256(abi.encodePacked(skill));
+
+        if (_endorsements[sender][endorsee][skillHash].timestamp == 0) revert NotEndorsed();
+
+        string memory storedSkill = _endorsements[sender][endorsee][skillHash].skill;
+
+        delete _endorsements[sender][endorsee][skillHash];
+        endorsementsReceivedCount[endorsee]--;
+        endorsementsGivenCount[sender]--;
+
+        emit EndorsementRevoked(sender, endorsee, skillHash, storedSkill);
+    }
+
+    // ============================================================
     //                      VIEW FUNCTIONS
     // ============================================================
 
@@ -421,6 +558,38 @@ contract SocialGraph is
      */
     function hasAttested(address attester, address subject) external view returns (bool) {
         return _attestations[attester][subject].timestamp != 0;
+    }
+
+    /**
+     * @notice Get the endorsement data from one agent to another for a specific skill.
+     * @param endorser The agent who gave the endorsement.
+     * @param endorsee The agent who received the endorsement.
+     * @param skill The skill string to look up.
+     * @return Endorsement struct (timestamp will be 0 if no endorsement exists).
+     */
+    function getEndorsement(
+        address endorser,
+        address endorsee,
+        string calldata skill
+    ) external view returns (Endorsement memory) {
+        bytes32 skillHash = keccak256(abi.encodePacked(skill));
+        return _endorsements[endorser][endorsee][skillHash];
+    }
+
+    /**
+     * @notice Check if one agent has endorsed another for a specific skill.
+     * @param endorser The agent who may have endorsed.
+     * @param endorsee The agent who may have been endorsed.
+     * @param skill The skill string to check.
+     * @return True if an endorsement exists.
+     */
+    function hasEndorsed(
+        address endorser,
+        address endorsee,
+        string calldata skill
+    ) external view returns (bool) {
+        bytes32 skillHash = keccak256(abi.encodePacked(skill));
+        return _endorsements[endorser][endorsee][skillHash].timestamp != 0;
     }
 
     // ============================================================

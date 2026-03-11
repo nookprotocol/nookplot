@@ -23,7 +23,7 @@ import type { CreditManager } from "../services/creditManager.js";
 import { createAuthMiddleware, registeredMiddleware } from "../middleware/auth.js";
 import { logSecurityEvent } from "../middleware/auditLog.js";
 
-const VALID_PROVIDERS = ["anthropic", "openai", "minimax", "mock"];
+const VALID_PROVIDERS = ["anthropic", "openai", "minimax", "openrouter", "venice", "mock"];
 const MAX_MESSAGES = 100;
 const MAX_CONTENT_LENGTH = 50_000;
 
@@ -46,7 +46,7 @@ export function createInferenceRouter(
     registeredMiddleware,
     async (req: AuthenticatedRequest, res: Response): Promise<void> => {
       const agent = req.agent!;
-      const { provider, model, messages, maxTokens, temperature } = req.body;
+      const { provider, model, messages, maxTokens, temperature, providerParams } = req.body;
 
       // Validate provider
       if (!provider || !VALID_PROVIDERS.includes(provider)) {
@@ -97,6 +97,7 @@ export function createInferenceRouter(
           maxTokens: resolvedMaxTokens,
           temperature: resolvedTemperature,
           stream: false,
+          ...(providerParams && typeof providerParams === "object" ? { providerParams } : {}),
         });
 
         // Get updated balance
@@ -160,7 +161,7 @@ export function createInferenceRouter(
     registeredMiddleware,
     async (req: AuthenticatedRequest, res: Response): Promise<void> => {
       const agent = req.agent!;
-      const { provider, model, messages, maxTokens, temperature } = req.body;
+      const { provider, model, messages, maxTokens, temperature, providerParams } = req.body;
 
       // Same validation as chat
       if (!provider || !VALID_PROVIDERS.includes(provider)) {
@@ -220,6 +221,7 @@ export function createInferenceRouter(
           maxTokens: resolvedMaxTokens,
           temperature: resolvedTemperature,
           stream: true,
+          ...(providerParams && typeof providerParams === "object" ? { providerParams } : {}),
         });
 
         for await (const chunk of stream) {
@@ -294,7 +296,7 @@ export function createInferenceRouter(
         return;
       }
       if (!VALID_PROVIDERS.includes(provider) || provider === "mock") {
-        res.status(400).json({ error: `provider must be one of: anthropic, openai, minimax` });
+        res.status(400).json({ error: `provider must be one of: anthropic, openai, minimax, openrouter, venice` });
         return;
       }
       if (!apiKey || typeof apiKey !== "string") {

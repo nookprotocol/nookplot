@@ -3,11 +3,11 @@ import { gatewayFetch } from "@/lib/gateway";
 
 interface CreditBalance {
   balance: number;
-  balanceDisplay: number;
+  balanceStored: number;
   lifetimeEarned: number;
-  lifetimeEarnedDisplay: number;
+  lifetimeEarnedStored: number;
   lifetimeSpent: number;
-  lifetimeSpentDisplay: number;
+  lifetimeSpentStored: number;
   autoConvertPct: number;
   status: string;
 }
@@ -48,34 +48,36 @@ export interface CreditPack {
   id: number;
   name: string;
   usdcPrice: string;
-  creditAmount: number;
-  centricredits: number;
+  credits: number;
+  stored: number;
+  nookDiscount?: number;
 }
 
 interface PacksResponse {
   packs: CreditPack[];
   contractAddress: string | null;
+  nookTokenAddress?: string;
 }
 
-/** Convert centricredits to display (100 → 1.00) */
-export function toDisplayCredits(centricredits: number): number {
-  return Math.round(centricredits) / 100;
+/** Convert stored credits to display (100 → 1.00) */
+export function toDisplayCredits(stored: number): number {
+  return Math.round(stored) / 100;
 }
 
 /** Balance response from the public /v1/credits/balance/:address endpoint */
 export interface WalletCreditBalance {
   address: string;
   balance: number;
-  balanceDisplay: number;
+  balanceStored: number;
   lifetimeEarned: number;
-  lifetimeEarnedDisplay: number;
+  lifetimeEarnedStored: number;
   lifetimeSpent: number;
-  lifetimeSpentDisplay: number;
+  lifetimeSpentStored: number;
   status: string;
   budgetLowThreshold: number;
-  budgetLowThresholdDisplay: number;
+  budgetLowThresholdStored: number;
   budgetCriticalThreshold: number;
-  budgetCriticalThresholdDisplay: number;
+  budgetCriticalThresholdStored: number;
   budgetStatus: "normal" | "low" | "critical";
 }
 
@@ -84,22 +86,22 @@ function zeroBalance(addr: string): WalletCreditBalance {
   return {
     address: addr.toLowerCase(),
     balance: 0,
-    balanceDisplay: 0,
+    balanceStored: 0,
     lifetimeEarned: 0,
-    lifetimeEarnedDisplay: 0,
+    lifetimeEarnedStored: 0,
     lifetimeSpent: 0,
-    lifetimeSpentDisplay: 0,
+    lifetimeSpentStored: 0,
     status: "no_account",
-    budgetLowThreshold: 200,
-    budgetLowThresholdDisplay: 2.0,
-    budgetCriticalThreshold: 50,
-    budgetCriticalThresholdDisplay: 0.5,
+    budgetLowThreshold: 2.0,
+    budgetLowThresholdStored: 200,
+    budgetCriticalThreshold: 0.5,
+    budgetCriticalThresholdStored: 50,
     budgetStatus: "normal",
   };
 }
 
-/** Fetch credit balance by wallet address (no API key needed). Polls every 30s. */
-export function useCreditBalanceByAddress(address: string | undefined) {
+/** Fetch credit balance by wallet address (no API key needed). Polls at given interval. */
+export function useCreditBalanceByAddress(address: string | undefined, intervalMs = 600_000) {
   const [balance, setBalance] = useState<WalletCreditBalance | null>(null);
   // Start loading immediately when address exists to avoid flashing "0.00"
   const [isLoading, setIsLoading] = useState(!!address);
@@ -128,9 +130,9 @@ export function useCreditBalanceByAddress(address: string | undefined) {
 
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 30_000);
+    const interval = setInterval(refresh, intervalMs);
     return () => clearInterval(interval);
-  }, [refresh]);
+  }, [refresh, intervalMs]);
 
   return { balance, isLoading, refresh };
 }
@@ -154,7 +156,7 @@ export function useCreditBalance(apiKey: string | null) {
 
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 30_000);
+    const interval = setInterval(refresh, 120_000);
     return () => clearInterval(interval);
   }, [refresh]);
 
@@ -173,7 +175,9 @@ export function useCreditTransactions(apiKey: string | null, page = 0) {
       apiKey,
     )
       .then((data) => setTransactions(data.transactions))
-      .catch(() => {})
+      .catch((err) => {
+        console.warn("[useCredits] fetch transactions failed:", err);
+      })
       .finally(() => setIsLoading(false));
   }, [apiKey, page]);
 
@@ -189,7 +193,9 @@ export function useUsageSummary(apiKey: string | null, days = 30) {
     setIsLoading(true);
     gatewayFetch<UsageSummary>(`/v1/credits/usage?days=${days}`, apiKey)
       .then((data) => setSummary(data))
-      .catch(() => {})
+      .catch((err) => {
+        console.warn("[useCredits] fetch usage summary failed:", err);
+      })
       .finally(() => setIsLoading(false));
   }, [apiKey, days]);
 
@@ -208,7 +214,9 @@ export function useInferenceHistory(apiKey: string | null, page = 0) {
       apiKey,
     )
       .then((data) => setHistory(data.history))
-      .catch(() => {})
+      .catch((err) => {
+        console.warn("[useCredits] fetch inference history failed:", err);
+      })
       .finally(() => setIsLoading(false));
   }, [apiKey, page]);
 
@@ -221,19 +229,21 @@ export function useInferenceHistory(apiKey: string | null, page = 0) {
  * them here for instant display and use the gateway fetch only to verify.
  */
 const STATIC_PACKS: CreditPack[] = [
-  { id: 0, name: "Micro", usdcPrice: "1.00", creditAmount: 25.0, centricredits: 2500 },
-  { id: 1, name: "Standard", usdcPrice: "5.00", creditAmount: 140.0, centricredits: 14_000 },
-  { id: 2, name: "Bulk", usdcPrice: "20.00", creditAmount: 650.0, centricredits: 65_000 },
+  { id: 0, name: "Micro", usdcPrice: "2.00", credits: 25.0, stored: 2500, nookDiscount: 20 },
+  { id: 1, name: "Standard", usdcPrice: "10.00", credits: 140.0, stored: 14_000, nookDiscount: 25 },
+  { id: 2, name: "Bulk", usdcPrice: "35.00", credits: 650.0, stored: 65_000, nookDiscount: 30 },
 ];
 
 /** Module-level cache so packs survive component unmount/remount */
 let _cachedPacks: CreditPack[] = STATIC_PACKS;
 let _cachedContractAddress: string | null = null;
+let _cachedNookTokenAddress: string | null = null;
 let _packsFetched = false;
 
 export function useCreditPacks() {
   const [packs, setPacks] = useState<CreditPack[]>(_cachedPacks);
   const [contractAddress, setContractAddress] = useState<string | null>(_cachedContractAddress);
+  const [nookTokenAddress, setNookTokenAddress] = useState<string | null>(_cachedNookTokenAddress);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -247,9 +257,11 @@ export function useCreditPacks() {
         const fetchedPacks = data.packs ?? STATIC_PACKS;
         _cachedPacks = fetchedPacks;
         _cachedContractAddress = data.contractAddress ?? null;
+        _cachedNookTokenAddress = data.nookTokenAddress ?? null;
         _packsFetched = true;
         setPacks(fetchedPacks);
         setContractAddress(data.contractAddress ?? null);
+        setNookTokenAddress(data.nookTokenAddress ?? null);
       })
       .catch(() => {
         // On failure, keep static packs — they're always valid
@@ -258,5 +270,5 @@ export function useCreditPacks() {
       .finally(() => setIsLoading(false));
   }, []);
 
-  return { packs, contractAddress, isLoading };
+  return { packs, contractAddress, nookTokenAddress, isLoading };
 }

@@ -1,4 +1,4 @@
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useGatewayQuery } from "./useGatewayQuery";
 import type { SubgraphServiceListing } from "./useServiceListings";
 
 export interface SubgraphAgreement {
@@ -9,6 +9,7 @@ export interface SubgraphAgreement {
   termsCid: string;
   deliveryCid: string | null;
   escrowAmount: string;
+  escrowToken?: string;
   escrowType: number;
   status: number;
   deadline: string;
@@ -20,51 +21,81 @@ interface ExtendedListing extends SubgraphServiceListing {
   agreements: SubgraphAgreement[];
 }
 
-interface Result {
-  serviceListing: ExtendedListing | null;
+/** Shape returned by GET /v1/index/services/:id */
+interface IndexServiceDetailResponse {
+  service: {
+    id: string;
+    metadata_cid: string;
+    category: string;
+    pricing_model: number;
+    price_amount: string;
+    active: boolean;
+    total_completed: string;
+    total_disputed: string;
+    provider_id: string;
+    created_at: string;
+    updated_at: string;
+    tokenAddress?: string | null;
+    agreements?: Array<{
+      id: string;
+      listing_id: string;
+      buyer_id: string;
+      provider_id: string;
+      terms_cid: string;
+      delivery_cid: string | null;
+      escrow_amount: string;
+      escrowToken?: string | null;
+      escrow_type: number;
+      status: number;
+      deadline: string;
+      created_at: string;
+      settled_at: string | null;
+    }>;
+  } | null;
 }
 
-const QUERY = `
-  query ServiceListingDetail($id: ID!) {
-    serviceListing(id: $id) {
-      id
-      metadataCid
-      category
-      pricingModel
-      priceAmount
-      active
-      totalCompleted
-      totalDisputed
-      provider { id }
-      createdAt
-      updatedAt
-      agreements(orderBy: createdAt, orderDirection: desc, first: 50) {
-        id
-        buyer { id }
-        provider { id }
-        termsCid
-        deliveryCid
-        escrowAmount
-        escrowType
-        status
-        deadline
-        createdAt
-        settledAt
-      }
-    }
-  }
-`;
+function toExtendedListing(raw: IndexServiceDetailResponse["service"]): ExtendedListing | null {
+  if (!raw) return null;
+  return {
+    id: raw.id,
+    metadataCid: raw.metadata_cid,
+    category: raw.category,
+    pricingModel: raw.pricing_model,
+    priceAmount: raw.price_amount,
+    active: raw.active,
+    totalCompleted: raw.total_completed,
+    totalDisputed: raw.total_disputed,
+    provider: { id: raw.provider_id },
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
+    tokenAddress: raw.tokenAddress ?? null,
+    agreements: (raw.agreements ?? []).map((a) => ({
+      id: a.id,
+      listing: { id: a.listing_id },
+      buyer: { id: a.buyer_id },
+      provider: { id: a.provider_id },
+      termsCid: a.terms_cid,
+      deliveryCid: a.delivery_cid,
+      escrowAmount: a.escrow_amount,
+      escrowToken: a.escrowToken ?? undefined,
+      escrowType: a.escrow_type,
+      status: a.status,
+      deadline: a.deadline,
+      createdAt: a.created_at,
+      settledAt: a.settled_at,
+    })),
+  };
+}
 
 export function useServiceDetail(listingId: string | undefined) {
-  const result = useSubgraphQuery<Result>(
+  const result = useGatewayQuery<IndexServiceDetailResponse>(
     ["serviceListing", listingId ?? ""],
-    QUERY,
-    { id: listingId },
-    { enabled: !!listingId, staleTime: 10_000 },
+    `/v1/index/services/${listingId}`,
+    { enabled: !!listingId, staleTime: 300_000 },
   );
 
   return {
-    listing: result.data?.serviceListing ?? null,
+    listing: toExtendedListing(result.data?.service ?? null),
     isLoading: result.isLoading,
   };
 }

@@ -12,6 +12,8 @@
 import { ethers } from "ethers";
 import type pg from "pg";
 import type { CreditManager } from "./creditManager.js";
+import type { SubscriptionService } from "./subscriptionService.js";
+import { PACK_ID_TO_PLAN } from "./subscriptionService.js";
 import { logSecurityEvent } from "../middleware/auditLog.js";
 
 // Minimal ABI for the CreditsPurchased event
@@ -26,6 +28,7 @@ export interface PurchaseWatcherConfig {
   contractAddress: string;
   rpcUrl: string;
   pollIntervalMs: number;
+  startBlock?: number; // If set, backfill from this block on first run
 }
 
 export class PurchaseWatcher {
@@ -34,13 +37,15 @@ export class PurchaseWatcher {
   private readonly config: PurchaseWatcherConfig;
   private readonly provider: ethers.JsonRpcProvider;
   private readonly contract: ethers.Contract;
+  private readonly subscriptionService: SubscriptionService | null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private processing = false;
 
-  constructor(pool: pg.Pool, creditManager: CreditManager, config: PurchaseWatcherConfig) {
+  constructor(pool: pg.Pool, creditManager: CreditManager, config: PurchaseWatcherConfig, subscriptionService?: SubscriptionService) {
     this.pool = pool;
     this.creditManager = creditManager;
     this.config = config;
+    this.subscriptionService = subscriptionService ?? null;
     this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
     this.contract = new ethers.Contract(config.contractAddress, CREDIT_PURCHASE_ABI, this.provider);
   }
@@ -76,6 +81,8 @@ export class PurchaseWatcher {
 
   /**
    * Poll for new CreditsPurchased events since last processed block.
+   * Processes in small batches to stay within RPC free-tier eth_getLogs limits.
+   * Loops through multiple batches per poll to catch up when behind.
    */
   private async poll(): Promise<void> {
     if (this.processing) return; // Skip if previous poll is still running
@@ -83,30 +90,48 @@ export class PurchaseWatcher {
 
     try {
       const currentBlock = await this.provider.getBlockNumber();
-      const lastBlock = await this.getLastProcessedBlock();
+      let lastBlock = await this.getLastProcessedBlock();
 
-      // First run: start from current block (don't process historical)
+      // First run
       if (lastBlock === 0) {
-        await this.setLastProcessedBlock(currentBlock);
-        return;
+        if (this.config.startBlock) {
+          // Backfill mode: start from configured block
+          lastBlock = this.config.startBlock;
+          logSecurityEvent("info", "purchase-watcher-backfill-start", {
+            startBlock: this.config.startBlock,
+          });
+        } else {
+          // Default: start from current block (skip historical)
+          await this.setLastProcessedBlock(currentBlock);
+          return;
+        }
       }
 
       // Nothing new
       if (currentBlock <= lastBlock) return;
 
-      // Base Sepolia limits eth_getLogs to 10k blocks
-      const fromBlock = lastBlock + 1;
-      const toBlock = Math.min(currentBlock, fromBlock + 9999);
+      // Process in small batches (free-tier RPC limits eth_getLogs to ~10 blocks).
+      // Loop up to MAX_BATCHES_PER_POLL to catch up when behind.
+      const BLOCK_BATCH = 10;
+      const MAX_BATCHES_PER_POLL = 50;
+      let batchCount = 0;
 
-      const filter = this.contract.filters.CreditsPurchased();
-      const events = await this.contract.queryFilter(filter, fromBlock, toBlock);
+      while (lastBlock < currentBlock && batchCount < MAX_BATCHES_PER_POLL) {
+        const fromBlock = lastBlock + 1;
+        const toBlock = Math.min(currentBlock, fromBlock + BLOCK_BATCH - 1);
 
-      for (const event of events) {
-        const log = event as ethers.EventLog;
-        await this.processEvent(log);
+        const filter = this.contract.filters.CreditsPurchased();
+        const events = await this.contract.queryFilter(filter, fromBlock, toBlock);
+
+        for (const event of events) {
+          const log = event as ethers.EventLog;
+          await this.processEvent(log);
+        }
+
+        await this.setLastProcessedBlock(toBlock);
+        lastBlock = toBlock;
+        batchCount++;
       }
-
-      await this.setLastProcessedBlock(toBlock);
     } finally {
       this.processing = false;
     }
@@ -155,6 +180,26 @@ export class PurchaseWatcher {
           `UPDATE credit_accounts SET has_purchased = TRUE WHERE agent_id = $1`,
           [agentId],
         );
+
+        // Check if this pack maps to a subscription plan
+        const subscriptionPlan = PACK_ID_TO_PLAN[packId];
+        if (subscriptionPlan && this.subscriptionService) {
+          try {
+            await this.subscriptionService.activate(agentId, subscriptionPlan, txHash);
+            logSecurityEvent("info", "subscription-activated-via-purchase", {
+              agentId,
+              plan: subscriptionPlan,
+              packId,
+              txHash,
+            });
+          } catch (subErr) {
+            logSecurityEvent("error", "subscription-activation-failed", {
+              agentId,
+              plan: subscriptionPlan,
+              error: subErr instanceof Error ? subErr.message : String(subErr),
+            });
+          }
+        }
 
         logSecurityEvent("info", "purchase-credited", {
           agentId,

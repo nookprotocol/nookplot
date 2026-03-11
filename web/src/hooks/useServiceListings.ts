@@ -1,4 +1,4 @@
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useGatewayQuery } from "./useGatewayQuery";
 
 export interface SubgraphServiceListing {
   id: string;
@@ -12,46 +12,42 @@ export interface SubgraphServiceListing {
   provider: { id: string };
   createdAt: string;
   updatedAt: string;
+  tokenAddress?: string | null;
 }
 
-interface Result {
-  serviceListings: SubgraphServiceListing[];
+/** Shape returned by GET /v1/index/services */
+interface IndexServicesResponse {
+  services: Array<{
+    id: string;
+    metadata_cid: string;
+    category: string;
+    pricing_model: number;
+    price_amount: string;
+    active: boolean;
+    total_completed: string;
+    total_disputed: string;
+    provider_id: string;
+    created_at: string;
+    updated_at: string;
+    tokenAddress?: string | null;
+  }>;
 }
 
-function buildQuery(categoryFilter: string, activeOnly: boolean) {
-  const conditions: string[] = [];
-  if (categoryFilter) {
-    conditions.push(`category: "${categoryFilter.replace(/"/g, "")}"`);
-  }
-  if (activeOnly) {
-    conditions.push("active: true");
-  }
-  const where =
-    conditions.length > 0 ? `where: { ${conditions.join(", ")} }` : "";
-
-  return `
-    query ServiceListingList($first: Int!, $skip: Int!) {
-      serviceListings(
-        ${where}
-        orderBy: createdAt
-        orderDirection: desc
-        first: $first
-        skip: $skip
-      ) {
-        id
-        metadataCid
-        category
-        pricingModel
-        priceAmount
-        active
-        totalCompleted
-        totalDisputed
-        provider { id }
-        createdAt
-        updatedAt
-      }
-    }
-  `;
+function toSubgraphServiceListing(raw: IndexServicesResponse["services"][number]): SubgraphServiceListing {
+  return {
+    id: raw.id,
+    metadataCid: raw.metadata_cid,
+    category: raw.category,
+    pricingModel: raw.pricing_model,
+    priceAmount: raw.price_amount,
+    active: raw.active,
+    totalCompleted: raw.total_completed,
+    totalDisputed: raw.total_disputed,
+    provider: { id: raw.provider_id },
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
+    tokenAddress: raw.tokenAddress ?? null,
+  };
 }
 
 export function useServiceListings(
@@ -60,17 +56,21 @@ export function useServiceListings(
   page = 0,
   pageSize = 20,
 ) {
-  const query = buildQuery(categoryFilter, activeOnly);
+  const params = new URLSearchParams();
+  if (categoryFilter) params.set("category", categoryFilter);
+  if (activeOnly) params.set("active", "true");
+  params.set("first", String(pageSize));
+  params.set("skip", String(page * pageSize));
 
-  const result = useSubgraphQuery<Result>(
+  const result = useGatewayQuery<IndexServicesResponse>(
     ["serviceListings", categoryFilter, String(activeOnly), String(page)],
-    query,
-    { first: pageSize, skip: page * pageSize },
-    { staleTime: 15_000 },
+    `/v1/index/services?${params}`,
+    { staleTime: 300_000 },
   );
 
   return {
-    listings: result.data?.serviceListings ?? [],
+    listings: result.data?.services?.map(toSubgraphServiceListing) ?? [],
     isLoading: result.isLoading,
+    isError: result.isError,
   };
 }

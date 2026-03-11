@@ -4,6 +4,7 @@
  * GET  /v1/contributions/:address    — Get agent contribution data
  * GET  /v1/contributions/leaderboard — Paginated leaderboard
  * POST /v1/contributions/sync        — Trigger manual sync cycle (admin only)
+ * GET  /v1/agents/:address/skills    — Get enriched skill data for an agent
  *
  * @module routes/contributions
  */
@@ -15,13 +16,12 @@ import type { AuthenticatedRequest } from "../types.js";
 import { createAuthMiddleware } from "../middleware/auth.js";
 import { validateAddressParam } from "../middleware/validation.js";
 import { logSecurityEvent } from "../middleware/auditLog.js";
-import { ContributionScorer } from "../services/contributionScorer.js";
 import { ExpertiseProfiler } from "../services/expertiseProfiler.js";
 import { OnChainSync, type SyncCycleResult } from "../services/onChainSync.js";
 
 export function createContributionsRouter(
   pool: pg.Pool,
-  scorer: ContributionScorer,
+  scorer: unknown,
   profiler: ExpertiseProfiler,
   onChainSync: OnChainSync | null,
   hmacSecret: string,
@@ -49,11 +49,20 @@ export function createContributionsRouter(
         const result = await pool.query(
           `SELECT cs.address, cs.overall_score, cs.commits_score, cs.exec_score,
                   cs.projects_score, cs.lines_score, cs.collab_score,
+                  cs.content_score, cs.social_score, cs.marketplace_score,
+                  cs.citation_score, cs.launches_score, cs.velocity_multiplier,
                   cs.breakdown_cid, cs.computed_at,
-                  a.display_name
+                  a.display_name,
+                  COALESCE(bc.bundle_count, 0) AS bundle_count
            FROM contribution_scores cs
            JOIN agents a ON a.id = cs.agent_id
+           LEFT JOIN (
+             SELECT creator_id, COUNT(*)::int AS bundle_count
+             FROM idx_knowledge_bundles WHERE is_active = TRUE
+             GROUP BY creator_id
+           ) bc ON bc.creator_id = cs.address
            WHERE a.status IN ('active', 'exported') AND a.did_cid IS NOT NULL
+             AND cs.overall_score > 0
            ORDER BY cs.overall_score DESC
            LIMIT $1 OFFSET $2`,
           [limit, offset],
@@ -62,7 +71,8 @@ export function createContributionsRouter(
         const countResult = await pool.query(
           `SELECT COUNT(*) as total FROM contribution_scores cs
            JOIN agents a ON a.id = cs.agent_id
-           WHERE a.status IN ('active', 'exported') AND a.did_cid IS NOT NULL`,
+           WHERE a.status IN ('active', 'exported') AND a.did_cid IS NOT NULL
+             AND cs.overall_score > 0`,
         );
 
         res.json({
@@ -77,7 +87,14 @@ export function createContributionsRouter(
               projects: row.projects_score,
               lines: row.lines_score,
               collab: row.collab_score,
+              content: row.content_score,
+              social: row.social_score,
+              marketplace: row.marketplace_score,
+              citations: row.citation_score,
+              launches: row.launches_score ?? 0,
+              bundles: row.bundle_count ?? 0,
             },
+            velocityMultiplier: parseFloat(row.velocity_multiplier ?? "1"),
             breakdownCid: row.breakdown_cid,
             computedAt: row.computed_at?.toISOString(),
           })),
@@ -106,6 +123,8 @@ export function createContributionsRouter(
         const scoreResult = await pool.query(
           `SELECT cs.overall_score, cs.commits_score, cs.exec_score,
                   cs.projects_score, cs.lines_score, cs.collab_score,
+                  cs.content_score, cs.social_score, cs.marketplace_score,
+                  cs.citation_score, cs.launches_score, cs.velocity_multiplier,
                   cs.breakdown_cid, cs.computed_at, cs.synced_at
            FROM contribution_scores cs
            JOIN agents a ON a.id = cs.agent_id
@@ -114,7 +133,8 @@ export function createContributionsRouter(
         );
 
         const tagsResult = await pool.query(
-          `SELECT et.tag, et.confidence, et.source
+          `SELECT et.tag, et.confidence, et.source,
+                  et.category, et.verification_level, et.evidence_count
            FROM expertise_tags et
            JOIN agents a ON a.id = et.agent_id
            WHERE a.address = $1
@@ -126,7 +146,11 @@ export function createContributionsRouter(
           res.json({
             address,
             score: 0,
-            breakdown: { commits: 0, exec: 0, projects: 0, lines: 0, collab: 0 },
+            breakdown: {
+              commits: 0, exec: 0, projects: 0, lines: 0, collab: 0,
+              content: 0, social: 0, marketplace: 0, citations: 0,
+            },
+            velocityMultiplier: 1,
             expertiseTags: [],
           });
           return;
@@ -143,7 +167,13 @@ export function createContributionsRouter(
             projects: row?.projects_score ?? 0,
             lines: row?.lines_score ?? 0,
             collab: row?.collab_score ?? 0,
+            content: row?.content_score ?? 0,
+            social: row?.social_score ?? 0,
+            marketplace: row?.marketplace_score ?? 0,
+            citations: row?.citation_score ?? 0,
+            launches: row?.launches_score ?? 0,
           },
+          velocityMultiplier: parseFloat(row?.velocity_multiplier ?? "1"),
           breakdownCid: row?.breakdown_cid ?? null,
           computedAt: row?.computed_at?.toISOString() ?? null,
           syncedAt: row?.synced_at?.toISOString() ?? null,
@@ -151,6 +181,9 @@ export function createContributionsRouter(
             tag: t.tag,
             confidence: t.confidence,
             source: t.source,
+            category: t.category ?? null,
+            verificationLevel: t.verification_level ?? "inferred",
+            evidenceCount: t.evidence_count ?? 0,
           })),
         });
       } catch (error) {
@@ -205,6 +238,47 @@ export function createContributionsRouter(
         const message = error instanceof Error ? error.message : String(error);
         logSecurityEvent("error", "contributions-sync-failed", { error: message });
         res.status(500).json({ error: "Sync cycle failed." });
+      }
+    },
+  );
+
+  // -------------------------------------------------------
+  //  GET /v1/agents/:address/skills — Enriched skill data
+  // -------------------------------------------------------
+  router.get(
+    "/agents/:address/skills",
+    validateAddressParam,
+    async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+      try {
+        const address = req.params.address as string;
+
+        // Resolve agent_id from address
+        const agentRes = await pool.query<{ id: string }>(
+          `SELECT id FROM agents WHERE address = $1 AND status IN ('active', 'exported')`,
+          [address],
+        );
+        if (agentRes.rows.length === 0) {
+          res.status(404).json({ error: "Agent not found." });
+          return;
+        }
+
+        const skills = await profiler.getAgentSkills(agentRes.rows[0].id);
+
+        res.json({
+          address,
+          skills: skills.map((s) => ({
+            tag: s.tag,
+            confidence: s.confidence,
+            category: s.category,
+            verificationLevel: s.verificationLevel,
+            evidenceCount: s.evidenceCount,
+            evidence: s.evidenceSummary,
+          })),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logSecurityEvent("error", "agent-skills-failed", { error: message });
+        res.status(500).json({ error: "Failed to fetch agent skills." });
       }
     },
   );

@@ -3,6 +3,7 @@ import { formatUnits } from "viem";
 import { truncateAddress } from "@/lib/format";
 import { useAgentBounties } from "@/hooks/useAgentBounties";
 import { BountyStatusBadge } from "@/components/bounty/BountyStatusBadge";
+import { resolveTokenMeta } from "@/config/constants";
 
 interface Props {
   address: string;
@@ -44,11 +45,14 @@ export function BountyHistorySection({ address }: Props) {
                   </span>
                   <BountyStatusBadge status={b.status} />
                 </div>
-                {b.rewardAmount !== "0" && (
-                  <span className="text-sm font-medium text-amber-400 shrink-0">
-                    {parseFloat(formatUnits(BigInt(b.rewardAmount), 6)).toFixed(2)} USDC
-                  </span>
-                )}
+                {b.rewardAmount !== "0" && (() => {
+                  const meta = resolveTokenMeta(b.tokenAddress);
+                  return (
+                    <span className="text-sm font-medium text-amber-400 shrink-0">
+                      {parseFloat(formatUnits(BigInt(b.rewardAmount), meta.decimals)).toFixed(2)} {meta.symbol}
+                    </span>
+                  );
+                })()}
               </Link>
             ))}
           </div>
@@ -76,11 +80,14 @@ export function BountyHistorySection({ address }: Props) {
                   </span>
                   <BountyStatusBadge status={b.status} />
                 </div>
-                {b.rewardAmount !== "0" && (
-                  <span className="text-sm font-medium text-amber-400 shrink-0">
-                    {parseFloat(formatUnits(BigInt(b.rewardAmount), 6)).toFixed(2)} USDC
-                  </span>
-                )}
+                {b.rewardAmount !== "0" && (() => {
+                  const meta = resolveTokenMeta(b.tokenAddress);
+                  return (
+                    <span className="text-sm font-medium text-amber-400 shrink-0">
+                      {parseFloat(formatUnits(BigInt(b.rewardAmount), meta.decimals)).toFixed(2)} {meta.symbol}
+                    </span>
+                  );
+                })()}
               </Link>
             ))}
           </div>

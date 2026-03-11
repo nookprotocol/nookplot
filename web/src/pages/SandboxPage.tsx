@@ -10,10 +10,11 @@
  * and runtime auto-detection.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, lazy, Suspense } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
+import { useShallow } from "zustand/react/shallow";
 import { useSandboxStore } from "@/store/sandboxStore";
-import { setApiKey, getApiKey } from "@/hooks/useSandboxFiles";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 import { useCollabSync } from "@/hooks/useCollabSync";
 import { useWebContainer } from "@/hooks/useWebContainer";
 import { useWebContainerSync } from "@/hooks/useWebContainerSync";
@@ -26,16 +27,23 @@ import { SandboxProvider, useSandboxContext } from "@/components/sandbox/Sandbox
 import { SandboxLayout } from "@/components/sandbox/SandboxLayout";
 import { SandboxToolbar } from "@/components/sandbox/SandboxToolbar";
 import { FileExplorer } from "@/components/sandbox/FileExplorer";
-import { EditorArea } from "@/components/sandbox/EditorArea";
 import { BottomPanel } from "@/components/sandbox/BottomPanel";
+import { DeployPreviewDrawer } from "@/components/sandbox/DeployPreviewDrawer";
+
+// Lazy-load EditorArea — this pulls in Monaco (~3MB) which we don't need
+// to block the initial sandbox render (file tree, toolbar, terminal load first).
+const EditorArea = lazy(() =>
+  import("@/components/sandbox/EditorArea").then((m) => ({ default: m.EditorArea })),
+);
 
 /**
  * Inner component that lives inside SandboxProvider so it can
  * access shellWriter from context (set by TerminalPanel).
  */
 function SandboxInner({ projectId }: { projectId: string }) {
-  const { branch, fileTree } = useSandboxStore();
+  const { branch, fileTree } = useSandboxStore(useShallow((s) => ({ branch: s.branch, fileTree: s.fileTree })));
   const { webContainer: wc, shellWriter, collabConnected } = useSandboxContext();
+  const [deployDrawerOpen, setDeployDrawerOpen] = useState(false);
 
   // Mount project files into WebContainer
   useWebContainerSync(wc, projectId, branch);
@@ -54,16 +62,32 @@ function SandboxInner({ projectId }: { projectId: string }) {
   useKeyboardShortcuts();
 
   return (
-    <div className="flex h-screen flex-col bg-gray-950">
+    <div className="flex h-screen flex-col bg-background">
       <SandboxToolbar
         projectId={projectId}
         collabConnected={collabConnected}
         onRun={run}
+        onDeploy={() => setDeployDrawerOpen(true)}
       />
       <SandboxLayout
         sidebar={<FileExplorer projectId={projectId} branch={branch} />}
-        editor={<EditorArea projectId={projectId} />}
+        editor={
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center bg-background">
+                <p className="text-sm text-muted animate-pulse">Loading editor…</p>
+              </div>
+            }
+          >
+            <EditorArea projectId={projectId} />
+          </Suspense>
+        }
         bottom={<BottomPanel projectId={projectId} />}
+      />
+      <DeployPreviewDrawer
+        projectId={projectId}
+        open={deployDrawerOpen}
+        onClose={() => setDeployDrawerOpen(false)}
       />
     </div>
   );
@@ -72,18 +96,22 @@ function SandboxInner({ projectId }: { projectId: string }) {
 export function SandboxPage() {
   const { projectId = "" } = useParams<{ projectId: string }>();
   const [searchParams] = useSearchParams();
-  const { activeFilePath, reset } = useSandboxStore();
+  const { activeFilePath, reset } = useSandboxStore(useShallow((s) => ({ activeFilePath: s.activeFilePath, reset: s.reset })));
+  const [sessionReady, setSessionReady] = useState(isAuthenticated());
 
   // Accept API key from URL param (for agents opening sandbox links)
   // Immediately strip the key from the URL to prevent logging/history exposure
   useEffect(() => {
     const keyParam = searchParams.get("key");
     if (keyParam && keyParam.startsWith("nk_")) {
-      setApiKey(keyParam);
       // Remove key from URL without reload (prevents key in browser history/logs)
       const url = new URL(window.location.href);
       url.searchParams.delete("key");
       window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+
+      startSession(keyParam)
+        .then(() => setSessionReady(true))
+        .catch((err) => console.error("[sandbox] URL key session failed:", err));
     }
   }, [searchParams]);
 
@@ -108,25 +136,34 @@ export function SandboxPage() {
   // Key entry form state
   const [keyInput, setKeyInput] = useState("");
   const [keyError, setKeyError] = useState("");
-  const handleKeySubmit = useCallback((e: React.FormEvent) => {
+  const [keyLoading, setKeyLoading] = useState(false);
+  const handleKeySubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = keyInput.trim();
     if (!trimmed.startsWith("nk_")) {
       setKeyError("Key must start with nk_");
       return;
     }
-    setApiKey(trimmed);
-    setKeyInput("");
+    setKeyLoading(true);
     setKeyError("");
+    try {
+      await startSession(trimmed);
+      setKeyInput("");
+      setSessionReady(true);
+    } catch (err) {
+      setKeyError(err instanceof Error ? err.message : "Failed to connect");
+    } finally {
+      setKeyLoading(false);
+    }
   }, [keyInput]);
 
-  // No API key — show key entry form
-  if (!getApiKey()) {
+  // No session — show key entry form
+  if (!sessionReady) {
     return (
-      <div className="flex h-screen items-center justify-center bg-gray-950 p-4">
-        <div className="max-w-md rounded-lg border border-white/10 bg-gray-900 p-6 text-center">
-          <h2 className="mb-2 text-lg font-semibold text-gray-100">Gateway Key Required</h2>
-          <p className="mb-4 text-sm text-gray-400">
+      <div className="flex h-screen items-center justify-center bg-background p-4">
+        <div className="max-w-md rounded-lg border border-border bg-card p-6 text-center">
+          <h2 className="mb-2 text-lg font-semibold text-foreground">Gateway Key Required</h2>
+          <p className="mb-4 text-sm text-fg-dim">
             The sandbox needs a nookplot gateway API key to access project files.
           </p>
           <form onSubmit={handleKeySubmit} className="space-y-3">
@@ -135,15 +172,17 @@ export function SandboxPage() {
               value={keyInput}
               onChange={(e) => setKeyInput(e.target.value)}
               placeholder="nk_your_api_key"
-              className="w-full rounded bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 border border-white/10 focus:outline-none focus:border-indigo-500"
+              className="w-full rounded bg-background px-3 py-2 text-sm text-foreground placeholder-muted border border-border focus:outline-none focus:border-accent"
               autoFocus
+              disabled={keyLoading}
             />
             {keyError && <p className="text-xs text-red-400">{keyError}</p>}
             <button
               type="submit"
-              className="w-full rounded bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 transition-colors"
+              disabled={keyLoading}
+              className="w-full rounded bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-hover transition-colors disabled:opacity-50"
             >
-              Connect
+              {keyLoading ? "Connecting..." : "Connect"}
             </button>
           </form>
         </div>

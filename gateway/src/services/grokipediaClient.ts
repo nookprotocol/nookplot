@@ -17,6 +17,8 @@
  * @module services/grokipediaClient
  */
 
+import { fetchWithTimeout } from "../fetchWithTimeout.js";
+
 // ============================================================
 //  Types
 // ============================================================
@@ -99,8 +101,9 @@ export class GrokipediaClient {
     const query = encodeURIComponent(title);
     const searchUrl = `${this.baseUrl}/search?q=${query}`;
 
-    const response = await fetch(searchUrl, {
+    const response = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "NookplotGateway/0.1.0" },
+      timeoutMs: 10_000,
     });
 
     if (!response.ok) {

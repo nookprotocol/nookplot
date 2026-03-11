@@ -9,6 +9,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { FolderGit2, Loader2, AlertCircle, FilePlus } from "lucide-react";
 import { useFileTree } from "@/hooks/useSandboxFiles";
+import { useShallow } from "zustand/react/shallow";
 import { useSandboxStore } from "@/store/sandboxStore";
 import { FileTreeNode } from "./FileTreeNode";
 import { FileContextMenu } from "./FileContextMenu";
@@ -27,7 +28,7 @@ interface ContextMenuState {
 
 export function FileExplorer({ projectId, branch }: FileExplorerProps) {
   const { data: rootFiles, isLoading, error } = useFileTree(projectId, "", branch);
-  const { fileTree, setFileTree, createNewFile, removeFromTree, renameInTree } = useSandboxStore();
+  const { fileTree, setFileTree, createNewFile, removeFromTree, renameInTree } = useSandboxStore(useShallow((s) => ({ fileTree: s.fileTree, setFileTree: s.setFileTree, createNewFile: s.createNewFile, removeFromTree: s.removeFromTree, renameInTree: s.renameInTree })));
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
 
@@ -83,15 +84,15 @@ export function FileExplorer({ projectId, branch }: FileExplorerProps) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
-        <FolderGit2 className="h-4 w-4 text-indigo-400" />
-        <span className="text-xs font-medium text-gray-300 uppercase tracking-wider">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <FolderGit2 className="h-4 w-4 text-accent" />
+        <span className="text-xs font-medium text-fg-dim uppercase tracking-wider">
           Files
         </span>
         <div className="flex-1" />
         <button
           onClick={handleQuickNewFile}
-          className="rounded p-0.5 text-gray-500 hover:bg-white/5 hover:text-gray-300"
+          className="rounded p-0.5 text-muted hover:bg-accent-soft hover:text-fg-dim"
           title="New File"
         >
           <FilePlus className="h-3.5 w-3.5" />
@@ -102,7 +103,7 @@ export function FileExplorer({ projectId, branch }: FileExplorerProps) {
       <div className="flex-1 overflow-y-auto py-1">
         {isLoading && (
           <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-5 w-5 animate-spin text-gray-500" />
+            <Loader2 className="h-5 w-5 animate-spin text-muted" />
           </div>
         )}
 
@@ -116,7 +117,7 @@ export function FileExplorer({ projectId, branch }: FileExplorerProps) {
         )}
 
         {!isLoading && !error && fileTree.length === 0 && (
-          <p className="px-3 py-8 text-center text-xs text-gray-500">
+          <p className="px-3 py-8 text-center text-xs text-muted">
             No files found
           </p>
         )}

@@ -1,5 +1,7 @@
 import { useEffect } from "react";
-import { useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
+import { useWaitForTransactionReceipt, useReadContract } from "wagmi";
+import { base } from "wagmi/chains";
+import { useBaseWriteContract as useWriteContract } from "@/hooks/useBaseWriteContract";
 import { useQueryClient } from "@tanstack/react-query";
 import { socialGraphAbi } from "@/lib/abis";
 import { CONTRACT_ADDRESSES } from "@/config/constants";
@@ -13,6 +15,7 @@ export function useFollowStatus(
     abi: socialGraphAbi,
     functionName: "isFollowing",
     args: follower && target ? [follower, target] : undefined,
+    chainId: base.id,
     query: { enabled: !!follower && !!target },
   });
 }

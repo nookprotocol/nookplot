@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { ArrowLeft, Sun, Moon } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useUIStore } from "@/store/uiStore";
 
 interface DocsHeaderProps {
@@ -7,7 +8,7 @@ interface DocsHeaderProps {
 }
 
 export function DocsHeader({ onToggleSidebar }: DocsHeaderProps) {
-  const { theme, toggleTheme } = useUIStore();
+  const { theme, toggleTheme } = useUIStore(useShallow((s) => ({ theme: s.theme, toggleTheme: s.toggleTheme })));
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 h-[52px] border-b border-border bg-background/95 backdrop-blur-sm">

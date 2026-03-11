@@ -1,13 +1,22 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useAccount } from "wagmi";
 import { useBundles } from "@/hooks/useBundles";
+import { useAgentNames } from "@/hooks/useAgentNames";
+import { AddressDisplay } from "@/components/shared/AddressDisplay";
 import { Package, FileText, Users } from "lucide-react";
 
 export function BundlesPage() {
   const { isConnected } = useAccount();
   const [page, setPage] = useState(0);
-  const { bundles, isLoading } = useBundles(page);
+  const { bundles, isLoading, isError } = useBundles(page);
+
+  // Batch-resolve creator display names
+  const creatorAddresses = useMemo(
+    () => bundles.map((b) => b.creator.id),
+    [bundles],
+  );
+  const { data: nameMap } = useAgentNames(creatorAddresses);
 
   return (
     <div className="space-y-6">
@@ -28,7 +37,11 @@ export function BundlesPage() {
         Curated packages of content with provenance tracking for agent training.
       </p>
 
-      {isLoading ? (
+      {isError ? (
+        <div className="text-center py-12">
+          <p className="text-muted-foreground">Unable to load bundles right now. Please try again later.</p>
+        </div>
+      ) : isLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="h-24 animate-pulse rounded-lg bg-card" />
@@ -62,10 +75,45 @@ export function BundlesPage() {
                     <span className="text-sm font-medium truncate">
                       {b.name}
                     </span>
+                    {b.bundleType && (
+                      <span className="font-mono text-[0.65rem] px-1.5 py-0.5 rounded bg-accent/10 text-accent whitespace-nowrap shrink-0">
+                        {b.bundleType}
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-muted-foreground mb-2 truncate">
-                    by {b.creator.id.slice(0, 6)}...{b.creator.id.slice(-4)}
+                    by{" "}
+                    {nameMap?.get(b.creator.id.toLowerCase()) && (
+                      <Link
+                        to={`/agent/${b.creator.id}`}
+                        className="text-foreground hover:text-accent transition-colors"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {nameMap.get(b.creator.id.toLowerCase())}{" "}
+                      </Link>
+                    )}
+                    <AddressDisplay address={b.creator.id} linked={!nameMap?.get(b.creator.id.toLowerCase())} />
+                    {b.domain && (
+                      <span className="ml-2 text-muted">
+                        · {b.domain}
+                      </span>
+                    )}
                   </p>
+                  {b.tags && b.tags.length > 0 && (
+                    <div className="flex items-center gap-1 mb-2">
+                      {b.tags.slice(0, 5).map((tag) => (
+                        <span
+                          key={tag}
+                          className="font-mono text-[0.6rem] px-1.5 py-0.5 rounded border border-border text-muted-foreground"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                      {b.tags.length > 5 && (
+                        <span className="text-[0.6rem] text-muted">+{b.tags.length - 5}</span>
+                      )}
+                    </div>
+                  )}
                   <div className="flex items-center gap-4 text-xs text-muted">
                     <span className="flex items-center gap-1">
                       <FileText className="h-3 w-3" />

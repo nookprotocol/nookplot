@@ -9,9 +9,12 @@
  * @module hooks/useProjects
  */
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useWalletClient } from "wagmi";
-import { gatewayFetch, getApiKey } from "@/hooks/useSandboxFiles";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { getWalletClient } from "@wagmi/core";
+import { gatewayFetch } from "@/hooks/useSandboxFiles";
+import { isAuthenticated } from "@/lib/authSession";
+import { GATEWAY_URL } from "@/config/constants";
+import { config } from "@/config/wagmi";
 
 export interface Project {
   projectId: string;
@@ -27,6 +30,8 @@ export interface Project {
   createdAt: string;
   creatorAddress?: string;
   creatorName?: string;
+  guildId?: string | null;
+  guildName?: string | null;
 }
 
 interface CreateProjectInput {
@@ -38,6 +43,25 @@ interface CreateProjectInput {
   languages?: string[];
   tags?: string[];
   license?: string;
+  discoveryId: string;
+}
+
+export interface SimilarProject {
+  projectId: string;
+  name: string;
+  description: string | null;
+  languages: string[];
+  tags: string[];
+  relevance: number;
+  creatorAddress: string;
+  creatorName: string | null;
+  createdAt: string;
+}
+
+export interface DiscoverResult {
+  discoveryId: string;
+  similarProjects: SimilarProject[];
+  total: number;
 }
 
 interface PrepareProjectResponse {
@@ -73,6 +97,11 @@ export interface ProjectCollaborator {
 
 export interface ProjectDetail extends Project {
   collaborators: ProjectCollaborator[];
+  source?: string;
+  githubStars?: number;
+  githubForks?: number;
+  forkedFrom?: string | null;
+  forkedFromName?: string | null;
 }
 
 /** Fetch detailed information about a specific project (includes collaborators). Public endpoint. */
@@ -84,7 +113,8 @@ export function useProjectDetail(projectId: string | undefined) {
       return res.json() as Promise<ProjectDetail>;
     },
     enabled: !!projectId,
-    staleTime: 30_000,
+    staleTime: 120_000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -97,23 +127,25 @@ export function useProjects() {
       const data = await res.json();
       return data.projects ?? [];
     },
-    enabled: !!getApiKey(),
-    staleTime: 30_000,
+    enabled: isAuthenticated(),
+    staleTime: 120_000,
+    placeholderData: keepPreviousData,
   });
 }
 
 /** Fetch all active projects across the network (paginated). Public endpoint. */
-export function useNetworkProjects(page = 0) {
+export function useNetworkProjects(page = 0, sort = "newest") {
   const limit = 20;
   return useQuery<NetworkProjectsResult>({
-    queryKey: ["network-projects", page],
+    queryKey: ["network-projects", page, sort],
     queryFn: async () => {
       const res = await gatewayFetch(
-        `/v1/projects/network?limit=${limit}&offset=${page * limit}`,
+        `/v1/projects/network?limit=${limit}&offset=${page * limit}&sort=${encodeURIComponent(sort)}`,
       );
       return res.json() as Promise<NetworkProjectsResult>;
     },
-    staleTime: 30_000,
+    staleTime: 120_000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -127,21 +159,24 @@ export function useAllNetworkProjects(enabled: boolean) {
       return data.projects ?? [];
     },
     enabled,
-    staleTime: 60_000, // 1 min — heavier query, cache longer
+    staleTime: 300_000, // 1 min — heavier query, cache longer
+    placeholderData: keepPreviousData,
   });
 }
 
-/** Fetch another agent's projects by their address. */
+/** Fetch another agent's projects by their address (public, no auth). */
 export function useAgentProjects(address: string | undefined) {
   return useQuery<Project[]>({
     queryKey: ["agent-projects", address],
     queryFn: async () => {
-      const res = await gatewayFetch(`/v1/agents/${address}/projects`);
+      const res = await fetch(`${GATEWAY_URL}/v1/agents/${address}/projects`);
+      if (!res.ok) throw new Error(`Failed to fetch agent projects (HTTP ${res.status})`);
       const data = await res.json();
       return data.projects ?? [];
     },
-    enabled: !!getApiKey() && !!address,
-    staleTime: 30_000,
+    enabled: !!address,
+    staleTime: 120_000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -152,10 +187,10 @@ export function useAgentProjects(address: string | undefined) {
  */
 export function useCreateProject() {
   const queryClient = useQueryClient();
-  const { data: walletClient } = useWalletClient();
 
   return useMutation({
     mutationFn: async (input: CreateProjectInput) => {
+      const walletClient = await getWalletClient(config);
       if (!walletClient?.account) {
         throw new Error("Wallet not connected");
       }
@@ -164,6 +199,7 @@ export function useCreateProject() {
       const prepRes = await gatewayFetch("/v1/prepare/project", {
         method: "POST",
         body: JSON.stringify({
+          discoveryId: input.discoveryId,
           projectId: input.id,
           name: input.name,
           description: input.description,
@@ -209,7 +245,7 @@ export function useCreateProject() {
         domain: {
           name: domain.name,
           version: domain.version,
-          chainId: BigInt(domain.chainId),
+          chainId: domain.chainId,
           verifyingContract: domain.verifyingContract as `0x${string}`,
         },
         types: {

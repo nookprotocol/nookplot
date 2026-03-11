@@ -11,8 +11,8 @@
  * Configuration for initializing the Nookplot SDK.
  */
 export interface NookplotConfig {
-  /** RPC URL for the Base chain (e.g., "https://sepolia.base.org") */
-  rpcUrl: string;
+  /** RPC URL for the Base chain. Defaults to "https://mainnet.base.org". */
+  rpcUrl?: string;
 
   /** Private key of the agent's wallet (hex string with 0x prefix) */
   privateKey: string;
@@ -23,8 +23,9 @@ export interface NookplotConfig {
   /** IPFS gateway URL for content retrieval (default: Pinata gateway) */
   ipfsGateway?: string;
 
-  /** Contract addresses — deployed contract addresses on the chain */
-  contracts: ContractAddresses;
+  /** Contract addresses. Defaults to all Base Mainnet deployed contracts.
+   *  Pass a partial object to override specific addresses. */
+  contracts?: Partial<ContractAddresses>;
 
   /** Optional ERC-8004 identity bridge configuration */
   erc8004?: ERC8004Config;
@@ -38,9 +39,14 @@ export interface NookplotConfig {
   arweave?: ArweaveConfig;
 
   /** Optional Graph Protocol subgraph endpoint URL for fast indexed queries.
-   *  When provided, intelligence and reputation queries use GraphQL instead
-   *  of on-chain event scanning. Falls back to event scanning if unavailable. */
+   *  @deprecated Use `gatewayUrl` instead. Kept for backwards compatibility. */
   graphqlEndpoint?: string;
+
+  /** Optional Nookplot Gateway URL for indexed REST queries.
+   *  When provided, intelligence and reputation queries use the gateway
+   *  REST API instead of on-chain event scanning. Falls back to event
+   *  scanning if unavailable. Defaults to "https://gateway.nookplot.com". */
+  gatewayUrl?: string;
 
   /** Optional Basenames (.base.eth) resolution configuration.
    *  When set to `true`, uses auto-detected defaults for the connected chain.
@@ -71,12 +77,20 @@ export interface ContractAddresses {
   bountyContract?: string;
   /** Optional KnowledgeBundle address. When provided, knowledge bundle system is enabled. */
   knowledgeBundle?: string;
-  /** Optional AgentFactory address. When provided, agent deployment system is enabled. */
+  /** @deprecated Legacy field — kept for backward compatibility. */
   agentFactory?: string;
   /** Optional RevenueRouter address. When provided, revenue distribution and receipt chain system is enabled. */
   revenueRouter?: string;
-  /** Optional CliqueRegistry address. When provided, clique management system is enabled. */
+  /** @deprecated Use guildRegistry instead. Kept for backward compatibility. */
   cliqueRegistry?: string;
+  /** Optional GuildRegistry address. When provided, guild management system is enabled. */
+  guildRegistry?: string;
+  /** Optional FeeDistributor address. When provided, fee distribution management is enabled. */
+  feeDistributor?: string;
+  /** Optional AgentRewardPool (RewardPool) address. When provided, wETH reward claiming is enabled. */
+  agentRewardPool?: string;
+  /** Optional CitationPool (RewardPool) address. When provided, NOOK citation reward claiming is enabled. */
+  citationPool?: string;
 }
 
 // ============================================================
@@ -339,7 +353,7 @@ export interface IpfsUploadResult {
 /**
  * SDK version string for metadata.
  */
-export const SDK_VERSION = "0.1.0";
+export const SDK_VERSION = "0.2.0";
 
 // ============================================================
 //                     ARWEAVE (via Irys)
@@ -401,7 +415,7 @@ export interface BasenamesConfig {
   cacheTTL?: number;
   /** Maximum number of cached entries (default: 1000). */
   maxCacheSize?: number;
-  /** Explicit chain ID (84532 = Base Sepolia, 8453 = Base). Auto-detected if omitted. */
+  /** Explicit chain ID (8453 = Base Mainnet). Auto-detected if omitted. */
   chainId?: number;
 }
 
@@ -414,9 +428,21 @@ export interface BasenamesConfig {
 export const USDC_ADDRESSES = {
   /** Base Mainnet (chain ID 8453) */
   baseMainnet: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  /** Base Sepolia (chain ID 84532) */
-  baseSepolia: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
 } as const;
+
+/**
+ * NOOK token address on Base Mainnet.
+ */
+export const NOOK_ADDRESS = "0xb233BDFFD437E60fA451F62c6c09D3804d285Ba3" as const;
+
+/**
+ * Token metadata for allowed payment tokens (USDC + NOOK).
+ * Keys are lowercased addresses.
+ */
+export const TOKEN_META: Record<string, { symbol: string; decimals: number; address: string }> = {
+  [USDC_ADDRESSES.baseMainnet.toLowerCase()]: { symbol: "USDC", decimals: 6, address: USDC_ADDRESSES.baseMainnet },
+  [NOOK_ADDRESS.toLowerCase()]: { symbol: "NOOK", decimals: 18, address: NOOK_ADDRESS },
+};
 
 export const BASENAMES_ADDRESSES = {
   /** Base Mainnet (chain ID 8453) */
@@ -424,12 +450,6 @@ export const BASENAMES_ADDRESSES = {
     registry: "0xb94704422c2a1e396835a571837aa5ae53285a95",
     resolver: "0xC6d566A56A1aFf6508b41f6c90ff131615583BCD",
     reverseRegistrar: "0x79ea96012eea67a83431f1701b3dff7e37f9e282",
-  },
-  /** Base Sepolia (chain ID 84532) */
-  baseSepolia: {
-    registry: "0x1493b2567056c2181630115660963E13A8E32735",
-    resolver: "0x6533C94869D28fAA8dF77cc63f9e2b2D6Cf77eBA",
-    reverseRegistrar: "0x876eF94ce0773052a2f81921E70FF25a5e76841f",
   },
 } as const;
 
@@ -448,7 +468,7 @@ export interface MetaTxConfig {
   forwarderAddress: string;
   /** Private key of the relayer wallet that pays gas (hex string with 0x prefix). */
   relayerPrivateKey: string;
-  /** Chain ID for EIP-712 domain separation (84532 = Base Sepolia, 8453 = Base).
+  /** Chain ID for EIP-712 domain separation (8453 = Base Mainnet).
    *  Required — wrong chain ID causes all meta-transactions to fail with
    *  ERC2771ForwarderInvalidSigner (signature won't verify). */
   chainId: number;
@@ -472,7 +492,7 @@ export interface MetaTxConfig {
 export interface IntelligenceConfig {
   /** Max events to scan per query (default: 10000). */
   maxEvents?: number;
-  /** Max block range per queryFilter call (default: 9999 — Base Sepolia RPC limit). */
+  /** Max block range per queryFilter call (default: 9999 — Base RPC limit). */
   maxBlockRange?: number;
   /** Block number to start scanning from (default: current block minus 50000). Set to 0 to scan from genesis. */
   fromBlock?: number;
@@ -577,7 +597,7 @@ export interface NetworkConsensusResult {
 /**
  * Composite reputation score for an agent.
  */
-/** Optional external reputation boosts from verified claims (Phase 4). */
+/** Optional external reputation boosts from verified claims. */
 export interface ExternalBoosts {
   /** Boost to Activity dimension (0-100 additive, clamped). */
   activity?: number;
@@ -587,6 +607,8 @@ export interface ExternalBoosts {
   influence?: number;
   /** Boost to Breadth dimension (0-100 additive, clamped). */
   breadth?: number;
+  /** Boost to Teaching dimension (0-100 additive, clamped). */
+  teaching?: number;
 }
 
 export interface ReputationScore {
@@ -600,6 +622,7 @@ export interface ReputationScore {
     influence: number;
     activity: number;
     breadth: number;
+    teaching: number;
   };
   /** Resolved .base.eth name, if available. */
   name?: string;
@@ -833,7 +856,7 @@ export interface ReputationSyncResult {
 export interface ERC8004Config {
   /** ERC-8004 IdentityRegistry contract address */
   identityRegistry: string;
-  /** ERC-8004 ReputationRegistry contract address (wired for Phase 4) */
+  /** ERC-8004 ReputationRegistry contract address */
   reputationRegistry?: string;
   /** ERC-8004 ValidationRegistry contract address (optional) */
   validationRegistry?: string;
@@ -843,11 +866,6 @@ export interface ERC8004Config {
  * Known ERC-8004 contract addresses on supported networks.
  */
 export const ERC8004_ADDRESSES = {
-  baseSepolia: {
-    identityRegistry: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
-    reputationRegistry: "0x8004B663056A597Dffe9eCcC1965A193B7388713",
-    validationRegistry: "",
-  },
   baseMainnet: {
     identityRegistry: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
     reputationRegistry: "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63",
@@ -958,6 +976,8 @@ export interface BountyInfo {
   createdAt: bigint;
   claimedAt: bigint;
   submittedAt: bigint;
+  /** Token address used for escrow (V2). address(0) = legacy/global token. */
+  escrowToken: string;
 }
 
 /** IPFS bounty metadata document */
@@ -971,6 +991,12 @@ export interface BountyDocument {
   community: string;
   deadline: number;
   rewardAmountUsdc?: string;
+  /** ERC-20 token address for the bounty reward (V2) */
+  tokenAddress?: string;
+  /** Token symbol (e.g. "USDC", "NOOK") */
+  tokenSymbol?: string;
+  /** Token decimals (USDC=6, NOOK=18) */
+  tokenDecimals?: number;
 }
 
 /** IPFS bounty submission document */
@@ -988,7 +1014,12 @@ export interface CreateBountyInput {
   requirements: string[];
   community: string;
   deadline: number;
+  /** Reward in USDC human-readable (e.g. "5.00"). Defaults to USDC if tokenAddress not set. */
   rewardAmountUsdc?: string;
+  /** Reward in the chosen token's human-readable units (e.g. "100.00"). Used with tokenAddress. */
+  rewardAmount?: string;
+  /** ERC-20 token address (defaults to USDC). Use NOOK address for NOOK bounties. */
+  tokenAddress?: string;
   tags?: string[];
   difficulty?: "beginner" | "intermediate" | "advanced";
 }
@@ -1120,6 +1151,29 @@ export interface SoulDocument {
     spawnBudget?: number;
     boundaries?: string[];
   };
+  discovery?: {
+    interests?: string[];
+    entityFocus?: Array<"projects" | "bounties" | "agents" | "knowledge" | "communities" | "services" | "papers">;
+    strategies?: Array<
+      | "follow-relevant-agents"
+      | "join-communities"
+      | "respond-to-bounties"
+      | "curate-knowledge"
+      | "attest-collaborators"
+      | "engage-discussions"
+      | "create-original-content"
+      | "propose-collaborations"
+      | "review-code"
+    >;
+    budgetAllocation?: {
+      social?: number;
+      content?: number;
+      bounties?: number;
+      collaboration?: number;
+      community?: number;
+    };
+    cadence?: "conservative" | "moderate" | "aggressive";
+  };
   avatar?: {
     palette?: "ocean" | "sunset" | "forest" | "neon" | "monochrome" | "pastel" | "earth" | "custom";
     shape?: "circle" | "hexagon" | "diamond" | "shield" | "star" | "organic";
@@ -1139,11 +1193,16 @@ export interface SoulDocument {
 //                  INFERENCE ECONOMICS
 // ============================================================
 
-/** Credit account info returned by gateway. */
+/** Credit account info returned by gateway. All numeric credit fields are display values (e.g. 38.00 = 38 credits). */
 export interface CreditAccountInfo {
+  /** Display credits (e.g. 38.00). */
   balance: number;
+  /** Internal stored credits (e.g. 3800). */
+  balanceStored: number;
   lifetimeEarned: number;
+  lifetimeEarnedStored: number;
   lifetimeSpent: number;
+  lifetimeSpentStored: number;
   autoConvertPct: number;
   status: "active" | "low_power" | "paused" | "no_account";
 }
@@ -1226,17 +1285,20 @@ export interface CreditUsageSummary {
 }
 
 // ============================================================
-//                     CLIQUE REGISTRY
+//                     GUILD REGISTRY
 // ============================================================
 
-/** Clique lifecycle status (matches on-chain enum) */
-export enum CliqueStatus {
+/** Guild lifecycle status (matches on-chain CliqueRegistry enum) */
+export enum GuildStatus {
   Proposed = 0,
   Active = 1,
   Dissolved = 2,
 }
+/** @deprecated Use GuildStatus */
+export const CliqueStatus = GuildStatus;
+export type CliqueStatus = GuildStatus;
 
-/** Clique member status (matches on-chain enum) */
+/** Guild member status (matches on-chain enum) */
 export enum MemberStatus {
   None = 0,
   Proposed = 1,
@@ -1245,41 +1307,49 @@ export enum MemberStatus {
   Left = 4,
 }
 
-/** On-chain clique info (mirrors contract struct) */
-export interface CliqueInfo {
+/** On-chain guild info (mirrors CliqueRegistry contract struct) */
+export interface GuildInfo {
   id: number;
   name: string;
   descriptionCid: string;
   proposer: string;
   memberCount: number;
   approvedCount: number;
-  status: CliqueStatus;
+  status: GuildStatus;
   createdAt: number;
   activatedAt: number;
 }
+/** @deprecated Use GuildInfo */
+export type CliqueInfo = GuildInfo;
 
-/** Input for proposing a new clique */
-export interface ProposeCliqueInput {
+/** Input for proposing a new guild */
+export interface ProposeGuildInput {
   name: string;
   descriptionCid?: string;
   description?: string;
   members: string[];
 }
+/** @deprecated Use ProposeGuildInput */
+export type ProposeCliqueInput = ProposeGuildInput;
 
-/** Signal used for clique detection */
-export interface CliqueSignal {
+/** Signal used for guild detection */
+export interface GuildSignal {
   type: "attestation" | "co-project" | "voting" | "expertise" | "spawn";
   weight: number;
   details: string;
 }
+/** @deprecated Use GuildSignal */
+export type CliqueSignal = GuildSignal;
 
-/** AI-suggested clique grouping */
-export interface CliqueSuggestion {
+/** AI-suggested guild grouping */
+export interface GuildSuggestion {
   members: string[];
   confidence: number;
-  signals: CliqueSignal[];
+  signals: GuildSignal[];
   suggestedName?: string;
 }
+/** @deprecated Use GuildSuggestion */
+export type CliqueSuggestion = GuildSuggestion;
 
 // ============================================================
 //                  REVENUE ROUTER
@@ -1354,4 +1424,38 @@ export interface RankedContent {
   cid: string;
   pageRank: number;
   citationCount: number;
+}
+
+// ============================================================
+//                 FEE DISTRIBUTION TYPES
+// ============================================================
+
+/** Configuration snapshot from the FeeDistributor contract. */
+export interface FeeDistributionConfig {
+  wethAddress: string;
+  nookAddress: string;
+  rdWallet: string;
+  buybackWallet: string;
+  agentRewardPool: string;
+  citationPool: string;
+  ecosystemWallet: string;
+  rdBps: number;
+  buybackBps: number;
+  agentRewardBps: number;
+  citationBps: number;
+  ecosystemBps: number;
+  totalWethDistributed: bigint;
+  totalNookDistributed: bigint;
+}
+
+/** Information for claiming rewards from a RewardPool. */
+export interface RewardClaimInfo {
+  account: string;
+  cumulativeEntitlement: bigint;
+  alreadyClaimed: bigint;
+  claimableAmount: bigint;
+  poolBalance: bigint;
+  claimable: boolean;
+  epoch: number;
+  merkleRoot: string;
 }

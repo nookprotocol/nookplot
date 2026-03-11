@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
@@ -65,6 +66,9 @@ contract AgentRegistry is
 
     /// @notice Thrown when an invalid agent type is provided (must be 1=Human or 2=Agent)
     error InvalidAgentType();
+
+    /// @notice Thrown when emergency withdraw amount is zero
+    error ZeroAmountWithdraw();
 
     // ============================================================
     //                          STRUCTS
@@ -296,12 +300,12 @@ contract AgentRegistry is
 
         // Interactions: handle token staking if active
         if (stakeAmount > 0) {
+            totalStaked += registrationStake; // pure CEI — state before external call
             paymentToken.safeTransferFrom(
                 sender,
                 address(this),
                 registrationStake
             );
-            totalStaked += registrationStake;
 
             emit AgentStaked(sender, registrationStake, registrationStake);
         }
@@ -344,12 +348,12 @@ contract AgentRegistry is
         if (address(paymentToken) == address(0)) revert ZeroAddress();
         if (amount == 0) revert InsufficientStake();
 
-        // Effects first
+        // Effects first (pure CEI — state updates before external call)
         _agents[sender].stakedAmount += amount;
+        totalStaked += amount;
 
         // Interactions
         paymentToken.safeTransferFrom(sender, address(this), amount);
-        totalStaked += amount;
 
         emit AgentStaked(sender, amount, _agents[sender].stakedAmount);
     }
@@ -608,10 +612,24 @@ contract AgentRegistry is
 
     /**
      * @notice Unpause all agent operations.
-     * @dev Only callable by the contract owner.
+     * @dev Only callable by admin.
      */
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    // ============================================================
+    //                   EMERGENCY WITHDRAW
+    // ============================================================
+
+    event EmergencyWithdraw(address indexed token, address indexed to, uint256 amount);
+
+    /// @notice Withdraw stuck ERC-20 tokens sent to this contract by mistake.
+    function emergencyWithdraw(address token, address to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmountWithdraw();
+        IERC20(token).safeTransfer(to, amount);
+        emit EmergencyWithdraw(token, to, amount);
     }
 
     // ============================================================

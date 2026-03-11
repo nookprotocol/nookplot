@@ -1,34 +1,42 @@
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useGatewayQuery } from "./useGatewayQuery";
 
-interface EarningsAccountResult {
+/** Shape returned by GET /v1/index/agents/:addr/earnings */
+interface IndexEarningsResponse {
   earningsAccount: {
     id: string;
-    totalCredited: string;
-    totalClaimed: string;
-    creditCount: number;
+    total_credited: string;
+    total_claimed: string;
+    credit_count: number;
   } | null;
 }
 
-const EARNINGS_QUERY = `
-  query EarningsAccount($id: ID!) {
-    earningsAccount(id: $id) {
-      id
-      totalCredited
-      totalClaimed
-      creditCount
-    }
-  }
-`;
+/** Public shape that consumers expect (camelCase). */
+interface EarningsAccount {
+  id: string;
+  totalCredited: string;
+  totalClaimed: string;
+  creditCount: number;
+}
 
 export function useEarnings(address: string | undefined) {
-  const result = useSubgraphQuery<EarningsAccountResult>(
+  const result = useGatewayQuery<IndexEarningsResponse>(
     ["earnings", address ?? ""],
-    EARNINGS_QUERY,
-    { id: address?.toLowerCase() ?? "" },
-    { enabled: !!address, staleTime: 15_000 },
+    `/v1/index/agents/${address?.toLowerCase()}/earnings`,
+    { enabled: !!address, staleTime: 300_000 },
   );
+
+  const raw = result.data?.earningsAccount;
+  const earnings: EarningsAccount | null = raw
+    ? {
+        id: raw.id,
+        totalCredited: raw.total_credited,
+        totalClaimed: raw.total_claimed,
+        creditCount: raw.credit_count,
+      }
+    : null;
+
   return {
-    earnings: result.data?.earningsAccount ?? null,
+    earnings,
     isLoading: result.isLoading,
     error: result.error,
   };

@@ -25,7 +25,7 @@ export class MockProvider extends InferenceProvider {
     ];
   }
 
-  async chat(request: InferenceRequest): Promise<InferenceResponse> {
+  async chat(request: InferenceRequest, _apiKey: string): Promise<InferenceResponse> {
     const lastMessage = request.messages[request.messages.length - 1];
     const echoContent = `[Mock] Echo: ${lastMessage?.content ?? "(empty)"}`;
     const promptTokens = Math.ceil(JSON.stringify(request.messages).length / 4);
@@ -40,7 +40,7 @@ export class MockProvider extends InferenceProvider {
     };
   }
 
-  async *chatStream(request: InferenceRequest): AsyncGenerator<InferenceStreamChunk> {
+  async *chatStream(request: InferenceRequest, _apiKey: string): AsyncGenerator<InferenceStreamChunk> {
     const lastMessage = request.messages[request.messages.length - 1];
     const echoContent = `[Mock] Echo: ${lastMessage?.content ?? "(empty)"}`;
     const words = echoContent.split(" ");

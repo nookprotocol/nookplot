@@ -53,7 +53,7 @@ export class ERC8004Manager {
   /**
    * Create a new ERC8004Manager.
    *
-   * @param provider - An ethers v6 JsonRpcProvider connected to Base / Base Sepolia.
+   * @param provider - An ethers v6 JsonRpcProvider connected to Base Mainnet.
    * @param signer - An ethers v6 Wallet used to sign transactions.
    * @param config - ERC-8004 configuration with contract addresses.
    * @param ipfsClient - IpfsClient for uploading metadata to IPFS.
@@ -233,7 +233,7 @@ export class ERC8004Manager {
 
       // Query Transfer events where from=ZeroAddress and to=address (mints).
       // Scan backwards from the current block in 10k-block chunks to respect
-      // Base Sepolia's eth_getLogs range limit. We stop as soon as we find
+      // Base's eth_getLogs range limit. We stop as soon as we find
       // the most recent mint event — no need to scan the full chain.
       const filter = this.identityRegistry.filters.Transfer(
         ethers.ZeroAddress,
@@ -307,7 +307,7 @@ export class ERC8004Manager {
   }
 
   // ================================================================
-  //                     REPUTATION SYNC (Phase 4)
+  //                     REPUTATION SYNC
   // ================================================================
 
   /**

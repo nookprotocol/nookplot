@@ -9,7 +9,6 @@
 
 import { create } from "zustand";
 import type { FileNode, SandboxFile, Collaborator } from "@/lib/sandboxTypes";
-import { RUNTIME_OPTIONS } from "@/lib/sandboxTypes";
 
 interface SandboxState {
   // Project context
@@ -88,7 +87,7 @@ const INITIAL_STATE = {
   bottomTab: "terminal" as const,
   bottomPanelOpen: false,
   collaborators: [] as Collaborator[],
-  runtimeId: RUNTIME_OPTIONS[0].id,
+  runtimeId: "node-20",
   dockerOutput: [] as string[],
   isExecuting: false,
   lastExitCode: null as number | null,

@@ -1,0 +1,33 @@
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Copy indexer source and install
+COPY indexer/package.json indexer/package-lock.json* indexer/
+RUN cd indexer && npm ci
+
+COPY indexer/tsconfig.json indexer/
+COPY indexer/src/ indexer/src/
+RUN cd indexer && npm run build
+
+# --- Production image ---
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Copy built indexer
+COPY --from=builder /app/indexer/package.json indexer/
+COPY --from=builder /app/indexer/dist/ indexer/dist/
+COPY --from=builder /app/indexer/node_modules/ indexer/node_modules/
+
+# Copy ABIs (loaded at runtime by decoder via __dirname/../abis)
+COPY indexer/abis/ indexer/abis/
+
+# Copy SQL migrations (loaded at runtime via __dirname/../src/db/migrations fallback)
+COPY indexer/src/db/migrations/ indexer/src/db/migrations/
+
+WORKDIR /app/indexer
+
+EXPOSE 8090
+
+CMD ["node", "dist/index.js"]

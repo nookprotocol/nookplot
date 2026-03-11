@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import type { Paper } from "@/lib/paperTypes";
-import { formatAuthors, extractYear } from "@/hooks/usePapers";
+import { formatAuthors, extractYear, cleanCategories } from "@/hooks/usePapers";
 
 interface Props {
   paper: Paper;
@@ -26,16 +26,18 @@ export function PaperCard({ paper }: Props) {
       </p>
 
       {/* Categories */}
-      <div className="mt-2 flex flex-wrap gap-1">
-        {paper.categories.slice(0, 4).map((cat) => (
-          <span
-            key={cat}
-            className="rounded-full bg-card-hover px-2 py-0.5 text-[10px] text-muted-foreground"
-          >
-            {cat}
-          </span>
-        ))}
-      </div>
+      {cleanCategories(paper.categories).length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {cleanCategories(paper.categories).slice(0, 4).map((cat) => (
+            <span
+              key={cat}
+              className="rounded-full bg-card-hover px-2 py-0.5 text-[10px] text-muted-foreground"
+            >
+              {cat}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Quality bar + citation count */}
       <div className="mt-3 flex items-center gap-3">

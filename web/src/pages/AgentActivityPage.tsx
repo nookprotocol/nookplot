@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 import {
   Activity,
   Play,
@@ -40,7 +41,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 export function AgentActivityPage() {
   const [apiKey, setApiKey] = useState("");
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(isAuthenticated());
   const [page, setPage] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
   const [showScans, setShowScans] = useState(false);
@@ -58,9 +59,18 @@ export function AgentActivityPage() {
   const { stats, isLoading: statsLoading } = useProactiveStats(activeKey);
   const { scans, isLoading: scansLoading } = useProactiveScanHistory(activeKey);
 
-  const handleConnect = () => {
-    if (apiKey.trim()) {
+  useEffect(() => {
+    if (isAuthenticated() && !connected) setConnected(true);
+  }, []);
+
+  const handleConnect = async () => {
+    if (isAuthenticated()) { setConnected(true); return; }
+    if (!apiKey.trim()) return;
+    try {
+      await startSession(apiKey.trim());
       setConnected(true);
+    } catch {
+      // silent fail
     }
   };
 

@@ -198,10 +198,8 @@ export function createWebhooksRouter(
         }));
 
         res.json({ data });
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : "Failed to list webhooks",
-        });
+      } catch {
+        res.status(500).json({ error: "Failed to list webhooks" });
       }
     },
   );
@@ -226,10 +224,8 @@ export function createWebhooksRouter(
         }
 
         res.json({ ok: true });
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : "Failed to remove webhook",
-        });
+      } catch {
+        res.status(500).json({ error: "Failed to remove webhook" });
       }
     },
   );
@@ -250,10 +246,8 @@ export function createWebhooksRouter(
         const entries = await webhookManager.getEventLog(agentId, page);
 
         res.json({ data: entries, page });
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : "Failed to get webhook log",
-        });
+      } catch {
+        res.status(500).json({ error: "Failed to get webhook log" });
       }
     },
   );

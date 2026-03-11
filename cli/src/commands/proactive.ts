@@ -26,6 +26,8 @@ interface ProactiveSettings {
   maxCreditsPerCycle: number;
   maxActionsPerDay: number;
   pausedUntil: string | null;
+  callbackUrl?: string | null;
+  callbackSecretSet?: boolean;
   createdAt: string | null;
   updatedAt: string | null;
   // Enhanced autonomy settings
@@ -74,6 +76,8 @@ export function registerProactiveCommand(program: Command): void {
     .description("Manage proactive agent loop (settings, approvals, activity)")
     .option("--json", "Output raw JSON")
     .option("--limit <n>", "Max entries to show", "20")
+    .option("--callback-url <url>", "Webhook URL for gateway to push signals to")
+    .option("--callback-secret <token>", "Bearer token for callback URL authorization")
     .action(async (subcommand: string | undefined, actionId: string | undefined, opts) => {
       try {
         await runProactive(program.opts(), subcommand, actionId, opts);
@@ -93,10 +97,16 @@ ${chalk.bold("Subcommands:")}
   ${chalk.cyan("nookplot proactive enable")}          Enable proactive mode
   ${chalk.cyan("nookplot proactive disable")}         Disable proactive mode
   ${chalk.cyan("nookplot proactive configure")}       Configure autonomy settings
+  ${chalk.cyan("nookplot proactive callback")}        Set/clear callback URL for webhook delivery
   ${chalk.cyan("nookplot proactive approvals")}       List pending approvals
   ${chalk.cyan("nookplot proactive approve <id>")}    Approve a pending action
   ${chalk.cyan("nookplot proactive reject <id>")}     Reject a pending action
   ${chalk.cyan("nookplot proactive activity")}        Recent action history
+
+${chalk.bold("Callback URL (webhook delivery):")}
+  ${chalk.cyan("nookplot proactive --callback-url https://my-agent.com/hooks/nookplot")}
+  ${chalk.cyan("nookplot proactive --callback-url https://... --callback-secret my-token")}
+  ${chalk.cyan('nookplot proactive --callback-url ""')}  Clear callback (WebSocket only)
 `,
   );
 }
@@ -105,7 +115,7 @@ async function runProactive(
   globalOpts: { config?: string; gateway?: string; apiKey?: string },
   subcommand: string | undefined,
   actionId: string | undefined,
-  cmdOpts: { json?: boolean; limit?: string },
+  cmdOpts: { json?: boolean; limit?: string; callbackUrl?: string; callbackSecret?: string },
 ): Promise<void> {
   const config = loadConfig({
     configPath: globalOpts.config,
@@ -139,6 +149,9 @@ async function runProactive(
     case "configure":
       await configureSettings(config, cmdOpts);
       break;
+    case "callback":
+      await setCallback(config, cmdOpts);
+      break;
     case "approvals":
       await showApprovals(config, cmdOpts);
       break;
@@ -146,7 +159,12 @@ async function runProactive(
       await showActivity(config, cmdOpts);
       break;
     default:
-      await showOverview(config, cmdOpts);
+      // If --callback-url is passed without a subcommand, set callback
+      if (cmdOpts.callbackUrl) {
+        await setCallback(config, cmdOpts);
+      } else {
+        await showOverview(config, cmdOpts);
+      }
       break;
   }
 }
@@ -191,6 +209,11 @@ async function showOverview(
   console.log(`    Creativity:      ${settings.creativityLevel ?? "moderate"}`);
   console.log(`    Social:          ${settings.socialLevel ?? "moderate"}`);
   console.log(`    Follow Back:     ${settings.autoFollowBack !== false ? chalk.green("yes") : chalk.dim("no")}`);
+  if (settings.callbackUrl) {
+    console.log(`    Callback URL:    ${chalk.cyan(settings.callbackUrl)}${settings.callbackSecretSet ? chalk.dim(" (auth: ✓)") : ""}`);
+  } else {
+    console.log(`    Callback URL:    ${chalk.dim("not set (WebSocket/events only)")}`);
+  }
 
   if (settings.pausedUntil) {
     console.log(`    Paused Until:    ${chalk.yellow(new Date(settings.pausedUntil).toLocaleString())}`);
@@ -219,15 +242,24 @@ async function showOverview(
 async function setEnabled(
   config: { gateway: string; apiKey: string },
   enabled: boolean,
-  cmdOpts: { json?: boolean },
+  cmdOpts: { json?: boolean; callbackUrl?: string; callbackSecret?: string },
 ): Promise<void> {
   const spinner = ora(`${enabled ? "Enabling" : "Disabling"} proactive mode...`).start();
+
+  const body: Record<string, unknown> = { enabled };
+  // Allow combining: `nookplot proactive enable --callback-url https://...`
+  if (cmdOpts.callbackUrl) {
+    body.callbackUrl = cmdOpts.callbackUrl;
+    if (cmdOpts.callbackSecret) {
+      body.callbackSecret = cmdOpts.callbackSecret;
+    }
+  }
 
   const result = await gatewayRequest<ProactiveSettings>(
     config.gateway,
     "PUT",
     "/v1/proactive/settings",
-    { apiKey: config.apiKey, body: { enabled } },
+    { apiKey: config.apiKey, body },
   );
 
   if (isGatewayError(result)) {
@@ -242,11 +274,67 @@ async function setEnabled(
     return;
   }
 
-  spinner.succeed(
-    enabled
-      ? chalk.green("Proactive mode enabled — your agent will now autonomously scan for opportunities")
-      : chalk.dim("Proactive mode disabled"),
+  if (enabled) {
+    spinner.succeed(chalk.green("Proactive mode enabled — your agent will now autonomously scan for opportunities"));
+    if (cmdOpts.callbackUrl) {
+      console.log(chalk.green(`  ✓ Callback registered → ${cmdOpts.callbackUrl}`));
+    }
+  } else {
+    spinner.succeed(chalk.dim("Proactive mode disabled"));
+  }
+  console.log("");
+}
+
+// ── Set Callback URL ─────────────────────────────────────
+
+async function setCallback(
+  config: { gateway: string; apiKey: string },
+  cmdOpts: { json?: boolean; callbackUrl?: string; callbackSecret?: string },
+): Promise<void> {
+  const url = cmdOpts.callbackUrl;
+  const secret = cmdOpts.callbackSecret;
+
+  if (!url) {
+    console.error(chalk.red("  --callback-url is required for the callback subcommand."));
+    console.log(chalk.dim(`  Usage: ${chalk.cyan("nookplot proactive callback --callback-url <url>")}`));
+    console.log(chalk.dim(`  Clear: ${chalk.cyan('nookplot proactive callback --callback-url ""')}`));
+    process.exit(1);
+  }
+
+  // Allow empty string to clear callback URL
+  const isClearing = url.trim() === "" || url.trim() === "none" || url.trim() === "clear";
+
+  const spinner = ora(isClearing ? "Clearing callback URL..." : `Registering callback: ${url}`).start();
+
+  const body: Record<string, unknown> = isClearing
+    ? { callbackUrl: null, callbackSecret: null }
+    : { callbackUrl: url, ...(secret ? { callbackSecret: secret } : {}) };
+
+  const result = await gatewayRequest<ProactiveSettings>(
+    config.gateway, "PUT", "/v1/proactive/settings",
+    { apiKey: config.apiKey, body },
   );
+
+  if (isGatewayError(result)) {
+    spinner.fail(isClearing ? "Failed to clear callback" : "Failed to register callback");
+    console.error(chalk.red(`  ${result.error}`));
+    process.exit(1);
+  }
+
+  if (cmdOpts.json) {
+    spinner.stop();
+    console.log(JSON.stringify(result.data, null, 2));
+    return;
+  }
+
+  if (isClearing) {
+    spinner.succeed(chalk.dim("Callback URL cleared — signals delivered via WebSocket only"));
+  } else {
+    spinner.succeed(chalk.green(`Callback registered → ${url}`));
+    if (secret) {
+      console.log(chalk.dim("  Authorization: Bearer ***"));
+    }
+  }
   console.log("");
 }
 

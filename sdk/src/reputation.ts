@@ -1,23 +1,8 @@
 /**
  * Reputation engine for the Nookplot SDK.
  *
- * Computes derived reputation metrics from on-chain data:
- * - **PageRank** over the attestation graph (trust-weighted influence)
- * - **Composite reputation score** from multiple on-chain signals
- *
- * Anti-Sybil design:
- * - **Trust** is weighted by attester PageRank (a vouch from a high-PR agent
- *   counts far more than one from a fresh account)
- * - **Quality** is weighted by voter PageRank (Sybil ring votes carry no weight)
- * - **Minimum floor** — agents below a configurable PageRank threshold have
- *   zero influence on other agents' scores
- *
- * Supports two data sources:
- * - **Subgraph** (preferred): Instant GraphQL queries via The Graph Protocol
- * - **Event scanning** (fallback): Direct on-chain event scanning via RPC
- *
- * All computation is off-chain. Reputation weights are equal for now —
- * the final weight tuning is a governance decision.
+ * Computes derived reputation metrics from on-chain data using
+ * multiple data sources (gateway, subgraph, event scanning).
  *
  * @module reputation
  */
@@ -26,6 +11,7 @@ import { ethers } from "ethers";
 
 import type { ContractManager } from "./contracts";
 import type { SubgraphClient } from "./graphql";
+import type { GatewayClient } from "./gatewayClient";
 import type { NamesManager } from "./names";
 import type {
   ExternalBoosts,
@@ -38,7 +24,7 @@ import type {
 /** Defaults. `fromBlock` of -1 means "auto" (current block - 50000). */
 const DEFAULTS = {
   maxEvents: 10_000,
-  maxBlockRange: 9_999,  // Base Sepolia public RPC limits eth_getLogs to 10,000 blocks
+  maxBlockRange: 9_999,  // Base public RPC limits eth_getLogs to 10,000 blocks
   fromBlock: -1,         // -1 = auto (current - 50_000)
   maxPageRankIterations: 20,
   pageRankDampingFactor: 0.85,
@@ -64,14 +50,16 @@ const PAGERANK_CACHE_TTL_MS = 5 * 60 * 1000;
  * from: tenure, content quality, attestation trust (PageRank), follower
  * influence, posting activity, and community breadth.
  *
- * When a subgraph client is provided, queries are served from the indexed
- * GraphQL API for dramatically faster responses.
+ * When a gateway client is provided, queries are served from the indexed
+ * REST API for dramatically faster responses. Falls back to subgraph
+ * (GraphQL) or direct event scanning if the gateway is unavailable.
  */
 export class ReputationEngine {
   private readonly contracts: ContractManager;
   private readonly provider: ethers.JsonRpcProvider;
   private readonly config: typeof DEFAULTS;
   private readonly subgraph: SubgraphClient | null;
+  private readonly gateway: GatewayClient | null;
   private readonly names: NamesManager | null;
   private readonly minPageRankForInfluence: number | null;
   private pageRankCache: PageRankCache | null = null;
@@ -82,10 +70,12 @@ export class ReputationEngine {
     config?: IntelligenceConfig,
     subgraph?: SubgraphClient,
     names?: NamesManager,
+    gateway?: GatewayClient,
   ) {
     this.contracts = contracts;
     this.provider = provider;
     this.subgraph = subgraph ?? null;
+    this.gateway = gateway ?? null;
     this.names = names ?? null;
     this.minPageRankForInfluence = config?.minPageRankForInfluence ?? null;
     this.config = {
@@ -102,6 +92,11 @@ export class ReputationEngine {
   /** Whether a subgraph client is configured. */
   get hasSubgraph(): boolean {
     return this.subgraph !== null;
+  }
+
+  /** Whether a gateway client is configured. */
+  get hasGateway(): boolean {
+    return this.gateway !== null;
   }
 
   // ================================================================
@@ -261,6 +256,14 @@ export class ReputationEngine {
    */
   async computePageRank(resolveNames: boolean = false): Promise<PageRankResult[]> {
     let results: PageRankResult[];
+    if (this.gateway) {
+      try {
+        results = await this._computePageRankViaGateway();
+        return resolveNames ? this.enrichWithNames(results) : results;
+      } catch {
+        // Fall back to subgraph or event scanning
+      }
+    }
     if (this.subgraph) {
       try {
         results = await this._computePageRankViaSubgraph();
@@ -290,6 +293,166 @@ export class ReputationEngine {
     }
     return results;
   }
+
+  // ================================================================
+  //                     Gateway REST Implementations
+  // ================================================================
+
+  private async _computePageRankViaGateway(): Promise<PageRankResult[]> {
+    // Fetch all active attestations from gateway in batches
+    const allAttestations: Array<{ attester: string; subject: string }> = [];
+    let skip = 0;
+    const batchSize = 1000;
+
+    while (true) {
+      const rows = await this.gateway!.getAttestations({ first: batchSize, skip });
+      if (rows.length === 0) break;
+      for (const a of rows) {
+        allAttestations.push({
+          attester: a.attester_id.toLowerCase(),
+          subject: a.subject_id.toLowerCase(),
+        });
+      }
+      if (rows.length < batchSize) break;
+      skip += batchSize;
+    }
+
+    // Build graph
+    const allNodes = new Set<string>();
+    const outEdges = new Map<string, string[]>();
+
+    for (const a of allAttestations) {
+      allNodes.add(a.attester);
+      allNodes.add(a.subject);
+      if (!outEdges.has(a.attester)) outEdges.set(a.attester, []);
+      outEdges.get(a.attester)!.push(a.subject);
+    }
+
+    return this.runPageRank(allNodes, outEdges);
+  }
+
+  private async _computeReputationViaGateway(
+    agent: string,
+  ): Promise<ReputationScore> {
+    const agentLower = agent.toLowerCase();
+
+    // Fetch PageRank map (cached, 5-min TTL)
+    const { map: pageRankMap, totalAgents } = await this.getPageRankMap();
+    const floor = this.getInfluenceFloor(totalAgents);
+
+    // Fetch agent info from gateway
+    const agentRow = await this.gateway!.getAgent(agentLower);
+
+    if (!agentRow) {
+      // Agent not found - return zeroed score
+      return {
+        address: agent,
+        overall: 0,
+        components: {
+          tenure: 0,
+          quality: 50,
+          trust: 0,
+          influence: 0,
+          activity: 0,
+          breadth: 0,
+          teaching: 0,
+        },
+      };
+    }
+
+    // Tenure: days since registration (capped at 365 for normalization)
+    const now = Math.floor(Date.now() / 1000);
+    const daysSinceRegistration =
+      (now - agentRow.registered_at) / 86400;
+    const tenureRaw = Math.min(daysSinceRegistration, 365);
+    const tenure = (tenureRaw / 365) * 100;
+
+    // Activity: post count (capped at 100 for normalization)
+    const activityRaw = Math.min(agentRow.post_count, 100);
+    const activity = activityRaw;
+
+    // --- Weighted Trust via gateway ---
+    let trust: number;
+    try {
+      const attestRows = await this.gateway!.getAttestations({
+        subject: agentLower,
+        first: 1000,
+      });
+      trust = this.computeWeightedTrust(
+        agentLower,
+        attestRows.map((att) => ({
+          attester: att.attester_id.toLowerCase(),
+          subject: att.subject_id.toLowerCase(),
+        })),
+        pageRankMap,
+        floor,
+      );
+    } catch {
+      // Fallback to raw count if attestation query fails
+      const trustRaw = Math.min(agentRow.attestation_count, 20);
+      trust = (trustRaw / 20) * 100;
+    }
+
+    // --- Weighted Quality via gateway ---
+    let quality = 50;
+    if (agentRow.post_count > 0) {
+      try {
+        const voteRows = await this.gateway!.getVotingRelations({
+          author: agentLower,
+          first: 1000,
+        });
+        quality = this.computeWeightedQuality(
+          voteRows.map((vr) => ({
+            voter: vr.voter_id,
+            upvoteCount: vr.upvote_count,
+            downvoteCount: vr.downvote_count,
+          })),
+          agentRow.post_count,
+          pageRankMap,
+          floor,
+        );
+      } catch {
+        // Fallback to raw aggregate if VotingRelation query fails
+        const totalScore = agentRow.total_upvotes_received - agentRow.total_downvotes_received;
+        const avgScore = totalScore / agentRow.post_count;
+        quality = Math.max(0, Math.min(100, 50 + avgScore * 5));
+      }
+    }
+
+    // Influence: follower count (capped at 50 for normalization)
+    const influenceRaw = Math.min(agentRow.follower_count, 50);
+    const influence = (influenceRaw / 50) * 100;
+
+    // Breadth: unique communities (capped at 10 for normalization)
+    const communitiesActive = agentRow.communities_active ?? [];
+    const breadth =
+      (Math.min(communitiesActive.length, 10) / 10) * 100;
+
+    // Teaching: off-chain only — defaults to 0, boosted via ExternalBoosts
+    const teaching = 0;
+
+    // Equal weights across all components
+    const overall =
+      (tenure + quality + trust + influence + activity + breadth + teaching) / 7;
+
+    return {
+      address: agent,
+      overall: Math.round(overall * 100) / 100,
+      components: {
+        tenure: Math.round(tenure * 100) / 100,
+        quality: Math.round(quality * 100) / 100,
+        trust: Math.round(trust * 100) / 100,
+        influence: Math.round(influence * 100) / 100,
+        activity: Math.round(activity * 100) / 100,
+        breadth: Math.round(breadth * 100) / 100,
+        teaching: Math.round(teaching * 100) / 100,
+      },
+    };
+  }
+
+  // ================================================================
+  //                     Subgraph Query Implementations
+  // ================================================================
 
   private async _computePageRankViaSubgraph(): Promise<PageRankResult[]> {
     // Fetch all active attestations from subgraph
@@ -392,20 +555,38 @@ export class ReputationEngine {
    * attester. A vouch from a high-PR agent (e.g., 0.05) counts 50x more
    * than one from a fresh account (0.001). Attesters below the influence
    * floor are excluded.
+   *
+   * Endorsements (optional) are added alongside attestations. Each endorser's
+   * PageRank is weighted by their rating (1-5) / 5, so a 5-star endorsement
+   * from a high-PR agent contributes more than a 1-star endorsement.
    */
   private computeWeightedTrust(
     agentLower: string,
     attestations: Array<{ attester: string; subject: string }>,
     pageRankMap: Map<string, number>,
     floor: number,
+    endorsements?: Array<{ endorser: string; endorsee: string; rating: number }>,
   ): number {
     let weightedSum = 0;
+
+    // Attestations: each attester's PageRank added directly
     for (const a of attestations) {
       if (a.subject !== agentLower) continue;
       const attesterPR = pageRankMap.get(a.attester) ?? 0;
-      if (attesterPR < floor) continue; // below influence threshold
+      if (attesterPR < floor) continue;
       weightedSum += attesterPR;
     }
+
+    // Endorsements: endorser PageRank × (rating/5)
+    if (endorsements) {
+      for (const e of endorsements) {
+        if (e.endorsee !== agentLower) continue;
+        const endorserPR = pageRankMap.get(e.endorser) ?? 0;
+        if (endorserPR < floor) continue;
+        weightedSum += endorserPR * (e.rating / 5);
+      }
+    }
+
     // Normalize: sum / threshold, capped at 1.0
     const normalized = Math.min(weightedSum / this.config.trustThreshold, 1.0);
     return normalized * 100;
@@ -449,13 +630,13 @@ export class ReputationEngine {
    *
    * Combines six on-chain signals into a 0-100 normalized score:
    * - **Tenure** — days since registration
-   * - **Quality** — PageRank-weighted average post score (Sybil-resistant)
-   * - **Trust** — PageRank-weighted attestation value (Sybil-resistant)
+   * - **Quality** — PageRank-weighted average post score (manipulation-resistant)
+   * - **Trust** — PageRank-weighted attestation value (manipulation-resistant)
    * - **Influence** — follower count
    * - **Activity** — total post count
    * - **Breadth** — number of unique communities posted in
    *
-   * Optional `externalBoosts` can add verified external credit (Phase 4).
+   * Optional `externalBoosts` can add verified external credit.
    *
    * All weights are equal (1/6 each) — final weight tuning is a
    * governance decision.
@@ -476,6 +657,19 @@ export class ReputationEngine {
       : agent;
 
     let result: ReputationScore;
+    if (this.gateway) {
+      try {
+        result = await this._computeReputationViaGateway(resolvedAgent);
+        if (resolveNames && this.names) {
+          const name = await this.names.lookupAddress(resolvedAgent);
+          if (name) result.name = name;
+        }
+        if (externalBoosts) this.applyExternalBoosts(result, externalBoosts);
+        return result;
+      } catch {
+        // Fall back to subgraph or event scanning
+      }
+    }
     if (this.subgraph) {
       try {
         result = await this._computeReputationViaSubgraph(resolvedAgent);
@@ -515,9 +709,12 @@ export class ReputationEngine {
     if (boosts.breadth) {
       score.components.breadth = Math.min(100, score.components.breadth + boosts.breadth);
     }
+    if (boosts.teaching) {
+      score.components.teaching = Math.min(100, score.components.teaching + boosts.teaching);
+    }
     // Recompute overall
     const c = score.components;
-    const overall = (c.tenure + c.quality + c.trust + c.influence + c.activity + c.breadth) / 6;
+    const overall = (c.tenure + c.quality + c.trust + c.influence + c.activity + c.breadth + c.teaching) / 7;
     score.overall = Math.round(overall * 100) / 100;
     // Re-round components
     for (const key of Object.keys(c) as Array<keyof typeof c>) {
@@ -572,6 +769,7 @@ export class ReputationEngine {
           influence: 0,
           activity: 0,
           breadth: 0,
+          teaching: 0,
         },
       };
     }
@@ -589,7 +787,7 @@ export class ReputationEngine {
     const activityRaw = Math.min(a.postCount, 100);
     const activity = activityRaw;
 
-    // --- Weighted Trust (Phase 1A) ---
+    // --- Weighted Trust ---
     // Fetch attestations received by this agent for weighted trust
     let trust: number;
     try {
@@ -622,7 +820,7 @@ export class ReputationEngine {
       trust = (trustRaw / 20) * 100;
     }
 
-    // --- Weighted Quality (Phase 1B) ---
+    // --- Weighted Quality ---
     // Fetch VotingRelation entities for this agent (as author)
     let quality = 50;
     if (a.postCount > 0) {
@@ -672,9 +870,12 @@ export class ReputationEngine {
     const breadth =
       (Math.min(a.communitiesActive.length, 10) / 10) * 100;
 
-    // Equal weights (governance decision — not finalized)
+    // Teaching: off-chain only — defaults to 0, boosted via ExternalBoosts
+    const teaching = 0;
+
+    // Equal weights across all components
     const overall =
-      (tenure + quality + trust + influence + activity + breadth) / 6;
+      (tenure + quality + trust + influence + activity + breadth + teaching) / 7;
 
     return {
       address: agent,
@@ -686,6 +887,7 @@ export class ReputationEngine {
         influence: Math.round(influence * 100) / 100,
         activity: Math.round(activity * 100) / 100,
         breadth: Math.round(breadth * 100) / 100,
+        teaching: Math.round(teaching * 100) / 100,
       },
     };
   }
@@ -711,7 +913,7 @@ export class ReputationEngine {
     const activityRaw = Math.min(postCount, 100);
     const activity = activityRaw;
 
-    // --- Weighted Trust (Phase 1A) via events ---
+    // --- Weighted Trust via events ---
     let trust: number;
     try {
       const attestCreated = await this.scanEvents(
@@ -749,7 +951,7 @@ export class ReputationEngine {
       trust = (trustRaw / 20) * 100;
     }
 
-    // --- Weighted Quality (Phase 1B) via events ---
+    // --- Weighted Quality via events ---
     // For event-based path, we fall back to raw scores since VotingRelation
     // data isn't available without the subgraph. We still apply PageRank
     // weighting to individual vote events if available.
@@ -809,9 +1011,12 @@ export class ReputationEngine {
       breadth = (Math.min(communities.size, 10) / 10) * 100;
     }
 
-    // Equal weights (governance decision — not finalized)
+    // Teaching: off-chain only — defaults to 0, boosted via ExternalBoosts
+    const teaching = 0;
+
+    // Equal weights across all components
     const overall =
-      (tenure + quality + trust + influence + activity + breadth) / 6;
+      (tenure + quality + trust + influence + activity + breadth + teaching) / 7;
 
     return {
       address: agent,
@@ -823,6 +1028,7 @@ export class ReputationEngine {
         influence: Math.round(influence * 100) / 100,
         activity: Math.round(activity * 100) / 100,
         breadth: Math.round(breadth * 100) / 100,
+        teaching: Math.round(teaching * 100) / 100,
       },
     };
   }

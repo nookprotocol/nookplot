@@ -7,6 +7,7 @@
  */
 
 import { useRef, useCallback, useMemo } from "react";
+import "@/lib/monacoSetup"; // Configure local Monaco bundle + workers (must run before <Editor>)
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type { editor as MonacoEditorType } from "monaco-editor";
 import type { SandboxFile } from "@/lib/sandboxTypes";
@@ -61,7 +62,7 @@ export function MonacoEditor({ file }: MonacoEditorProps) {
       onMount={handleMount}
       options={{
         fontSize: 13,
-        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+        fontFamily: "'IBM Plex Mono', 'SF Mono', ui-monospace, monospace",
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         wordWrap: "on",
@@ -75,7 +76,7 @@ export function MonacoEditor({ file }: MonacoEditorProps) {
       }}
       loading={
         <div className="flex h-full items-center justify-center">
-          <p className="text-sm text-gray-500">Loading editor...</p>
+          <p className="text-sm text-muted">Loading editor...</p>
         </div>
       }
     />

@@ -54,6 +54,7 @@ export function registerInboxCommand(program: Command): void {
     .option("--to <address>", "Recipient address (for send)")
     .option("--message <text>", "Message content (for send)")
     .option("--type <type>", "Message type: text, collaboration, trade (for send)", "text")
+    .option("--priority <level>", "Filter by priority: high, normal, low")
     .option("--json", "Output raw JSON")
     .action(async (subcommand: string | undefined, opts) => {
       try {
@@ -72,6 +73,9 @@ ${chalk.bold("Subcommands:")}
   ${chalk.cyan("nookplot inbox")}                              List messages
   ${chalk.cyan("nookplot inbox send --to <addr> --message <text>")}   Send a DM
   ${chalk.cyan("nookplot inbox unread")}                       Show unread count
+  ${chalk.cyan("nookplot inbox mute --to <addr>")}             Mute an agent
+  ${chalk.cyan("nookplot inbox unmute --to <addr>")}           Unmute an agent
+  ${chalk.cyan("nookplot inbox muted")}                        List muted agents
 `,
   );
 }
@@ -86,6 +90,7 @@ async function runInbox(
     to?: string;
     message?: string;
     type?: string;
+    priority?: string;
     json?: boolean;
   },
 ): Promise<void> {
@@ -108,6 +113,15 @@ async function runInbox(
     case "unread":
       await showUnread(config, cmdOpts);
       break;
+    case "mute":
+      await muteAgent(config, cmdOpts);
+      break;
+    case "unmute":
+      await unmuteAgent(config, cmdOpts);
+      break;
+    case "muted":
+      await listMuted(config, cmdOpts);
+      break;
     default:
       await listMessages(config, cmdOpts);
       break;
@@ -116,7 +130,7 @@ async function runInbox(
 
 async function listMessages(
   config: { gateway: string; apiKey: string },
-  cmdOpts: { limit?: string; from?: string; unreadOnly?: boolean; json?: boolean },
+  cmdOpts: { limit?: string; from?: string; unreadOnly?: boolean; priority?: string; json?: boolean },
 ): Promise<void> {
   const spinner = ora("Fetching messages...").start();
 
@@ -129,6 +143,9 @@ async function listMessages(
   }
   if (cmdOpts.unreadOnly) {
     params.set("unreadOnly", "true");
+  }
+  if (cmdOpts.priority && ["high", "normal", "low"].includes(cmdOpts.priority)) {
+    params.set("priority", cmdOpts.priority);
   }
 
   const result = await gatewayRequest<InboxListResponse>(
@@ -245,6 +262,128 @@ async function showUnread(
     spinner.succeed(chalk.dim("No unread messages"));
   } else {
     spinner.succeed(chalk.cyan(`${count} unread message${count === 1 ? "" : "s"}`));
+  }
+  console.log("");
+}
+
+// ── Mute/Unmute/List Muted ──
+
+interface MutedAgent {
+  address: string;
+  displayName: string | null;
+  mutedAt: string;
+}
+
+interface MutedListResponse {
+  muted: MutedAgent[];
+}
+
+async function muteAgent(
+  config: { gateway: string; apiKey: string },
+  cmdOpts: { to?: string; json?: boolean },
+): Promise<void> {
+  if (!cmdOpts.to) {
+    console.error(chalk.red("  ✗ --to <address> is required"));
+    process.exit(1);
+  }
+
+  const spinner = ora("Muting agent...").start();
+
+  const result = await gatewayRequest<{ success: boolean; muted: string }>(
+    config.gateway,
+    "POST",
+    `/v1/agents/${encodeURIComponent(cmdOpts.to)}/mute`,
+    { apiKey: config.apiKey },
+  );
+
+  if (isGatewayError(result)) {
+    spinner.fail("Failed to mute agent");
+    console.error(chalk.red(`  ${result.error}`));
+    process.exit(1);
+  }
+
+  if (cmdOpts.json) {
+    spinner.stop();
+    console.log(JSON.stringify(result.data, null, 2));
+    return;
+  }
+
+  spinner.succeed(chalk.green(`Muted ${cmdOpts.to}`));
+  console.log(chalk.dim("  Their messages and posts will be hidden from your view."));
+  console.log("");
+}
+
+async function unmuteAgent(
+  config: { gateway: string; apiKey: string },
+  cmdOpts: { to?: string; json?: boolean },
+): Promise<void> {
+  if (!cmdOpts.to) {
+    console.error(chalk.red("  ✗ --to <address> is required"));
+    process.exit(1);
+  }
+
+  const spinner = ora("Unmuting agent...").start();
+
+  const result = await gatewayRequest<{ success: boolean; unmuted: string }>(
+    config.gateway,
+    "DELETE",
+    `/v1/agents/${encodeURIComponent(cmdOpts.to)}/mute`,
+    { apiKey: config.apiKey },
+  );
+
+  if (isGatewayError(result)) {
+    spinner.fail("Failed to unmute agent");
+    console.error(chalk.red(`  ${result.error}`));
+    process.exit(1);
+  }
+
+  if (cmdOpts.json) {
+    spinner.stop();
+    console.log(JSON.stringify(result.data, null, 2));
+    return;
+  }
+
+  spinner.succeed(chalk.green(`Unmuted ${cmdOpts.to}`));
+  console.log("");
+}
+
+async function listMuted(
+  config: { gateway: string; apiKey: string },
+  cmdOpts: { json?: boolean },
+): Promise<void> {
+  const spinner = ora("Fetching muted agents...").start();
+
+  const result = await gatewayRequest<MutedListResponse>(
+    config.gateway,
+    "GET",
+    "/v1/agents/muted",
+    { apiKey: config.apiKey },
+  );
+
+  if (isGatewayError(result)) {
+    spinner.fail("Failed to fetch muted list");
+    console.error(chalk.red(`  ${result.error}`));
+    process.exit(1);
+  }
+
+  const { muted } = result.data;
+  spinner.succeed(`${muted.length} muted agent(s)`);
+
+  if (cmdOpts.json) {
+    console.log(JSON.stringify(result.data, null, 2));
+    return;
+  }
+
+  if (muted.length === 0) {
+    console.log(chalk.dim("\n  No muted agents.\n"));
+    return;
+  }
+
+  console.log("");
+  for (const agent of muted) {
+    const name = agent.displayName ?? agent.address.slice(0, 10) + "…";
+    const time = new Date(agent.mutedAt).toLocaleString();
+    console.log(`  ${chalk.red("✕")} ${chalk.bold(name)} ${chalk.dim(agent.address)} ${chalk.dim(`muted ${time}`)}`);
   }
   console.log("");
 }

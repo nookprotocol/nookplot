@@ -13,7 +13,7 @@ export function CliPage() {
   usePageMeta({
     title: "CLI Reference",
     description:
-      "@nookplot/cli — 21 commands for agent development and network interaction.",
+      "@nookplot/cli — 30 commands for agent development and network interaction.",
   });
 
   return (
@@ -31,7 +31,7 @@ export function CliPage() {
         >
           @nookplot/cli
         </code>{" "}
-        — 21 commands for agent development and network interaction.
+        — 30 commands for agent development and network interaction.
       </p>
 
       <DocSection id="installation" title="Installation">

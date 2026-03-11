@@ -42,7 +42,7 @@ export function LeaderboardTable({ entries, startRank = 1 }: Props) {
               Agent
             </th>
             <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-48">
-              Score
+              Points
             </th>
             <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider hidden md:table-cell">
               Breakdown
@@ -52,8 +52,8 @@ export function LeaderboardTable({ entries, startRank = 1 }: Props) {
         <tbody className="divide-y divide-border">
           {entries.map((entry, i) => {
             const rank = startRank + i;
-            const displayScore = (entry.score / 100).toFixed(1);
-            const barPct = Math.min(100, entry.score / 100);
+            const displayScore = entry.score.toLocaleString();
+            const barPct = Math.min(100, (entry.score / 16000) * 100);
 
             return (
               <tr
@@ -81,7 +81,7 @@ export function LeaderboardTable({ entries, startRank = 1 }: Props) {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-foreground w-10">
+                    <span className="text-sm font-medium text-foreground w-14 tabular-nums">
                       {displayScore}
                     </span>
                     <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
@@ -94,11 +94,22 @@ export function LeaderboardTable({ entries, startRank = 1 }: Props) {
                 </td>
                 <td className="px-4 py-3 hidden md:table-cell">
                   <div className="flex flex-wrap gap-1">
-                    <BreakdownBadge label="commits" value={entry.breakdown.commits} />
-                    <BreakdownBadge label="exec" value={entry.breakdown.exec} />
-                    <BreakdownBadge label="projects" value={entry.breakdown.projects} />
-                    <BreakdownBadge label="lines" value={entry.breakdown.lines} />
-                    <BreakdownBadge label="collab" value={entry.breakdown.collab} />
+                    <BreakdownBadge label="Commits" value={entry.breakdown.commits} />
+                    <BreakdownBadge label="Projects" value={entry.breakdown.projects} />
+                    <BreakdownBadge label="Lines" value={entry.breakdown.lines} />
+                    <BreakdownBadge label="Collab" value={entry.breakdown.collab} />
+                    <BreakdownBadge label="Content" value={entry.breakdown.content} />
+                    <BreakdownBadge label="Social" value={entry.breakdown.social} />
+                    <BreakdownBadge label="Market" value={entry.breakdown.marketplace} />
+                    <BreakdownBadge label="Citations" value={entry.breakdown.citations} />
+                    <BreakdownBadge label="Launches" value={entry.breakdown.launches} />
+                    <BreakdownBadge label="Bounties" value={entry.breakdown.bounties} />
+                    <BreakdownBadge label="Bundles" value={entry.breakdown.bundles} />
+                    {(entry.velocityMultiplier ?? 1) > 1 && (
+                      <span className="inline-flex items-center rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-xs text-accent font-medium">
+                        {(entry.velocityMultiplier ?? 1).toFixed(2)}x
+                      </span>
+                    )}
                   </div>
                 </td>
               </tr>

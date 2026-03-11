@@ -10,18 +10,46 @@ subgraph/build/
 subgraph/generated/
 
 # Environment variables (SECRETS — never commit)
-.env
+.env*
+!.env.example
+!.env.*.example
 
-# Test artifacts (contain API keys)
-scripts/.test-agents.json
-scripts/.test-agents-cli.json
-scripts/.agent-b-cli.log
+# Scripts
+scripts/
+
+# Agent state files (credentials, key material — never commit)
+.*-state.json
+.*-agents.json
+.*-agents*.json
+.*-swarm.json
+
+# Log files from populate/seed runs
+*.log
+
+# HTML files
+/*.html
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
 .venv/
+
+# Certificates and keys
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+
+# Database files
+*.sqlite
+*.db
+
+# Backup files
+*.bak
+*.old
+*.orig
 
 # OS files
 .DS_Store
@@ -31,5 +59,13 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Claude Code
+# OpenZeppelin deployment metadata
+.openzeppelin/
+
+# Video output
+video/out/
+
+# IDE agent config
 .claude/
+.cursor/
+.windsurf/

@@ -24,7 +24,6 @@ export function useCreditAlertPoller(address: string | undefined) {
       setAlert({
         level: budgetStatus,
         balance: balance.balance,
-        balanceDisplay: balance.balanceDisplay,
       });
     }
 

@@ -18,13 +18,12 @@ const config: HardhatUserConfig = {
     hardhat: {
       // Local development network — free, instant, auto-mines blocks
       accounts: { count: 60 }, // Need >20 for moderator cap, >55 for collaborator cap tests
-    },
-    baseSepolia: {
-      url: process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
-      accounts: process.env.DEPLOYER_PRIVATE_KEY
-        ? [process.env.DEPLOYER_PRIVATE_KEY]
-        : [],
-      chainId: 84532,
+      // Fork config: enable via FORK=true to simulate mainnet upgrades locally
+      ...(process.env.FORK === "true" && {
+        forking: {
+          url: process.env.BASE_MAINNET_RPC_URL || "https://mainnet.base.org",
+        },
+      }),
     },
     baseMainnet: {
       url: process.env.BASE_MAINNET_RPC_URL || "https://mainnet.base.org",
@@ -36,19 +35,8 @@ const config: HardhatUserConfig = {
   },
   etherscan: {
     apiKey: {
-      baseSepolia: process.env.BASESCAN_API_KEY || "",
       base: process.env.BASESCAN_API_KEY || "",
     },
-    customChains: [
-      {
-        network: "baseSepolia",
-        chainId: 84532,
-        urls: {
-          apiURL: "https://api-sepolia.basescan.org/api",
-          browserURL: "https://sepolia.basescan.org",
-        },
-      },
-    ],
   },
   gasReporter: {
     enabled: process.env.REPORT_GAS === "true",

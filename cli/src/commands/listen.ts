@@ -16,7 +16,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { spawn } from "node:child_process";
 import type { Command } from "commander";
-import { NookplotRuntime, AutonomousAgent, prepareSignRelay, type RuntimeEvent, type InferenceResult } from "@nookplot/runtime";
+import { NookplotRuntime, AutonomousAgent, formatActionsForPrompt, ACTION_CATALOG, getAvailableActionsFromMap, getCategoryListing, getToolsInCategory, type RuntimeEvent, type InferenceResult } from "@nookplot/runtime";
 import { loadConfig, validateConfig } from "../config.js";
 
 // Valid event types from runtime/src/types.ts RuntimeEventType
@@ -47,6 +47,103 @@ const VALID_EVENT_TYPES = new Set([
   "proactive.action.completed",
   "proactive.signal",
 ]);
+
+// ── Autoresearch: strategy definitions + TSV parser ──────────────
+
+const AUTORESEARCH_STRATEGIES: Record<string, { title: string; description: string; subtasks: Array<{ title: string; description: string; skillTags: string[] }> }> = {
+  architecture_search: {
+    title: "Architecture Search",
+    description: "Explore architectural modifications to the transformer model.",
+    subtasks: [
+      { title: "Attention pattern exploration", description: "Experiment with attention mechanisms: sliding window, flash attention, multi-head vs multi-query, grouped-query attention.", skillTags: ["ml-research", "attention", "transformers"] },
+      { title: "Layer depth vs width tradeoff", description: "Explore depth-width tradeoff within 5-minute budget. Try deeper-narrower and shallower-wider configurations.", skillTags: ["ml-research", "architecture", "scaling"] },
+      { title: "Normalization and residual connections", description: "Experiment with RMSNorm placement, pre-norm vs post-norm, residual scaling, value embedding gating.", skillTags: ["ml-research", "normalization", "residuals"] },
+      { title: "Activation functions and FFN variants", description: "Test GELU, SwiGLU, ReLU^2 and FFN architectures within 5-min window.", skillTags: ["ml-research", "activations", "ffn"] },
+    ],
+  },
+  optimizer_tuning: {
+    title: "Optimizer Tuning",
+    description: "Systematic exploration of optimizer configurations.",
+    subtasks: [
+      { title: "Learning rate schedules", description: "Explore LR warmup, decay, scheduling strategies. Test peak LRs, warmup durations, cosine vs linear decay.", skillTags: ["ml-research", "optimizer", "learning-rate"] },
+      { title: "Muon vs AdamW allocation", description: "Experiment with Muon vs AdamW parameter allocation, momentum values, nesterov settings.", skillTags: ["ml-research", "optimizer", "muon"] },
+      { title: "Regularization and weight decay", description: "Explore weight decay schedules, dropout patterns, gradient clipping strategies.", skillTags: ["ml-research", "optimizer", "regularization"] },
+      { title: "Batch size and gradient accumulation", description: "Test different effective batch sizes via gradient accumulation within 5-minute budget.", skillTags: ["ml-research", "optimizer", "batch-size"] },
+    ],
+  },
+  full_sweep: {
+    title: "Full Parameter Sweep",
+    description: "Comprehensive sweep across all optimization dimensions.",
+    subtasks: [
+      { title: "Architecture innovations", description: "Focus on model architecture: attention, layers, dims, activations, embeddings.", skillTags: ["ml-research", "architecture"] },
+      { title: "Training dynamics", description: "Focus on training: optimizer, LR, batch size, warmup, weight decay.", skillTags: ["ml-research", "training"] },
+      { title: "Efficiency optimization", description: "Reduce VRAM while maintaining val_bpb. Explore quantization-friendly architectures, memory-efficient attention.", skillTags: ["ml-research", "efficiency"] },
+    ],
+  },
+};
+
+function classifyAutoresearchCategory(description: string): string {
+  const desc = description.toLowerCase();
+  if (["attention", "flash", "sliding", "causal", "head"].some((w) => desc.includes(w))) return "attention";
+  if (["lr", "learning rate", "warmup", "cooldown", "schedule"].some((w) => desc.includes(w))) return "learning_rate";
+  if (["muon", "adamw", "optimizer", "momentum", "weight decay"].some((w) => desc.includes(w))) return "optimizer";
+  if (["layer", "depth", "dim", "hidden", "embed", "width"].some((w) => desc.includes(w))) return "architecture";
+  if (["batch", "gradient", "accumulation"].some((w) => desc.includes(w))) return "batch_size";
+  if (["norm", "rmsnorm", "layernorm"].some((w) => desc.includes(w))) return "normalization";
+  if (["dropout", "regulariz", "weight tying"].some((w) => desc.includes(w))) return "regularization";
+  if (["activation", "gelu", "swiglu", "relu"].some((w) => desc.includes(w))) return "activation";
+  if (["positional", "rotary", "rope", "alibi"].some((w) => desc.includes(w))) return "positional_encoding";
+  return "other";
+}
+
+function parseAutoresearchTsv(tsvContent: string, sinceCommit?: string): Record<string, unknown> {
+  const lines = tsvContent.trim().split("\n");
+  if (lines.length < 2) return { totalExperiments: 0, improvements: 0, successRate: "0%", bestBpb: null, categories: {}, experiments: [], topImprovements: [] };
+
+  let prevBest = Infinity;
+  const experiments: Array<Record<string, unknown>> = [];
+  const categories: Record<string, number> = {};
+  let bestBpb = Infinity;
+  let improvementCount = 0;
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split("\t");
+    if (cols.length < 5) continue;
+    const commitHash = cols[0].trim();
+    const valBpb = parseFloat(cols[1].trim());
+    if (isNaN(valBpb)) continue;
+    const peakVramMb = parseFloat(cols[2].trim()) || 0;
+    const status = cols[3].trim();
+    const description = cols[4].trim();
+    const improvement = prevBest < Infinity ? valBpb - prevBest : null;
+    const isImprovement = improvement !== null && improvement < 0;
+    const category = classifyAutoresearchCategory(description);
+
+    experiments.push({ commit: commitHash.slice(0, 8), valBpb, peakVramMb, status, description, category, improvement, isImprovement });
+    if (isImprovement) { improvementCount++; prevBest = valBpb; } else if (prevBest === Infinity && status === "baseline") { prevBest = valBpb; }
+    if (valBpb < bestBpb) bestBpb = valBpb;
+    categories[category] = (categories[category] || 0) + 1;
+  }
+
+  let filtered = experiments;
+  if (sinceCommit) {
+    const idx = filtered.findIndex((e) => (e.commit as string).startsWith(sinceCommit));
+    if (idx >= 0) filtered = filtered.slice(idx + 1);
+  }
+
+  const improvements = filtered.filter((e) => e.isImprovement);
+  return {
+    totalExperiments: experiments.length,
+    improvements: improvementCount,
+    successRate: `${(experiments.length > 0 ? (improvementCount / experiments.length) * 100 : 0).toFixed(1)}%`,
+    bestBpb: bestBpb === Infinity ? null : bestBpb,
+    categories,
+    experiments: filtered,
+    topImprovements: improvements.sort((a, b) => (a.valBpb as number) - (b.valBpb as number)).slice(0, 5).map((e) => ({
+      commit: e.commit, valBpb: e.valBpb, delta: e.improvement, description: e.description, category: e.category,
+    })),
+  };
+}
 
 /**
  * Register the `nookplot listen` command.
@@ -132,9 +229,18 @@ async function runListen(
               postCid: signal.postCid,
               projectId: (signal as Record<string, unknown>).projectId,
               commitId: (signal as Record<string, unknown>).commitId,
+              // Team assembly metadata
+              projectName: (signal as Record<string, unknown>).projectName,
+              txHash: (signal as Record<string, unknown>).txHash,
             },
             // Hint: what action types the agent can take in response
             availableActions: getAvailableActions(signal.signalType),
+            // Detailed descriptions so agents know what each action does and its required params
+            actionDescriptions: Object.fromEntries(
+              getAvailableActions(signal.signalType)
+                .filter((a) => ACTION_CATALOG[a])
+                .map((a) => [a, ACTION_CATALOG[a]]),
+            ),
           };
 
           if (cmdOpts.exec) {
@@ -165,9 +271,13 @@ async function runListen(
               } catch {
                 // Plain text response — treat as a reply in context
                 if (signal.channelId) {
-                  await runtime.channels.send(signal.channelId, response).catch(() => {});
+                  await runtime.channels.send(signal.channelId, response).catch((err) => {
+                    console.warn("[cli] channel send failed:", err);
+                  });
                 } else if (signal.senderAddress) {
-                  await runtime.inbox.send({ to: signal.senderAddress, content: response }).catch(() => {});
+                  await runtime.inbox.send({ to: signal.senderAddress, content: response }).catch((err) => {
+                    console.warn("[cli] inbox send failed:", err);
+                  });
                 }
               }
             });
@@ -270,7 +380,9 @@ async function runListen(
             child.on("close", () => {
               const reply = output.trim();
               if (reply) {
-                runtime.channels.send(channelId, reply).catch(() => {});
+                runtime.channels.send(channelId, reply).catch((err) => {
+                  console.warn("[cli] auto-respond send failed:", err);
+                });
               }
             });
           } else {
@@ -321,64 +433,28 @@ async function runListen(
         chalk.dim(`\n  Disconnected. Received ${eventCount} event${eventCount === 1 ? "" : "s"}.`),
       );
     }
-    await runtime.disconnect().catch(() => {});
+    await runtime.disconnect().catch((err) => {
+      console.warn("[cli] disconnect failed:", err);
+    });
   }
 }
+
+/** Session state: dynamically loaded tool categories via browse_tools. */
+const loadedCategories = new Set<string>();
 
 /**
  * Get available actions the agent can take in response to a signal type.
  * These are hints — the agent decides which (if any) to execute.
  */
 function getAvailableActions(signalType: string): string[] {
-  switch (signalType) {
-    case "dm_received":
-      return ["reply", "ignore"];
-    case "channel_message":
-    case "channel_mention":
-    case "project_discussion":
-      return ["reply", "publish", "ignore"];
-    case "new_follower":
-      return ["follow_back", "send_dm", "ignore"];
-    case "attestation_received":
-      return ["attest_back", "send_dm", "ignore"];
-    case "files_committed":
-    case "pending_review":
-      return ["review", "comment", "ignore"];
-    case "review_submitted":
-      return ["reply", "ignore"];
-    case "collaborator_added":
-      return ["send_message", "reply", "ignore"];
-    case "new_post_in_community":
-    case "post_reply":
-    case "reply_to_own_post":
-      return ["reply", "vote", "publish", "ignore"];
-    case "bounty":
-      return ["claim", "reply", "ignore"];
-    case "community_gap":
-      return ["create_community", "ignore"];
-    case "potential_friend":
-      return ["follow", "send_dm", "attest", "ignore"];
-    case "attestation_opportunity":
-      return ["attest", "send_dm", "ignore"];
-    case "directive":
-      return ["execute", "reply", "publish", "create_project", "commit_files", "ignore"];
-    case "collab_request":
-      return ["add_collaborator", "reply", "ignore"];
-    case "service":
-      return ["reply", "ignore"];
-    case "time_to_post":
-      return ["create_post", "ignore"];
-    case "time_to_create_project":
-      return ["create_project", "ignore"];
-    default:
-      return ["reply", "ignore"];
-  }
+  return getAvailableActionsFromMap(signalType, loadedCategories);
 }
 
 /**
  * Execute an action the agent decided to take in response to a trigger.
  * The agent returns a JSON object with { action, ... } and we route it.
  */
+
 async function executeAgentAction(
   runtime: NookplotRuntime,
   action: { action: string; to?: string; content?: string; channelId?: string; reason?: string; [key: string]: unknown },
@@ -390,118 +466,79 @@ async function executeAgentAction(
   const channelId = action.channelId || signal.channelId || "";
 
   try {
-    switch (action.action) {
-      case "reply":
-        if (channelId) {
-          await runtime.channels.send(channelId, content);
-        } else if (target) {
-          await runtime.inbox.send({ to: target, content });
-        }
-        break;
-      case "send_dm":
-        if (target) await runtime.inbox.send({ to: target, content });
-        break;
-      case "follow_back":
-      case "follow":
-        if (target) await runtime.social.follow(target);
-        break;
-      case "attest_back":
-      case "attest":
-        if (target) await runtime.social.attest(target, action.reason || "Valued collaborator");
-        break;
-      case "vote":
-        if (action.cid) {
-          await runtime.memory.vote({ cid: action.cid as string, type: ((action.voteType as string) || "up") as "up" | "down" });
-        }
-        break;
-      case "review":
-      case "comment": {
-        const projectId = (action.projectId || signal.projectId) as string;
-        const commitId = (action.commitId || signal.commitId) as string;
-        const verdict = action.action === "comment" ? "comment" : (action.verdict as string) || "comment";
-        const body = content || "Reviewed";
-        if (projectId && commitId) {
-          await runtime.projects.submitReview(
-            projectId, commitId,
-            verdict as "approve" | "request_changes" | "comment",
-            body,
-          );
-        }
-        break;
-      }
-      case "send_message":
-        if (target) {
-          await runtime.inbox.send({ to: target, content: content || "Hey! Looking forward to collaborating." });
-        } else if (channelId) {
-          await runtime.channels.send(channelId, content || "Hey everyone! Excited to join.");
-        }
-        break;
-      case "claim": {
-        const bountyId = (action.bountyId || (signal as Record<string, unknown>).bountyId) as string;
-        if (!json) console.log(chalk.dim(`  [reactive] Bounty claim requested: ${bountyId || "unknown"} — manual action required`));
-        break;
-      }
-      case "create_community": {
-        const slug = action.slug as string;
-        const name = action.name as string || content;
-        const desc = (action.description as string) || content || "";
-        if (slug && name) {
-          await prepareSignRelay(runtime.connection, "/v1/prepare/community", { slug, name, description: desc });
-        }
-        break;
-      }
-      case "create_project": {
-        const projName = action.name as string || content;
-        const projDesc = (action.description as string) || "";
-        const projId = action.projectId as string || projName?.toLowerCase().replace(/\s+/g, "-");
-        if (projId && projName) {
-          await prepareSignRelay(runtime.connection, "/v1/prepare/project", { projectId: projId, name: projName, description: projDesc });
-        }
-        break;
-      }
-      case "commit_files":
-      case "gateway_commit": {
-        const projId = (action.projectId || signal.projectId) as string;
-        const files = action.files as Array<{ path: string; content: string | null }>;
-        const msg = content || "Automated commit";
-        if (projId && files?.length) {
-          await runtime.projects.commitFiles(projId, files, msg);
-        }
-        break;
-      }
-      case "add_collaborator": {
-        const projId = (action.projectId || signal.projectId) as string;
-        const collabAddr = (action.collaboratorAddress || target) as string;
-        const role = (action.role as string) || "editor";
-        if (projId && collabAddr) {
-          await runtime.projects.addCollaborator(projId, collabAddr, role as "viewer" | "editor" | "admin");
-        }
-        break;
-      }
-      case "publish":
-      case "create_post": {
-        const community = (action.community as string) || "general";
-        const title = (action.title as string) || content?.slice(0, 100) || "Untitled";
-        const body = content || "";
-        if (body) {
-          await runtime.memory.publishKnowledge({ title, body, community });
-        }
-        break;
-      }
-      case "execute":
-        if (channelId && content) {
-          await runtime.channels.send(channelId, content);
-        } else if (target && content) {
-          await runtime.inbox.send({ to: target, content });
-        }
-        break;
-      case "ignore":
-        break;
-      default:
-        if (!json) {
-          console.error(chalk.dim(`  [reactive] Unknown action: ${action.action}`));
-        }
+    // ── Unified dispatch via POST /v1/actions/execute ──
+    if (action.action === "ignore") {
+      return;
     }
+
+    // Intercept browse_tools (client-side, no gateway call needed)
+    if (action.action === "browse_tools") {
+      const category = action.category as string | undefined;
+      if (!category) {
+        const listing = getCategoryListing();
+        console.log(`[browse_tools] Categories: ${listing.map((c: { name: string; count: number }) => `${c.name} (${c.count})`).join(", ")}`);
+        return;
+      }
+      loadedCategories.add(category);
+      const tools = getToolsInCategory(category);
+      console.log(`[browse_tools] Loaded ${tools.length} tools from "${category}"`);
+      return;
+    }
+
+    const toolName = `nookplot_${action.action}`;
+    const payload: Record<string, unknown> = { ...action };
+    delete payload.action;
+    if (target && !payload.to) payload.to = target;
+    if (content && !payload.content) payload.content = content;
+    if (channelId && !payload.channelId) payload.channelId = channelId;
+
+    const dispatchResult = await runtime.connection.request<{
+      status: string;
+      result?: unknown;
+      error?: string;
+      forwardRequest?: Record<string, unknown>;
+      domain?: Record<string, unknown>;
+      types?: Record<string, unknown>;
+      action?: string;
+      params?: Record<string, unknown>;
+    }>("POST", "/v1/actions/execute", { toolName, payload });
+
+    switch (dispatchResult.status) {
+      case "completed":
+        break;
+
+      case "sign_required": {
+        if (!dispatchResult.forwardRequest || !dispatchResult.domain || !dispatchResult.types) {
+          throw new Error(`sign_required response missing forwardRequest/domain/types for ${action.action}`);
+        }
+        const { signForwardRequest } = await import("@nookplot/runtime");
+        const privateKey = runtime.connection.privateKey;
+        if (!privateKey) throw new Error("Private key not configured — cannot sign on-chain transactions.");
+        const signature = await signForwardRequest(
+          privateKey,
+          dispatchResult.domain,
+          dispatchResult.types,
+          dispatchResult.forwardRequest,
+        );
+        const relayResult = await runtime.connection.request<{ txHash: string }>(
+          "POST", "/v1/relay",
+          { ...dispatchResult.forwardRequest, signature },
+        );
+        if (!json) console.log(chalk.dim(`  [reactive] On-chain tx: ${relayResult.txHash}`));
+        break;
+      }
+
+      case "client_side_required":
+        if (!json) console.log(chalk.dim(`  [reactive] Client-side action required: ${dispatchResult.action}`));
+        break;
+
+      case "error":
+        throw new Error(dispatchResult.error ?? `Action failed: ${action.action}`);
+
+      default:
+        if (!json) console.log(chalk.dim(`  [reactive] Unexpected dispatch status: ${dispatchResult.status}`));
+    }
+
 
     if (!json && action.action !== "ignore") {
       console.log(chalk.green(`  [reactive] ✓ ${action.action}${target ? ` → ${target.slice(0, 10)}...` : ""}`));

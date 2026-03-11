@@ -41,10 +41,11 @@ export interface ClaimsRouterDeps {
   emailVerifier?: EmailVerifier;
   arxivVerifier?: ArxivVerifier;
   orcidVerifier?: OrcidVerifier;
+  verificationTierService?: import("../services/verificationTierService.js").VerificationTierService;
 }
 
 export function createClaimsRouter(deps: ClaimsRouterDeps): Router {
-  const { pool, hmacSecret, claimService, githubVerifier, twitterVerifier, emailVerifier, arxivVerifier, orcidVerifier } = deps;
+  const { pool, hmacSecret, claimService, githubVerifier, twitterVerifier, emailVerifier, arxivVerifier, orcidVerifier, verificationTierService } = deps;
   const router = Router();
   const authMiddleware = createAuthMiddleware(pool, hmacSecret);
 
@@ -94,8 +95,9 @@ export function createClaimsRouter(deps: ClaimsRouterDeps): Router {
 
         res.status(201).json(claim);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        res.status(500).json({ error: msg });
+        const message = err instanceof Error ? err.message : String(err);
+        logSecurityEvent("error", "submit-claim-failed", { error: message });
+        res.status(500).json({ error: "Failed to submit claim." });
       }
     },
   );
@@ -112,8 +114,9 @@ export function createClaimsRouter(deps: ClaimsRouterDeps): Router {
         const claims = await claimService.getClaimsForAgent(req.agent!.id);
         res.json({ claims });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        res.status(500).json({ error: msg });
+        const message = err instanceof Error ? err.message : String(err);
+        logSecurityEvent("error", "list-claims-failed", { error: message });
+        res.status(500).json({ error: "Failed to list claims." });
       }
     },
   );
@@ -290,8 +293,9 @@ export function createClaimsRouter(deps: ClaimsRouterDeps): Router {
             res.status(400).json({ error: `Verification not supported for platform: ${claim.platform}` });
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        res.status(500).json({ error: msg });
+        const message = err instanceof Error ? err.message : String(err);
+        logSecurityEvent("error", "verify-claim-failed", { error: message });
+        res.status(500).json({ error: "Failed to initiate verification." });
       }
     },
   );
@@ -337,6 +341,12 @@ export function createClaimsRouter(deps: ClaimsRouterDeps): Router {
             reputationBoost,
           );
 
+          // Set re-verification expiry on the claim and refresh human tier
+          if (verificationTierService) {
+            await verificationTierService.markClaimReverified(claim.id);
+            await verificationTierService.refreshTier(req.agent!.id);
+          }
+
           res.json({ verified: true, claim: verified });
           return;
         }
@@ -365,14 +375,21 @@ export function createClaimsRouter(deps: ClaimsRouterDeps): Router {
             reputationBoost,
           );
 
+          // Set re-verification expiry on the claim and refresh human tier
+          if (verificationTierService) {
+            await verificationTierService.markClaimReverified(claim.id);
+            await verificationTierService.refreshTier(req.agent!.id);
+          }
+
           res.json({ verified: true, claim: verified });
           return;
         }
 
         res.status(400).json({ error: "OAuth callback not supported for this platform" });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        res.status(500).json({ error: msg });
+        const message = err instanceof Error ? err.message : String(err);
+        logSecurityEvent("error", "verify-callback-failed", { error: message });
+        res.status(500).json({ error: "Failed to process verification callback." });
       }
     },
   );
@@ -443,8 +460,9 @@ export function createClaimsRouter(deps: ClaimsRouterDeps): Router {
 
         res.json({ verified: true, claim: verified });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        res.status(500).json({ error: msg });
+        const message = err instanceof Error ? err.message : String(err);
+        logSecurityEvent("error", "verify-code-failed", { error: message });
+        res.status(500).json({ error: "Failed to verify code." });
       }
     },
   );
@@ -473,8 +491,9 @@ export function createClaimsRouter(deps: ClaimsRouterDeps): Router {
         const credits = await claimService.getUnclaimedCredits(platform as ClaimPlatform, id);
         res.json({ credits, count: credits.length });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        res.status(500).json({ error: msg });
+        const message = err instanceof Error ? err.message : String(err);
+        logSecurityEvent("error", "get-unclaimed-credits-failed", { error: message });
+        res.status(500).json({ error: "Failed to check unclaimed credits." });
       }
     },
   );
@@ -517,8 +536,9 @@ export function createClaimsRouter(deps: ClaimsRouterDeps): Router {
 
         res.json({ swept, message: `${swept} unclaimed credit(s) transferred to your account` });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        res.status(500).json({ error: msg });
+        const message = err instanceof Error ? err.message : String(err);
+        logSecurityEvent("error", "sweep-unclaimed-failed", { error: message });
+        res.status(500).json({ error: "Failed to sweep unclaimed credits." });
       }
     },
   );

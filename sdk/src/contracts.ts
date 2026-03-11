@@ -42,6 +42,7 @@ import {
   AGENT_FACTORY_ABI,
   REVENUE_ROUTER_ABI,
   CLIQUE_REGISTRY_ABI,
+  GUILD_REGISTRY_ABI,
 } from "./abis";
 
 import type { MetaTransactionManager } from "./metatx";
@@ -89,14 +90,14 @@ export class ContractManager {
   /** KnowledgeBundle instance (optional — only if address provided). */
   public readonly knowledgeBundleContract?: ethers.Contract;
 
-  /** AgentFactory instance (optional — only if address provided). */
-  public readonly agentFactoryContract?: ethers.Contract;
-
   /** RevenueRouter instance (optional — only if address provided). */
   public readonly revenueRouterContract?: ethers.Contract;
 
-  /** CliqueRegistry instance (optional — only if address provided). */
+  /** @deprecated Use guildRegistryContract instead. */
   public readonly cliqueRegistryContract?: ethers.Contract;
+
+  /** GuildRegistry instance (optional — only if guildRegistry address provided). */
+  public readonly guildRegistryContract?: ethers.Contract;
 
   /** The agent's wallet (stored for meta-transaction signing). */
   private readonly signer: ethers.Wallet;
@@ -111,7 +112,7 @@ export class ContractManager {
   /**
    * Initialise the ContractManager with provider, signer, and addresses.
    *
-   * @param provider - An ethers v6 JsonRpcProvider connected to Base / Base Sepolia.
+   * @param provider - An ethers v6 JsonRpcProvider connected to Base Mainnet.
    * @param signer   - An ethers v6 Wallet used to sign transactions.
    * @param addresses - Deployed contract addresses for all four contracts.
    * @param metatx   - Optional MetaTransactionManager for gasless transactions.
@@ -190,13 +191,6 @@ export class ContractManager {
       );
     }
 
-    if (addresses.agentFactory) {
-      this.agentFactoryContract = new ethers.Contract(
-        addresses.agentFactory,
-        AGENT_FACTORY_ABI,
-        connectedSigner,
-      );
-    }
 
     if (addresses.revenueRouter) {
       this.revenueRouterContract = new ethers.Contract(
@@ -210,6 +204,14 @@ export class ContractManager {
       this.cliqueRegistryContract = new ethers.Contract(
         addresses.cliqueRegistry,
         CLIQUE_REGISTRY_ABI,
+        connectedSigner,
+      );
+    }
+
+    if (addresses.guildRegistry) {
+      this.guildRegistryContract = new ethers.Contract(
+        addresses.guildRegistry,
+        GUILD_REGISTRY_ABI,
         connectedSigner,
       );
     }
@@ -1434,18 +1436,19 @@ export class ContractManager {
    * @param cid IPFS CID of the bounty metadata document
    * @param community Community the bounty belongs to
    * @param deadline Unix timestamp after which bounty can be expired
-   * @param options Optional USDC token reward amount (6 decimals)
+   * @param options Token reward amount and token address (V2: per-bounty token choice)
    */
   async createBounty(
     cid: string,
     community: string,
     deadline: number,
-    options?: { tokenRewardAmount?: bigint },
+    options?: { tokenRewardAmount?: bigint; tokenAddress?: string },
   ): Promise<ethers.TransactionReceipt> {
     const bc = this.requireBountyContract();
     try {
       const tokenAmount = options?.tokenRewardAmount ?? 0n;
-      return await this._send(bc, "createBounty", [cid, community, deadline, tokenAmount]);
+      const tokenAddr = options?.tokenAddress ?? ethers.ZeroAddress;
+      return await this._send(bc, "createBounty", [cid, community, deadline, tokenAmount, tokenAddr]);
     } catch (error: unknown) {
       throw new Error(
         `Failed to create bounty: ${error instanceof Error ? error.message : String(error)}`,
@@ -1537,6 +1540,18 @@ export class ContractManager {
     }
   }
 
+  /** Resolve a disputed bounty. Owner-only. */
+  async resolveDispute(bountyId: number, releaseToWorker: boolean): Promise<ethers.TransactionReceipt> {
+    const bc = this.requireBountyContract();
+    try {
+      return await this._send(bc, "resolveDispute", [bountyId, releaseToWorker]);
+    } catch (error: unknown) {
+      throw new Error(
+        `Failed to resolve dispute for bounty ${bountyId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   /** Get full bounty info from chain. */
   async getBounty(bountyId: number): Promise<BountyInfo> {
     const bc = this.requireBountyContract();
@@ -1555,6 +1570,7 @@ export class ContractManager {
         createdAt: result.createdAt,
         claimedAt: result.claimedAt,
         submittedAt: result.submittedAt,
+        escrowToken: result.escrowToken ?? ethers.ZeroAddress,
       };
     } catch (error: unknown) {
       throw new Error(
@@ -1733,189 +1749,6 @@ export class ContractManager {
     } catch (error: unknown) {
       throw new Error(
         `Failed to get bundle count: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  // ================================================================
-  //                      AgentFactory
-  // ================================================================
-
-  private requireAgentFactoryContract(): ethers.Contract {
-    if (!this.agentFactoryContract) {
-      throw new Error(
-        "AgentFactory not configured. Provide contracts.agentFactory in the SDK config.",
-      );
-    }
-    return this.agentFactoryContract;
-  }
-
-  /** Deploy an agent via AgentFactory. */
-  async deployAgent(
-    bundleId: number,
-    agentAddress: string,
-    soulCid: string,
-    deploymentFee: bigint = 0n,
-  ): Promise<{ deploymentId: number; tx: ethers.TransactionReceipt }> {
-    const af = this.requireAgentFactoryContract();
-    try {
-      const receipt = await this._send(af, "deployAgent", [bundleId, agentAddress, soulCid, deploymentFee]);
-      let deploymentId = 0;
-      const iface = af.interface;
-      for (const log of receipt.logs) {
-        try {
-          const parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
-          if (parsed?.name === "AgentDeployed") {
-            deploymentId = Number(parsed.args.deploymentId);
-            break;
-          }
-        } catch { /* skip */ }
-      }
-      return { deploymentId, tx: receipt };
-    } catch (error: unknown) {
-      throw new Error(
-        `Failed to deploy agent: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /** Spawn a child agent via AgentFactory. */
-  async spawnAgent(
-    bundleId: number,
-    childAddress: string,
-    soulCid: string,
-    deploymentFee: bigint = 0n,
-  ): Promise<{ deploymentId: number; tx: ethers.TransactionReceipt }> {
-    const af = this.requireAgentFactoryContract();
-    try {
-      const receipt = await this._send(af, "spawnAgent", [bundleId, childAddress, soulCid, deploymentFee]);
-      let deploymentId = 0;
-      const iface = af.interface;
-      for (const log of receipt.logs) {
-        try {
-          const parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
-          if (parsed?.name === "AgentSpawned") {
-            deploymentId = Number(parsed.args.deploymentId);
-            break;
-          }
-        } catch { /* skip */ }
-      }
-      return { deploymentId, tx: receipt };
-    } catch (error: unknown) {
-      throw new Error(
-        `Failed to spawn agent: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /** Update the soul CID for a deployed agent. */
-  async updateSoul(deploymentId: number, newSoulCid: string): Promise<ethers.TransactionReceipt> {
-    const af = this.requireAgentFactoryContract();
-    try {
-      return await this._send(af, "updateSoul", [deploymentId, newSoulCid]);
-    } catch (error: unknown) {
-      throw new Error(
-        `Failed to update soul: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /** Get deployment info from chain. */
-  async getDeployment(deploymentId: number): Promise<DeploymentInfo> {
-    const af = this.requireAgentFactoryContract();
-    try {
-      const r = await af.getDeployment(deploymentId);
-      return {
-        id: deploymentId,
-        creator: r.creator,
-        agentAddress: r.agentAddress,
-        bundleId: Number(r.bundleId),
-        soulCid: r.soulCid,
-        deploymentFee: r.deploymentFee,
-        contributorPayout: r.contributorPayout,
-        treasuryPayout: r.treasuryPayout,
-        creditPayout: r.creditPayout,
-        curatorPayout: r.curatorPayout,
-        parentAgent: r.parentAgent,
-        createdAt: Number(r.createdAt),
-      };
-    } catch (error: unknown) {
-      throw new Error(
-        `Failed to get deployment ${deploymentId}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /** Get deployment IDs by creator. */
-  async getDeploymentsByCreator(creator: string): Promise<number[]> {
-    const af = this.requireAgentFactoryContract();
-    try {
-      const ids = await af.getDeploymentsByCreator(creator);
-      return ids.map((id: bigint) => Number(id));
-    } catch (error: unknown) {
-      throw new Error(
-        `Failed to get deployments by creator: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /** Get deployment IDs by bundle. */
-  async getDeploymentsByBundle(bundleId: number): Promise<number[]> {
-    const af = this.requireAgentFactoryContract();
-    try {
-      const ids = await af.getDeploymentsByBundle(bundleId);
-      return ids.map((id: bigint) => Number(id));
-    } catch (error: unknown) {
-      throw new Error(
-        `Failed to get deployments by bundle: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /** Get children spawned by a parent agent. */
-  async getSpawnChildren(parent: string): Promise<string[]> {
-    const af = this.requireAgentFactoryContract();
-    try {
-      return [...(await af.getSpawnChildren(parent))];
-    } catch (error: unknown) {
-      throw new Error(
-        `Failed to get spawn children: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /** Get the parent of a spawned agent. */
-  async getSpawnParent(child: string): Promise<string> {
-    const af = this.requireAgentFactoryContract();
-    try {
-      return await af.getSpawnParent(child);
-    } catch (error: unknown) {
-      throw new Error(
-        `Failed to get spawn parent: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /** Get total deployment count. */
-  async getDeploymentCount(): Promise<number> {
-    const af = this.requireAgentFactoryContract();
-    try {
-      return Number(await af.getDeploymentCount());
-    } catch (error: unknown) {
-      throw new Error(
-        `Failed to get deployment count: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /** Get soul CID for a deployed agent. */
-  async getSoulCid(agentAddress: string): Promise<string> {
-    const af = this.requireAgentFactoryContract();
-    try {
-      return await af.getSoulCid(agentAddress);
-    } catch (error: unknown) {
-      throw new Error(
-        `Failed to get soul CID: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -2129,55 +1962,77 @@ export class ContractManager {
   }
 
   // ================================================================
-  //                      CliqueRegistry
+  //                  Guild Registry
   // ================================================================
 
-  private requireCliqueRegistryContract(): ethers.Contract {
-    if (!this.cliqueRegistryContract) {
-      throw new Error(
-        "CliqueRegistry not configured. Provide contracts.cliqueRegistry in the SDK config.",
-      );
-    }
-    return this.cliqueRegistryContract;
+  /** Get the active guild/clique registry contract. Prefers GuildRegistry if configured. */
+  private requireGuildContract(): ethers.Contract {
+    if (this.guildRegistryContract) return this.guildRegistryContract;
+    if (this.cliqueRegistryContract) return this.cliqueRegistryContract;
+    throw new Error(
+      "GuildRegistry not configured. Provide contracts.guildRegistry (or contracts.cliqueRegistry) in the SDK config.",
+    );
   }
 
-  /** Propose a new clique with a set of member addresses. */
-  async proposeClique(
+  /** @deprecated Use requireGuildContract instead. */
+  private requireCliqueRegistryContract(): ethers.Contract {
+    return this.requireGuildContract();
+  }
+
+  /** Whether the active contract is the new GuildRegistry (vs legacy CliqueRegistry). */
+  private get _isNewGuildRegistry(): boolean {
+    return !!this.guildRegistryContract;
+  }
+
+  /** Propose a new guild with a set of member addresses. */
+  async proposeGuild(
     name: string,
     descriptionCid: string,
     members: string[],
-  ): Promise<{ cliqueId: number; tx: ethers.TransactionReceipt }> {
-    const cr = this.requireCliqueRegistryContract();
+  ): Promise<{ guildId: number; tx: ethers.TransactionReceipt }> {
+    const cr = this.requireGuildContract();
+    const fnName = this._isNewGuildRegistry ? "proposeGuild" : "proposeClique";
+    const eventName = this._isNewGuildRegistry ? "GuildProposed" : "CliqueProposed";
+    const idField = this._isNewGuildRegistry ? "guildId" : "cliqueId";
     try {
-      const tx = await cr.proposeClique(name, descriptionCid, members);
+      const tx = await cr[fnName](name, descriptionCid, members);
       const receipt = await tx.wait();
-      // Extract cliqueId from CliqueProposed event
       const iface = cr.interface;
-      let cliqueId = 0;
+      let guildId = 0;
       for (const log of receipt.logs) {
         try {
           const parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
-          if (parsed?.name === "CliqueProposed") {
-            cliqueId = Number(parsed.args.cliqueId);
+          if (parsed?.name === eventName) {
+            guildId = Number(parsed.args[idField]);
             break;
           }
         } catch {
           // Skip logs from other contracts
         }
       }
-      return { cliqueId, tx: receipt };
+      return { guildId, tx: receipt };
     } catch (error: unknown) {
       throw new Error(
-        `Failed to propose clique: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to propose guild: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
-  /** Approve membership in a proposed clique. */
-  async approveMembership(cliqueId: number): Promise<ethers.TransactionReceipt> {
-    const cr = this.requireCliqueRegistryContract();
+  /** @deprecated Use proposeGuild instead. */
+  async proposeClique(
+    name: string,
+    descriptionCid: string,
+    members: string[],
+  ): Promise<{ cliqueId: number; tx: ethers.TransactionReceipt }> {
+    const { guildId, tx } = await this.proposeGuild(name, descriptionCid, members);
+    return { cliqueId: guildId, tx };
+  }
+
+  /** Approve membership in a proposed guild. */
+  async approveMembership(guildId: number): Promise<ethers.TransactionReceipt> {
+    const cr = this.requireGuildContract();
     try {
-      return await this._send(cr, "approveMembership", [cliqueId]);
+      return await this._send(cr, "approveMembership", [guildId]);
     } catch (error: unknown) {
       throw new Error(
         `Failed to approve membership: ${error instanceof Error ? error.message : String(error)}`,
@@ -2185,11 +2040,11 @@ export class ContractManager {
     }
   }
 
-  /** Reject membership in a proposed clique. */
-  async rejectMembership(cliqueId: number): Promise<ethers.TransactionReceipt> {
-    const cr = this.requireCliqueRegistryContract();
+  /** Reject membership in a proposed guild. */
+  async rejectMembership(guildId: number): Promise<ethers.TransactionReceipt> {
+    const cr = this.requireGuildContract();
     try {
-      return await this._send(cr, "rejectMembership", [cliqueId]);
+      return await this._send(cr, "rejectMembership", [guildId]);
     } catch (error: unknown) {
       throw new Error(
         `Failed to reject membership: ${error instanceof Error ? error.message : String(error)}`,
@@ -2197,31 +2052,36 @@ export class ContractManager {
     }
   }
 
-  /** Leave an active clique. */
-  async leaveClique(cliqueId: number): Promise<ethers.TransactionReceipt> {
-    const cr = this.requireCliqueRegistryContract();
+  /** Leave an active guild. */
+  async leaveGuild(guildId: number): Promise<ethers.TransactionReceipt> {
+    const cr = this.requireGuildContract();
+    const fnName = this._isNewGuildRegistry ? "leaveGuild" : "leaveClique";
     try {
-      return await this._send(cr, "leaveClique", [cliqueId]);
+      return await this._send(cr, fnName, [guildId]);
     } catch (error: unknown) {
       throw new Error(
-        `Failed to leave clique: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to leave guild: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
-  /** Trigger a collective spawn from an active clique. */
+  /** @deprecated Use leaveGuild instead. */
+  async leaveClique(cliqueId: number): Promise<ethers.TransactionReceipt> {
+    return this.leaveGuild(cliqueId);
+  }
+
+  /** Trigger a collective spawn from an active guild. */
   async collectiveSpawn(
-    cliqueId: number,
+    guildId: number,
     bundleId: number,
     childAddress: string,
     soulCid: string,
     deploymentFee?: bigint,
   ): Promise<{ deploymentId: number; tx: ethers.TransactionReceipt }> {
-    const cr = this.requireCliqueRegistryContract();
+    const cr = this.requireGuildContract();
     try {
-      const tx = await cr.collectiveSpawn(cliqueId, bundleId, childAddress, soulCid, deploymentFee ?? 0n);
+      const tx = await cr.collectiveSpawn(guildId, bundleId, childAddress, soulCid, deploymentFee ?? 0n);
       const receipt = await tx.wait();
-      // Extract deploymentId from CollectiveSpawn event
       const iface = cr.interface;
       let deploymentId = 0;
       for (const log of receipt.logs) {
@@ -2243,13 +2103,14 @@ export class ContractManager {
     }
   }
 
-  /** Get clique info by ID. */
-  async getClique(cliqueId: number): Promise<CliqueInfo> {
-    const cr = this.requireCliqueRegistryContract();
+  /** Get guild info by ID. */
+  async getGuild(guildId: number): Promise<CliqueInfo> {
+    const cr = this.requireGuildContract();
+    const fnName = this._isNewGuildRegistry ? "getGuild" : "getClique";
     try {
-      const r = await cr.getClique(cliqueId);
+      const r = await cr[fnName](guildId);
       return {
-        id: cliqueId,
+        id: guildId,
         name: r.name,
         descriptionCid: r.descriptionCid,
         proposer: r.proposer,
@@ -2261,28 +2122,38 @@ export class ContractManager {
       };
     } catch (error: unknown) {
       throw new Error(
-        `Failed to get clique: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get guild: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
-  /** Get all member addresses for a clique. */
-  async getCliqueMembers(cliqueId: number): Promise<string[]> {
-    const cr = this.requireCliqueRegistryContract();
+  /** @deprecated Use getGuild instead. */
+  async getClique(cliqueId: number): Promise<CliqueInfo> {
+    return this.getGuild(cliqueId);
+  }
+
+  /** Get all member addresses for a guild. */
+  async getGuildMembers(guildId: number): Promise<string[]> {
+    const cr = this.requireGuildContract();
     try {
-      return [...(await cr.getMembers(cliqueId))];
+      return [...(await cr.getMembers(guildId))];
     } catch (error: unknown) {
       throw new Error(
-        `Failed to get clique members: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get guild members: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
-  /** Get a member's status in a clique. */
-  async getMemberStatus(cliqueId: number, member: string): Promise<MemberStatus> {
-    const cr = this.requireCliqueRegistryContract();
+  /** @deprecated Use getGuildMembers instead. */
+  async getCliqueMembers(cliqueId: number): Promise<string[]> {
+    return this.getGuildMembers(cliqueId);
+  }
+
+  /** Get a member's status in a guild. */
+  async getMemberStatus(guildId: number, member: string): Promise<MemberStatus> {
+    const cr = this.requireGuildContract();
     try {
-      return Number(await cr.getMemberStatus(cliqueId, member)) as MemberStatus;
+      return Number(await cr.getMemberStatus(guildId, member)) as MemberStatus;
     } catch (error: unknown) {
       throw new Error(
         `Failed to get member status: ${error instanceof Error ? error.message : String(error)}`,
@@ -2290,40 +2161,58 @@ export class ContractManager {
     }
   }
 
-  /** Get all clique IDs an agent belongs to. */
-  async getAgentCliques(agent: string): Promise<number[]> {
-    const cr = this.requireCliqueRegistryContract();
+  /** Get all guild IDs an agent belongs to. */
+  async getAgentGuilds(agent: string): Promise<number[]> {
+    const cr = this.requireGuildContract();
+    const fnName = this._isNewGuildRegistry ? "getAgentGuilds" : "getAgentCliques";
     try {
-      const ids = await cr.getAgentCliques(agent);
+      const ids = await cr[fnName](agent);
       return ids.map((id: bigint) => Number(id));
     } catch (error: unknown) {
       throw new Error(
-        `Failed to get agent cliques: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get agent guilds: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
-  /** Check if an agent is a member of a clique. */
+  /** @deprecated Use getAgentGuilds instead. */
+  async getAgentCliques(agent: string): Promise<number[]> {
+    return this.getAgentGuilds(agent);
+  }
+
+  /** Check if an agent is a member of a guild. */
+  async isGuildMember(guildId: number, agent: string): Promise<boolean> {
+    const cr = this.requireGuildContract();
+    const fnName = this._isNewGuildRegistry ? "isGuildMember" : "isCliqueMember";
+    try {
+      return await cr[fnName](guildId, agent);
+    } catch (error: unknown) {
+      throw new Error(
+        `Failed to check guild membership: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /** @deprecated Use isGuildMember instead. */
   async isCliqueMember(cliqueId: number, agent: string): Promise<boolean> {
-    const cr = this.requireCliqueRegistryContract();
+    return this.isGuildMember(cliqueId, agent);
+  }
+
+  /** Get the total number of guilds. */
+  async getGuildCount(): Promise<number> {
+    const cr = this.requireGuildContract();
+    const fnName = this._isNewGuildRegistry ? "getGuildCount" : "getCliqueCount";
     try {
-      return await cr.isCliqueMember(cliqueId, agent);
+      return Number(await cr[fnName]());
     } catch (error: unknown) {
       throw new Error(
-        `Failed to check clique membership: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get guild count: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
-  /** Get the total number of cliques. */
+  /** @deprecated Use getGuildCount instead. */
   async getCliqueCount(): Promise<number> {
-    const cr = this.requireCliqueRegistryContract();
-    try {
-      return Number(await cr.getCliqueCount());
-    } catch (error: unknown) {
-      throw new Error(
-        `Failed to get clique count: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    return this.getGuildCount();
   }
 }

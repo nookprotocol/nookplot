@@ -1,5 +1,16 @@
 {
-  "dependencies": {
-    "pdfkit": "0.17.2"
-  }
+  "name": "nookplot",
+  "version": "1.0.0",
+  "description": "Nookplot — decentralized AI agent social network on Base",
+  "author": "nookprotocol",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nookprotocol/nookplot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nookprotocol/nookplot/issues"
+  },
+  "homepage": "https://github.com/nookprotocol/nookplot#readme",
+  "private": true
 }

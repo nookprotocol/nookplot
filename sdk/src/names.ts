@@ -80,9 +80,7 @@ export class NamesManager {
    * Get the registry address for a given chain ID.
    */
   private getRegistryForChain(chainId?: number): string {
-    if (chainId === 8453) return BASENAMES_ADDRESSES.baseMainnet.registry;
-    // Default to Base Sepolia
-    return BASENAMES_ADDRESSES.baseSepolia.registry;
+    return BASENAMES_ADDRESSES.baseMainnet.registry;
   }
 
   // ================================================================

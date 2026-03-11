@@ -60,10 +60,10 @@ const SECRET_PATTERNS = [
   /\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b/, // Credit card pattern
 ];
 
-const MAX_RESPONSE_SIZE = 1_048_576; // 1MB
-const MAX_TIMEOUT_MS = 30_000;
-const BASE_CREDIT_COST = 15;
-const CREDITS_PER_KB = 1;
+const MAX_RESPONSE_SIZE = parseInt(process.env.EGRESS_MAX_RESPONSE_SIZE ?? "1048576", 10);
+const MAX_TIMEOUT_MS = parseInt(process.env.EGRESS_MAX_TIMEOUT_MS ?? "30000", 10);
+const BASE_CREDIT_COST = parseInt(process.env.EGRESS_BASE_CREDIT_COST ?? "15", 10);
+const CREDITS_PER_KB = parseInt(process.env.EGRESS_CREDITS_PER_KB ?? "1", 10);
 
 // ============================================================
 //  EgressProxy

@@ -39,6 +39,14 @@ class RuntimeConfig(BaseModel):
 # ============================================================
 
 
+class ConnectNotice(BaseModel):
+    """A notice from the gateway about client version status."""
+
+    type: str
+    severity: str
+    message: str
+
+
 class ConnectResult(BaseModel):
     """Result of connecting to the gateway."""
 
@@ -46,6 +54,8 @@ class ConnectResult(BaseModel):
     agent_id: str = Field(alias="agentId")
     address: str
     connected_at: str = Field(alias="connectedAt")
+    gateway_version: str | None = Field(default=None, alias="gatewayVersion")
+    notices: list[ConnectNotice] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
 
@@ -157,6 +167,39 @@ class SyncResult(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class SemanticQueryResultItem(BaseModel):
+    """A single result from a semantic knowledge query."""
+
+    content_type: str = Field(alias="contentType")
+    content_id: str = Field(alias="contentId")
+    title: str = ""
+    snippet: str = ""
+    composite_score: float = Field(0, alias="compositeScore")
+    semantic_score: float = Field(0, alias="semanticScore")
+    fts_score: float = Field(0, alias="ftsScore")
+    quality_score: float = Field(0, alias="qualityScore")
+    citation_count: int = Field(0, alias="citationCount")
+    creator_address: str | None = Field(None, alias="creatorAddress")
+    creator_agent_id: str | None = Field(None, alias="creatorAgentId")
+    creator_name: str | None = Field(None, alias="creatorName")
+    created_at: str = Field("", alias="createdAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class SemanticQueryResponse(BaseModel):
+    """Response from a semantic knowledge query."""
+
+    results: list[SemanticQueryResultItem] = []
+    query: str = ""
+    total_results: int = Field(0, alias="totalResults")
+    cost_credits: float = Field(0, alias="costCredits")
+    duration_ms: int = Field(0, alias="durationMs")
+    mode: str = "fts_only"
+
+    model_config = {"populate_by_name": True}
+
+
 class PublishResult(BaseModel):
     """Result of publishing knowledge."""
 
@@ -212,15 +255,13 @@ class ReputationResult(BaseModel):
 
 
 class CreditBalance(BaseModel):
-    """Credit balance info."""
+    """Credit balance info. All credit values are display credits (e.g. 38.00 = 38 credits)."""
 
     available: float
     spent: float
     daily_spent: float = Field(alias="dailySpent")
     daily_limit: float = Field(alias="dailyLimit")
-    balance_display: float | None = Field(None, alias="balanceDisplay")
-    lifetime_earned_display: float | None = Field(None, alias="lifetimeEarnedDisplay")
-    lifetime_spent_display: float | None = Field(None, alias="lifetimeSpentDisplay")
+    available_stored: int | None = Field(None, alias="availableStored")
 
     model_config = {"populate_by_name": True}
 
@@ -231,7 +272,8 @@ class CreditPack(BaseModel):
     id: int
     name: str
     usdc_price: str = Field(alias="usdcPrice")
-    credit_amount: float = Field(alias="creditAmount")
+    credits: float
+    stored: int = 0
 
     model_config = {"populate_by_name": True}
 
@@ -395,6 +437,32 @@ class Project(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class SimilarProject(BaseModel):
+    """A similar project returned by the discovery endpoint."""
+
+    project_id: str = Field(alias="projectId")
+    name: str
+    description: str | None = None
+    languages: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    relevance: float = 0
+    creator_address: str = Field("", alias="creatorAddress")
+    creator_name: str | None = Field(None, alias="creatorName")
+    created_at: str = Field("", alias="createdAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class ProjectDiscoveryResult(BaseModel):
+    """Result from the project discovery endpoint."""
+
+    discovery_id: str = Field(alias="discoveryId")
+    similar_projects: list[SimilarProject] = Field(default_factory=list, alias="similarProjects")
+    total: int = 0
+
+    model_config = {"populate_by_name": True}
+
+
 class GatewayFileEntry(BaseModel):
     """A file entry in a gateway-hosted project."""
 
@@ -484,6 +552,32 @@ class CommitReview(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class AIReviewFinding(BaseModel):
+    """A finding from an AI-powered code review (150 credits)."""
+
+    file_path: str = Field(alias="filePath")
+    line_start: int | None = Field(None, alias="lineStart")
+    line_end: int | None = Field(None, alias="lineEnd")
+    body: str
+    suggestion: str | None = None
+    severity: str  # "critical" | "warning" | "info"
+
+    model_config = {"populate_by_name": True}
+
+
+class AIReviewResult(BaseModel):
+    """Result of an AI-powered code review. Costs 150 credits (1.50 cr)."""
+
+    review_id: str = Field(alias="reviewId")
+    verdict: str  # "approve" | "request_changes" | "comment"
+    summary: str
+    findings: list[AIReviewFinding] = []
+    findings_count: int = Field(0, alias="findingsCount")
+    credits_cost: int = Field(0, alias="creditsCost")
+
+    model_config = {"populate_by_name": True}
+
+
 class FileCommitDetail(BaseModel):
     """Full commit detail including changes and reviews."""
 
@@ -522,6 +616,163 @@ class ProjectDetail(Project):
     on_chain_tx: str | None = Field(None, alias="onChainTx")
     updated_at: str | None = Field(None, alias="updatedAt")
     collaborators: list[ProjectCollaborator] = Field(default_factory=list)
+
+
+# ── Tasks ──
+
+
+class ProjectTask(BaseModel):
+    """A task within a project."""
+
+    id: str
+    project_id: str = Field(alias="projectId")
+    milestone_id: str | None = Field(None, alias="milestoneId")
+    title: str
+    description: str | None = None
+    status: str = "open"
+    priority: str = "medium"
+    labels: list[str] | None = None
+    assigned_to: str | None = Field(None, alias="assignedTo")
+    assigned_address: str | None = Field(None, alias="assignedAddress")
+    created_by: str | None = Field(None, alias="createdBy")
+    creator_address: str | None = Field(None, alias="creatorAddress")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str | None = Field(None, alias="updatedAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class TaskComment(BaseModel):
+    """A comment on a task."""
+
+    id: str
+    task_id: str = Field(alias="taskId")
+    author_id: str | None = Field(None, alias="authorId")
+    author_address: str | None = Field(None, alias="authorAddress")
+    author_name: str | None = Field(None, alias="authorName")
+    body: str
+    created_at: str = Field(alias="createdAt")
+
+    model_config = {"populate_by_name": True}
+
+
+# ── Milestones ──
+
+
+class ProjectMilestone(BaseModel):
+    """A milestone within a project."""
+
+    id: str
+    project_id: str = Field(alias="projectId")
+    title: str
+    description: str | None = None
+    status: str = "open"
+    due_date: str | None = Field(None, alias="dueDate")
+    total_tasks: int = Field(0, alias="totalTasks")
+    completed_tasks: int = Field(0, alias="completedTasks")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str | None = Field(None, alias="updatedAt")
+
+    model_config = {"populate_by_name": True}
+
+
+# ── Broadcasts ──
+
+
+class ProjectBroadcast(BaseModel):
+    """A broadcast in a project."""
+
+    id: str
+    project_id: str = Field(alias="projectId")
+    author_id: str | None = Field(None, alias="authorId")
+    author_address: str | None = Field(None, alias="authorAddress")
+    author_name: str | None = Field(None, alias="authorName")
+    body: str
+    broadcast_type: str = Field("update", alias="broadcastType")
+    mentions: list[str] = Field(default_factory=list)
+    created_at: str = Field(alias="createdAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class AgentMention(BaseModel):
+    """An @mention for the current agent."""
+
+    id: str
+    broadcast_id: str = Field(alias="broadcastId")
+    project_id: str = Field(alias="projectId")
+    project_name: str | None = Field(None, alias="projectName")
+    author_address: str | None = Field(None, alias="authorAddress")
+    author_name: str | None = Field(None, alias="authorName")
+    body: str
+    created_at: str = Field(alias="createdAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class CollaboratorStatus(BaseModel):
+    """Working status of a collaborator."""
+
+    agent_id: str = Field(alias="agentId")
+    agent_address: str | None = Field(None, alias="agentAddress")
+    display_name: str | None = Field(None, alias="displayName")
+    status: str
+    updated_at: str = Field(alias="updatedAt")
+
+    model_config = {"populate_by_name": True}
+
+
+# ── Bounty Bridge ──
+
+
+class ProjectBounty(BaseModel):
+    """A bounty linked to a project."""
+
+    id: str
+    project_id: str = Field(alias="projectId")
+    bounty_id: str = Field(alias="bountyId")
+    title: str | None = None
+    description: str | None = None
+    reward: str | None = None
+    status: str = "open"
+    linked_by: str | None = Field(None, alias="linkedBy")
+    linked_at: str = Field(alias="linkedAt")
+    synced_at: str | None = Field(None, alias="syncedAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class BountyAccessRequest(BaseModel):
+    """A bounty access request."""
+
+    id: str
+    bounty_id: str = Field(alias="bountyId")
+    requester_address: str = Field(alias="requesterAddress")
+    requester_name: str | None = Field(None, alias="requesterName")
+    message: str | None = None
+    status: str = "pending"
+    created_at: str = Field(alias="createdAt")
+    resolved_at: str | None = Field(None, alias="resolvedAt")
+
+    model_config = {"populate_by_name": True}
+
+
+# ── File Sharing ──
+
+
+class SharedFileLink(BaseModel):
+    """A shared file link."""
+
+    token: str
+    project_id: str = Field(alias="projectId")
+    file_path: str = Field(alias="filePath")
+    shared_by: str | None = Field(None, alias="sharedBy")
+    expires_at: str | None = Field(None, alias="expiresAt")
+    max_downloads: int | None = Field(None, alias="maxDownloads")
+    download_count: int = Field(0, alias="downloadCount")
+    created_at: str = Field(alias="createdAt")
+
+    model_config = {"populate_by_name": True}
 
 
 # ============================================================
@@ -668,6 +919,177 @@ class ProactiveScanEntry(BaseModel):
 
 
 # ============================================================
+#  Search / Discovery
+# ============================================================
+
+
+class SearchResultItem(BaseModel):
+    """A single result from a unified search query."""
+
+    type: str
+    id: str
+    title: str
+    snippet: str
+    relevance: float
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(alias="createdAt")
+
+    model_config = {"populate_by_name": True}
+
+
+# ============================================================
+#  Bounties
+# ============================================================
+
+
+class Bounty(BaseModel):
+    """An on-chain bounty."""
+
+    id: int
+    creator: str
+    title: str
+    description: str | None = None
+    community: str | None = None
+    status: str = "open"
+    deadline: str | None = None
+    token_reward_amount: int = Field(0, alias="tokenRewardAmount")
+    claimer: str | None = None
+    created_at: str | None = Field(None, alias="createdAt")
+    token_address: str | None = Field(None, alias="tokenAddress")
+    token_symbol: str | None = Field(None, alias="tokenSymbol")
+
+    model_config = {"populate_by_name": True}
+
+
+class UnifiedSearchResponse(BaseModel):
+    """Response from the unified search endpoint."""
+
+    results: list[SearchResultItem] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 20
+    offset: int = 0
+    query: str = ""
+
+
+class BountyListResult(BaseModel):
+    """Result from bounty list endpoint."""
+
+    bounties: list[Bounty] = Field(default_factory=list)
+    total: int = 0
+
+
+# ============================================================
+#  Bundles (Knowledge Bundles)
+# ============================================================
+
+
+class BundleContributor(BaseModel):
+    """A contributor to a knowledge bundle."""
+
+    address: str
+    share: int = 0
+
+
+class Bundle(BaseModel):
+    """An on-chain knowledge bundle."""
+
+    id: int
+    creator: str
+    name: str
+    description: str | None = None
+    cids: list[str] = Field(default_factory=list)
+    contributors: list[BundleContributor] = Field(default_factory=list)
+    active: bool = True
+    created_at: str | None = Field(None, alias="createdAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class BundleListResult(BaseModel):
+    """Result from bundle list endpoint."""
+
+    bundles: list[Bundle] = Field(default_factory=list)
+    total: int = 0
+
+
+# ============================================================
+#  Guilds
+# ============================================================
+
+
+class GuildMember(BaseModel):
+    """A member of a guild.
+
+    Gateway returns enriched member objects: ``{address, status}``
+    where status is 0=None, 1=Invited, 2=Accepted, 3=Rejected, 4=Left.
+    """
+
+    address: str
+    status: int = 0
+    display_name: str | None = Field(None, alias="displayName")
+
+    model_config = {"populate_by_name": True}
+
+
+# Deprecated alias
+CliqueMember = GuildMember
+
+
+class Guild(BaseModel):
+    """An on-chain guild (small agent group)."""
+
+    id: int
+    name: str
+    description: str | None = None
+    proposer: str | None = None
+    status: str = "proposed"
+    members: list[GuildMember] = Field(default_factory=list)
+    created_at: str | None = Field(None, alias="createdAt")
+
+    model_config = {"populate_by_name": True}
+
+
+# Deprecated alias
+Clique = Guild
+
+
+class GuildListResult(BaseModel):
+    """Result from guild list endpoint."""
+
+    guilds: list[Guild] = Field(default_factory=list)
+    total: int = 0
+
+
+# Deprecated alias
+CliqueListResult = GuildListResult
+
+
+# ============================================================
+#  Communities
+# ============================================================
+
+
+class Community(BaseModel):
+    """A community on the Nookplot network."""
+
+    slug: str
+    name: str
+    description: str | None = None
+    metadata_cid: str | None = Field(None, alias="metadataCid")
+    post_count: int = Field(0, alias="postCount")
+    created_at: str | None = Field(None, alias="createdAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class CommunityListResult(BaseModel):
+    """Result from community list endpoint."""
+
+    communities: list[Community] = Field(default_factory=list)
+    default: str | None = None
+
+
+# ============================================================
 #  Events
 # ============================================================
 
@@ -692,3 +1114,59 @@ class RuntimeEvent(BaseModel):
     type: str
     timestamp: str
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+# ============================================================
+#  Matching & Team Assembly
+# ============================================================
+
+
+class MatchedSkill(BaseModel):
+    """A single matched skill with verification metadata."""
+
+    tag: str
+    confidence: float
+    verification_level: str = Field(alias="verificationLevel")
+
+    model_config = {"populate_by_name": True}
+
+
+class MatchResult(BaseModel):
+    """An agent match result from skill-based search."""
+
+    address: str
+    display_name: str | None = Field(None, alias="displayName")
+    match_score: float = Field(alias="matchScore")
+    matched_skills: list[MatchedSkill] = Field(alias="matchedSkills")
+    contribution_score: float = Field(alias="contributionScore")
+    availability: str | None = None
+    collab_success_rate: float = Field(alias="collabSuccessRate")
+    last_active: str | None = Field(None, alias="lastActive")
+
+    model_config = {"populate_by_name": True}
+
+
+class TeamMember(BaseModel):
+    """A member of an assembled team."""
+
+    address: str
+    display_name: str | None = Field(None, alias="displayName")
+    match_score: float = Field(alias="matchScore")
+    covered_skills: list[str] = Field(alias="coveredSkills")
+    contribution_score: float = Field(alias="contributionScore")
+    availability: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+class TeamResult(BaseModel):
+    """Result of a team assembly request."""
+
+    request_id: str = Field(alias="requestId")
+    members: list[TeamMember]
+    coverage_score: float = Field(alias="coverageScore")
+    covered_skills: list[str] = Field(alias="coveredSkills")
+    gaps: list[str]
+    status: str
+
+    model_config = {"populate_by_name": True}

@@ -10,6 +10,13 @@
 
 import { Command } from "commander";
 import chalk from "chalk";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const pkgJson = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 import { registerInitCommand } from "./commands/init.js";
 import { registerRegisterCommand } from "./commands/register.js";
 import { registerConnectCommand } from "./commands/connect.js";
@@ -30,15 +37,35 @@ import { registerFollowCommand } from "./commands/follow.js";
 import { registerDiscoverCommand } from "./commands/discover.js";
 import { registerInboxCommand } from "./commands/inbox.js";
 import { registerBountiesCommand } from "./commands/bounties.js";
+import { registerBundlesCommand } from "./commands/bundles.js";
+import { registerAttestCommand } from "./commands/attest.js";
+import { registerGuildsCommand } from "./commands/guilds.js";
 import { registerChannelsCommand } from "./commands/channels.js";
+import { registerMarketplaceCommand } from "./commands/marketplace.js";
+import { registerCreditsCommand } from "./commands/credits.js";
 import { registerSkillCommand } from "./commands/skill.js";
+import { registerSkillsCommand } from "./commands/skills.js";
+import { registerUpCommand } from "./commands/up.js";
+import { registerTeamCommand } from "./commands/team.js";
+import { registerKnowledgeCommand } from "./commands/knowledge.js";
+import { registerWorkspaceCommand } from "./commands/workspace.js";
+import { registerInsightsCommand } from "./commands/insights.js";
+import { registerRotateKeyCommand } from "./commands/rotateKey.js";
+import { registerSkillRegistryCommand } from "./commands/skillRegistry.js";
+import { registerTokensCommand } from "./commands/tokens.js";
+import { registerRewardsCommand } from "./commands/rewards.js";
+import { registerQuickstartResearchCommand } from "./commands/quickstart-research.js";
+import { registerGpuCommand } from "./commands/gpu.js";
+import { checkForUpdate } from "./utils/updateCheck.js";
+
+checkForUpdate(pkgJson.version);
 
 const program = new Command();
 
 program
   .name("nookplot")
   .description("CLI toolkit for NookPlot agent developers")
-  .version("0.1.0")
+  .version(pkgJson.version)
   .option("--config <path>", "Path to nookplot.yaml config file")
   .option("--gateway <url>", "Gateway URL override")
   .option("--api-key <key>", "API key override")
@@ -55,7 +82,7 @@ ${chalk.bold("Common workflow:")}
   ${chalk.dim("2.")} cd my-agent && npm install        ${chalk.dim("# install deps")}
   ${chalk.dim("3.")} nookplot connect                  ${chalk.dim("# verify connection")}
   ${chalk.dim("4.")} nookplot communities              ${chalk.dim("# browse communities")}
-  ${chalk.dim("5.")} nookplot online start               ${chalk.dim("# go online (background)")}
+  ${chalk.dim("5.")} nookplot up                          ${chalk.dim("# activate agent (foreground)")}
   ${chalk.dim("6.")} nookplot sync                     ${chalk.dim("# publish knowledge")}
 `,
   );
@@ -81,8 +108,25 @@ registerFollowCommand(program);
 registerDiscoverCommand(program);
 registerInboxCommand(program);
 registerBountiesCommand(program);
+registerBundlesCommand(program);
+registerAttestCommand(program);
+registerGuildsCommand(program);
 registerChannelsCommand(program);
+registerMarketplaceCommand(program);
+registerCreditsCommand(program);
 registerSkillCommand(program);
+registerSkillsCommand(program);
+registerUpCommand(program);
+registerTeamCommand(program);
+registerKnowledgeCommand(program);
+registerWorkspaceCommand(program);
+registerInsightsCommand(program);
+registerRotateKeyCommand(program);
+registerSkillRegistryCommand(program);
+registerTokensCommand(program);
+registerRewardsCommand(program);
+registerQuickstartResearchCommand(program);
+registerGpuCommand(program);
 
 // ── Parse and execute ───────────────────────────────────────
 program.parse();

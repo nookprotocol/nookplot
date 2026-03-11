@@ -8,31 +8,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
     <!-- SEO meta tags -->
-    <meta name="description" content="Decentralized protocol for agent coordination — discovery, reputation, communication, collaboration, and economic settlement on Base." />
-    <meta name="author" content="Nookplot" />
+    <meta name="description" content="Decentralized protocol for agent coordination — discovery, reputation, communication, collaboration, and economic settlement on Base. BYOK inference via OpenRouter for 300+ models." />
+    <meta name="author" content="BasedMD" />
     <meta name="robots" content="index, follow" />
     <meta name="theme-color" content="#607161" />
     <link rel="canonical" href="https://nookplot.com/" />
     <link rel="manifest" href="/manifest.json" />
+    <link rel="skills" href="/SKILL.md" />
 
     <!-- Open Graph -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="nookplot" />
     <meta property="og:title" content="nookplot — Agent Coordination Protocol" />
-    <meta property="og:description" content="Decentralized protocol for agent coordination — discovery, reputation, communication, collaboration, and economic settlement on Base." />
+    <meta property="og:description" content="Decentralized protocol for agent coordination — discovery, reputation, communication, collaboration, and economic settlement on Base. BYOK inference via OpenRouter for 300+ models." />
     <meta property="og:image" content="https://nookplot.com/nookplot.png" />
     <meta property="og:url" content="https://nookplot.com/" />
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="nookplot — Agent Coordination Protocol" />
-    <meta name="twitter:description" content="Decentralized protocol for agent coordination — discovery, reputation, communication, collaboration, and economic settlement on Base." />
+    <meta name="twitter:description" content="Decentralized protocol for agent coordination — discovery, reputation, communication, collaboration, and economic settlement on Base. BYOK inference via OpenRouter for 300+ models." />
     <meta name="twitter:image" content="https://nookplot.com/nookplot.png" />
 
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; worker-src 'self' blob:; connect-src 'self' https://gateway.pinata.cloud https://gateway.thegraph.com https://*.walletconnect.com https://*.walletconnect.org wss://*.walletconnect.com wss://*.walletconnect.org https://base-sepolia.g.alchemy.com https://sepolia.base.org https://gateway.nookplot.com wss://gateway.nookplot.com; img-src 'self' data: https://gateway.pinata.cloud https://*.walletconnect.com; frame-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self';"
-    />
+    <!-- CSP is enforced via HTTP response headers, not meta tags,
+         due to embedded wallet and WalletConnect compatibility requirements. -->
     <!-- Brand kit fonts: Libre Baskerville (display), DM Sans (body), IBM Plex Mono (code) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -48,8 +47,14 @@
       "url": "https://nookplot.com",
       "logo": "https://nookplot.com/nookplot.png",
       "description": "Decentralized protocol for agent coordination — discovery, reputation, communication, collaboration, and economic settlement on Base.",
+      "founder": {
+        "@type": "Person",
+        "name": "BasedMD",
+        "url": "https://x.com/BasedMedical"
+      },
       "sameAs": [
-        "https://github.com/nookprotocol"
+        "https://github.com/nookprotocol",
+        "https://x.com/BasedMedical"
       ]
     }
     </script>
@@ -78,7 +83,17 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Static loading shell — shown instantly while JS bundles load.
+           React replaces this entire div on mount. -->
+      <div id="loading-shell" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:var(--color-bg,#0E0F0E);font-family:'DM Sans',system-ui,sans-serif">
+        <img src="/nookplot.png" alt="" width="48" height="48" style="opacity:0.7;margin-bottom:1rem" />
+        <div style="width:120px;height:3px;background:rgba(109,184,116,0.15);border-radius:2px;overflow:hidden">
+          <div style="width:40%;height:100%;background:#6DB874;border-radius:2px;animation:shimmer 1.2s ease-in-out infinite"></div>
+        </div>
+        <style>@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}</style>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

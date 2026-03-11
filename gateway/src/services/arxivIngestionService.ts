@@ -18,6 +18,11 @@ import type { Pool } from "pg";
 import { SemanticScholarClient, S2Paper } from "./semanticScholarClient.js";
 import { PaperQualityScorer } from "./paperQualityScorer.js";
 import { GrokipediaClient } from "./grokipediaClient.js";
+import type { MessageBus } from "./messageBus.js";
+import { gatewayConfig } from "../config.js";
+import { fetchWithTimeout } from "../fetchWithTimeout.js";
+
+const PINATA_API_URL = "https://api.pinata.cloud";
 
 // ============================================================
 //  Types
@@ -66,6 +71,7 @@ export class ArxivIngestionService {
   private readonly s2Client: SemanticScholarClient;
   private readonly qualityScorer: PaperQualityScorer;
   private readonly grokipediaClient: GrokipediaClient;
+  private messageBus: MessageBus | null = null;
 
   constructor(
     pool: Pool,
@@ -77,6 +83,70 @@ export class ArxivIngestionService {
     this.s2Client = s2Client;
     this.qualityScorer = qualityScorer;
     this.grokipediaClient = grokipediaClient;
+  }
+
+  setMessageBus(bus: MessageBus): void {
+    this.messageBus = bus;
+  }
+
+  /**
+   * Upload paper metadata to IPFS via Pinata.
+   * Falls back to a UUID placeholder if Pinata is unavailable or not configured.
+   */
+  private async uploadPaperToIPFS(paper: S2Paper, qualityScore: number): Promise<string> {
+    if (!gatewayConfig.pinataJwt) {
+      console.log("[arxiv-ingestion] PINATA_JWT not configured, using UUID placeholder");
+      return crypto.randomUUID();
+    }
+
+    const arxivId = paper.externalIds?.ArXiv ?? null;
+    const doi = paper.externalIds?.DOI ?? null;
+
+    const metadata = {
+      type: "paper",
+      title: paper.title,
+      authors: paper.authors.map((a) => ({ name: a.name, authorId: a.authorId })),
+      abstract: paper.abstract ?? null,
+      arxivId,
+      doi,
+      year: paper.year ?? null,
+      fieldsOfStudy: paper.fieldsOfStudy ?? [],
+      citationCount: paper.citationCount ?? 0,
+      qualityScore,
+      url: arxivId
+        ? `https://arxiv.org/abs/${arxivId}`
+        : doi
+          ? `https://doi.org/${doi}`
+          : `https://api.semanticscholar.org/graph/v1/paper/${paper.paperId}`,
+    };
+
+    try {
+      const response = await fetch(`${PINATA_API_URL}/pinning/pinJSONToIPFS`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${gatewayConfig.pinataJwt}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pinataContent: metadata,
+          pinataMetadata: { name: `paper-${arxivId ?? paper.paperId}` },
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "unknown");
+        console.log(`[arxiv-ingestion] Pinata upload failed (HTTP ${response.status}): ${errText}, falling back to UUID`);
+        return crypto.randomUUID();
+      }
+
+      const result = (await response.json()) as { IpfsHash: string };
+      console.log(`[arxiv-ingestion] Uploaded paper metadata to IPFS: ${result.IpfsHash}`);
+      return result.IpfsHash;
+    } catch (err) {
+      console.log(`[arxiv-ingestion] IPFS upload error: ${err instanceof Error ? err.message : String(err)}, falling back to UUID`);
+      return crypto.randomUUID();
+    }
   }
 
   // ------------------------------------------------------------------
@@ -108,8 +178,9 @@ export class ArxivIngestionService {
     let feedXml: string;
     try {
       const feedUrl = `https://export.arxiv.org/rss/${encodeURIComponent(category)}`;
-      const response = await fetch(feedUrl, {
+      const response = await fetchWithTimeout(feedUrl, {
         headers: { "User-Agent": "NookplotGateway/0.1.0" },
+        timeoutMs: 30_000,
       });
       if (!response.ok) {
         console.log(`[arxiv-ingestion] Failed to fetch RSS for ${category}: HTTP ${response.status}`);
@@ -131,7 +202,7 @@ export class ArxivIngestionService {
     // 3. Process each paper
     for (const item of items) {
       try {
-        const ingested = await this.processItem(item);
+        const ingested = await this.processItem(item, category);
         if (ingested) {
           result.papersPassed++;
         }
@@ -230,8 +301,8 @@ export class ArxivIngestionService {
       return false;
     }
 
-    // Generate placeholder content CID
-    const contentCid = crypto.randomUUID();
+    // Upload paper metadata to IPFS (falls back to UUID if Pinata unavailable)
+    const contentCid = await this.uploadPaperToIPFS(s2Paper, qualityResult.total);
 
     // Extract identifiers
     const arxivId = s2Paper.externalIds?.ArXiv ?? null;
@@ -253,7 +324,7 @@ export class ArxivIngestionService {
         contentCid,
         s2Paper.title,
         JSON.stringify(s2Paper.authors.map((a) => ({ name: a.name, authorId: a.authorId }))),
-        JSON.stringify([]),
+        JSON.stringify(s2Paper.fieldsOfStudy ?? []),
         s2Paper.year ? new Date(`${s2Paper.year}-01-01`) : null,
         qualityResult.total,
         JSON.stringify(qualityResult.breakdown),
@@ -261,6 +332,53 @@ export class ArxivIngestionService {
         influence.score,
       ],
     );
+
+    // Dual-write to knowledge_resources (transition period)
+    const krExternalId = arxivId ? `arxiv:${arxivId}` : doi ? `doi:${doi}` : null;
+    if (krExternalId) {
+      await this.pool.query(
+        `INSERT INTO knowledge_resources (
+          source_type, external_id, title, description, url, authors, tags,
+          published_date, quality_score, quality_breakdown,
+          submission_type, arxiv_id, doi, semantic_scholar_id,
+          citation_count, grokipedia_score, content_cid, enrichment_status
+        ) VALUES (
+          'paper', $1, $2, NULL, $3, $4, $5, $6, $7, $8,
+          'auto_ingest', $9, $10, $11, $12, $13, $14, 'complete'
+        ) ON CONFLICT (source_type, external_id) DO NOTHING`,
+        [
+          krExternalId,
+          s2Paper.title,
+          arxivId ? `https://arxiv.org/abs/${arxivId}` : doi ? `https://doi.org/${doi}` : null,
+          JSON.stringify(s2Paper.authors.map((a) => ({ name: a.name, authorId: a.authorId }))),
+          JSON.stringify(s2Paper.fieldsOfStudy ?? []),
+          s2Paper.year ? new Date(`${s2Paper.year}-01-01`) : null,
+          qualityResult.total,
+          JSON.stringify(qualityResult.breakdown),
+          arxivId ?? null,
+          doi,
+          s2Id,
+          s2Paper.citationCount ?? 0,
+          influence.score,
+          contentCid,
+        ],
+      ).catch(() => { /* best-effort dual-write */ });
+    }
+
+    // Emit entity:paper event for interest engine matching
+    if (this.messageBus) {
+      this.messageBus.publish("entity:paper", {
+        type: "entity.created",
+        timestamp: new Date().toISOString(),
+        data: {
+          entityType: "paper",
+          entityId: arxivId ?? s2Id,
+          title: s2Paper.title,
+          tags: (s2Paper.fieldsOfStudy ?? []).map((f) => f.toLowerCase().replace(/\s+/g, "-")),
+          metadata: { citationCount: s2Paper.citationCount, qualityScore: qualityResult.total, doi },
+        },
+      });
+    }
 
     // Create unclaimed credits for authors
     await this.createUnclaimedCreditsForAuthors(s2Paper, contentCid);
@@ -413,7 +531,7 @@ export class ArxivIngestionService {
    *
    * @returns true if the paper was ingested, false if skipped (duplicate or rejected)
    */
-  private async processItem(item: RssItem): Promise<boolean> {
+  private async processItem(item: RssItem, pollCategory?: string): Promise<boolean> {
     // Check if already ingested
     const { rows: existing } = await this.pool.query(
       `SELECT arxiv_id FROM arxiv_content_map WHERE arxiv_id = $1 LIMIT 1`,
@@ -443,14 +561,14 @@ export class ArxivIngestionService {
       return false;
     }
 
-    // Generate placeholder content CID
-    const contentCid = crypto.randomUUID();
+    // Upload paper metadata to IPFS (falls back to UUID if Pinata unavailable)
+    const contentCid = await this.uploadPaperToIPFS(s2Paper, qualityResult.total);
 
     // Extract identifiers
     const arxivId = s2Paper.externalIds?.ArXiv ?? item.arxivId;
     const doi = s2Paper.externalIds?.DOI ?? null;
     const s2Id = s2Paper.paperId;
-    const categories = JSON.stringify([item.link.includes("/") ? item.link : ""]);
+    const categories = JSON.stringify(pollCategory ? [pollCategory] : []);
 
     // Store in arxiv_content_map
     await this.pool.query(
@@ -475,6 +593,53 @@ export class ArxivIngestionService {
         influence.score,
       ],
     );
+
+    // Dual-write to knowledge_resources (transition period)
+    const krExternalId2 = arxivId ? `arxiv:${arxivId}` : doi ? `doi:${doi}` : null;
+    if (krExternalId2) {
+      await this.pool.query(
+        `INSERT INTO knowledge_resources (
+          source_type, external_id, title, description, url, authors, tags,
+          published_date, quality_score, quality_breakdown,
+          submission_type, arxiv_id, doi, semantic_scholar_id,
+          citation_count, grokipedia_score, content_cid, enrichment_status
+        ) VALUES (
+          'paper', $1, $2, NULL, $3, $4, $5, $6, $7, $8,
+          'auto_ingest', $9, $10, $11, $12, $13, $14, 'complete'
+        ) ON CONFLICT (source_type, external_id) DO NOTHING`,
+        [
+          krExternalId2,
+          s2Paper.title,
+          arxivId ? `https://arxiv.org/abs/${arxivId}` : doi ? `https://doi.org/${doi}` : null,
+          JSON.stringify(s2Paper.authors.map((a) => ({ name: a.name, authorId: a.authorId }))),
+          JSON.stringify(s2Paper.fieldsOfStudy ?? categories ? JSON.parse(categories) : []),
+          s2Paper.year ? new Date(`${s2Paper.year}-01-01`) : null,
+          qualityResult.total,
+          JSON.stringify(qualityResult.breakdown),
+          arxivId ?? null,
+          doi,
+          s2Id,
+          s2Paper.citationCount ?? 0,
+          influence.score,
+          contentCid,
+        ],
+      ).catch(() => { /* best-effort dual-write */ });
+    }
+
+    // Emit entity:paper event for interest engine matching
+    if (this.messageBus) {
+      this.messageBus.publish("entity:paper", {
+        type: "entity.created",
+        timestamp: new Date().toISOString(),
+        data: {
+          entityType: "paper",
+          entityId: arxivId ?? s2Id,
+          title: s2Paper.title,
+          tags: (s2Paper.fieldsOfStudy ?? []).map((f) => f.toLowerCase().replace(/\s+/g, "-")),
+          metadata: { citationCount: s2Paper.citationCount, qualityScore: qualityResult.total, doi },
+        },
+      });
+    }
 
     // Create unclaimed credits for authors
     await this.createUnclaimedCreditsForAuthors(s2Paper, contentCid);

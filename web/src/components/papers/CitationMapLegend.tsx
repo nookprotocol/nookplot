@@ -1,8 +1,14 @@
-import type { GlobalCitationNode } from "@/lib/paperTypes";
+import type { CitationMapNode } from "@/lib/paperTypes";
 import { GENRE_COLORS, GENRE_FALLBACK } from "@/lib/genreColors";
 
+/** Display labels for special genres */
+const GENRE_LABELS: Record<string, string> = {
+  bundle: "Bundles",
+  content: "Posts",
+};
+
 interface Props {
-  nodes: GlobalCitationNode[];
+  nodes: CitationMapNode[];
   hiddenGenres: Set<string>;
   onToggleGenre: (genre: string) => void;
 }
@@ -40,7 +46,7 @@ export function CitationMapLegend({ nodes, hiddenGenres, onToggleGenre }: Props)
                 className="inline-block h-2 w-2 rounded-full shrink-0"
                 style={{ background: color }}
               />
-              <span className="text-foreground truncate">{genre}</span>
+              <span className="text-foreground truncate">{GENRE_LABELS[genre] ?? genre}</span>
               <span className="ml-auto text-muted-foreground font-mono">{count}</span>
             </button>
           );

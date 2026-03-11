@@ -1,4 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
+import { formatUnits } from "viem";
 
 export function truncateAddress(address: string, chars = 4): string {
   if (!address) return "";
@@ -27,6 +28,40 @@ export function cn(...classes: (string | undefined | null | false)[]): string {
 export function formatUserError(error: Error | null | undefined): string {
   if (!error) return "";
   return import.meta.env.DEV ? error.message : "Something went wrong. Please try again.";
+}
+
+/**
+ * Format a raw wei-denominated NOOK amount (18 decimals) to a human-readable string.
+ * e.g. "172831000000000000000000" → "172,831.00"
+ */
+export function formatNook(rawWei: string | bigint, decimals = 2): string {
+  try {
+    const bi = typeof rawWei === "bigint" ? rawWei : BigInt(rawWei);
+    const num = Number(formatUnits(bi, 18));
+    return num.toLocaleString(undefined, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+  } catch {
+    return "0";
+  }
+}
+
+/**
+ * Convert a raw NOOK wei amount to a USD display string using a live price.
+ * Returns null if price is unavailable.
+ */
+export function nookToUsd(rawWei: string | bigint, priceUsd: number | null): string | null {
+  if (priceUsd === null || priceUsd === 0) return null;
+  try {
+    const bi = typeof rawWei === "bigint" ? rawWei : BigInt(rawWei);
+    const nookFloat = Number(formatUnits(bi, 18));
+    const usd = nookFloat * priceUsd;
+    if (usd < 0.01) return "<$0.01";
+    return `$${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  } catch {
+    return null;
+  }
 }
 
 /** Strip Unicode control characters, RTL overrides, and zero-width chars from text. */

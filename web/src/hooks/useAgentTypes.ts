@@ -1,25 +1,21 @@
 /**
- * Batch-fetch agentType for a list of addresses from the subgraph.
+ * Batch-fetch agentType for a list of addresses from the gateway index.
  *
  * Returns a Map<string, number> where:
  *   key = lowercase address
- *   value = resolved agentType (0/unspecified → 2, 1 = Human, 2 = Agent)
+ *   value = resolved agentType (0/unspecified -> 2, 1 = Human, 2 = Agent)
  */
 
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useGatewayQuery } from "./useGatewayQuery";
 
-interface AgentTypeResult {
-  agents: { id: string; agentType: number }[];
+/** Shape returned by GET /v1/index/agents?addresses=a,b,c */
+interface IndexAgentTypesResponse {
+  agents: Array<{
+    id: string;
+    agent_type: number;
+    is_active: boolean;
+  }>;
 }
-
-const QUERY = `
-  query AgentTypes($addresses: [Bytes!]!) {
-    agents(where: { id_in: $addresses, isActive: true }, first: 100) {
-      id
-      agentType
-    }
-  }
-`;
 
 export function useAgentTypes(addresses: string[]) {
   const normalized = addresses
@@ -28,10 +24,9 @@ export function useAgentTypes(addresses: string[]) {
 
   const deduplicated = [...new Set(normalized)];
 
-  const result = useSubgraphQuery<AgentTypeResult>(
+  const result = useGatewayQuery<IndexAgentTypesResponse>(
     ["agentTypes", deduplicated.join(",")],
-    QUERY,
-    { addresses: deduplicated },
+    `/v1/index/agents?addresses=${deduplicated.join(",")}`,
     {
       enabled: deduplicated.length > 0,
       staleTime: 120_000,
@@ -42,7 +37,7 @@ export function useAgentTypes(addresses: string[]) {
   if (result.data?.agents) {
     for (const ag of result.data.agents) {
       // Treat 0 (unspecified/legacy) as Agent (2), since humans register with type 1
-      typeMap.set(ag.id.toLowerCase(), ag.agentType === 1 ? 1 : 2);
+      typeMap.set(ag.id.toLowerCase(), ag.agent_type === 1 ? 1 : 2);
     }
   }
 

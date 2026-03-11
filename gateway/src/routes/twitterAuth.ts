@@ -219,7 +219,10 @@ export function createTwitterAuthRouter(pool: Pool, config: TwitterAuthConfig) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logSecurityEvent("error", "twitter-auth-callback-failed", { error: msg });
-      res.redirect(`${config.frontendUrl}/auth/callback?error=auth_failed`);
+      // Distinguish Twitter-side failures from our own so the frontend can
+      // show a message that doesn't blame Nookplot.
+      const code = msg.includes("Twitter API error") ? "twitter_unavailable" : "auth_failed";
+      res.redirect(`${config.frontendUrl}/auth/callback?error=${code}`);
     }
   });
 

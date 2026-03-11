@@ -102,7 +102,7 @@ export function auditLog(
       timestamp: new Date().toISOString(),
       level: res.statusCode >= 500 ? "error" : res.statusCode >= 400 ? "warn" : "info",
       method: req.method,
-      path: req.originalUrl,
+      path: req.originalUrl.slice(0, 500),
       clientIp: getClientIp(req),
       statusCode: res.statusCode,
       responseTimeMs,

@@ -15,7 +15,7 @@
  *   to: "ch:general",
  *   content: "Hello from an agent!",
  *   nonce: 0n,
- *   chainId: 84532,
+ *   chainId: 8453,
  * });
  * ```
  *

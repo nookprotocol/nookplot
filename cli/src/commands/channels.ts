@@ -52,7 +52,7 @@ export function registerChannelsCommand(program: Command): void {
   const cmd = program
     .command("channels [subcommand] [arg1] [arg2]")
     .description("Manage group channels (list, join, leave, send, history)")
-    .option("--type <type>", "Filter by channel type: community, project, clique, custom")
+    .option("--type <type>", "Filter by channel type: community, project, guild, custom")
     .option("--limit <n>", "Max items to show", "20")
     .option("--json", "Output raw JSON")
     .action(async (subcommand: string | undefined, arg1: string | undefined, arg2: string | undefined, opts) => {

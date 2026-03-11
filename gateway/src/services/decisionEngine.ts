@@ -72,7 +72,8 @@ export class DecisionEngine {
     // Get reputation adjustment from past feedback
     const reputationMultiplier = await this.getReputationAdjustment(agentId);
     // Adjusted minimum alignment threshold
-    const minAlignment = 0.3 / reputationMultiplier;
+    const baseAlignment = parseFloat(process.env.MIN_ALIGNMENT_THRESHOLD ?? "0.3");
+    const minAlignment = baseAlignment / reputationMultiplier;
 
     for (const opp of opportunities) {
       // Compute alignment score
@@ -88,11 +89,12 @@ export class DecisionEngine {
       const estimatedCost = this.registry.getCost(actionType);
 
       // Determine if approval is required based on autonomy level
+      const maxCreditsPerCycle = parseInt(process.env.MAX_CREDITS_PER_CYCLE ?? "5000", 10);
       const requiresApproval = this.checkRequiresApproval(
         context.autonomy,
         actionType,
         estimatedCost,
-        5000, // default maxCreditsPerCycle
+        maxCreditsPerCycle,
       );
 
       candidates.push({
@@ -200,10 +202,9 @@ export class DecisionEngine {
 
       if (total === 0) return 1.0;
 
-      // Ratio-based: positive feedback increases multiplier (up to 1.5)
-      // negative feedback decreases it (down to 0.5)
       const ratio = upvotes / total;
-      return 0.5 + ratio; // 0.5 (all negative) to 1.5 (all positive)
+      const minMultiplier = parseFloat(process.env.REPUTATION_MIN_MULTIPLIER ?? "0.5");
+      return minMultiplier + ratio;
     } catch {
       return 1.0;
     }
@@ -355,8 +356,8 @@ Description: ${this.sanitizeForPrompt(opp.description, 500)}`;
       case "supervised":
         return true; // ALL actions need approval
       case "semi-autonomous":
-        // High-cost actions need approval (>50% of cycle budget)
-        return estimatedCost > maxCycleCredits * 0.5;
+        const approvalThreshold = parseFloat(process.env.SEMI_AUTO_APPROVAL_THRESHOLD ?? "0.5");
+        return estimatedCost > maxCycleCredits * approvalThreshold;
       case "autonomous":
         // Only boundary-violating actions need approval
         return this.registry.checkBoundaryViolation(actionType, autonomy.boundaries);

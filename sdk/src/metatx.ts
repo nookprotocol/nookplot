@@ -38,7 +38,7 @@ export const FORWARD_REQUEST_TYPES = {
  *   forwarderAddress,
  *   relayerWallet,
  *   provider,
- *   84532, // Base Sepolia chain ID
+ *   8453, // Base Mainnet chain ID
  * );
  *
  * // Execute a meta-transaction
@@ -65,8 +65,16 @@ export class MetaTransactionManager {
   /** Promise-based mutex to serialize concurrent execute() calls per signer. */
   private executionQueue: Promise<void> = Promise.resolve();
 
-  /** Local nonce cache to prevent concurrent reads returning the same nonce. */
+  /** Promise-based mutex to serialize concurrent submitPresigned() calls.
+   *  Prevents relayer wallet nonce collisions when multiple agents relay simultaneously. */
+  private submitQueue: Promise<void> = Promise.resolve();
+
+  /** Local nonce cache to prevent concurrent reads returning the same nonce.
+   *  Entries auto-expire after LOCAL_NONCE_TTL_MS to prevent stale values
+   *  from persisting across unrelated requests on long-lived singleton instances. */
   private localNonces: Map<string, bigint> = new Map();
+  private localNonceTimestamps: Map<string, number> = new Map();
+  private static readonly LOCAL_NONCE_TTL_MS = 30_000; // 30 seconds
 
   /**
    * Create a new MetaTransactionManager.
@@ -74,7 +82,7 @@ export class MetaTransactionManager {
    * @param forwarderAddress - Deployed NookplotForwarder contract address.
    * @param relayerSigner - Wallet that pays gas (must have ETH).
    * @param provider - JSON-RPC provider connected to the chain.
-   * @param chainId - Chain ID for EIP-712 domain (84532 = Base Sepolia, 8453 = Base).
+   * @param chainId - Chain ID for EIP-712 domain (8453 = Base Mainnet).
    */
   constructor(
     forwarderAddress: string,
@@ -135,9 +143,10 @@ export class MetaTransactionManager {
     return new Promise<ethers.TransactionReceipt>((resolve, reject) => {
       this.executionQueue = this.executionQueue.then(async () => {
         try {
-          // 1. Get nonce: use local cache if available, otherwise fetch from chain
+          // 1. Get nonce: use local cache if fresh, otherwise fetch from chain
           let nonce = this.localNonces.get(agentSigner.address);
-          if (nonce === undefined) {
+          const cachedAt = this.localNonceTimestamps.get(agentSigner.address) ?? 0;
+          if (nonce === undefined || Date.now() - cachedAt > MetaTransactionManager.LOCAL_NONCE_TTL_MS) {
             nonce = await this.getNonce(agentSigner.address);
           }
 
@@ -201,6 +210,7 @@ export class MetaTransactionManager {
 
           // 7. Increment local nonce on successful submission
           this.localNonces.set(agentSigner.address, nonce + 1n);
+          this.localNonceTimestamps.set(agentSigner.address, Date.now());
 
           const receipt = await tx.wait();
           if (!receipt) {
@@ -210,6 +220,7 @@ export class MetaTransactionManager {
         } catch (error) {
           // Reset local nonce cache on failure so next call re-fetches from chain
           this.localNonces.delete(agentSigner.address);
+          this.localNonceTimestamps.delete(agentSigner.address);
           reject(error);
         }
       }).catch(() => {
@@ -221,11 +232,17 @@ export class MetaTransactionManager {
   /**
    * Get the current nonce for an address from the forwarder.
    *
+   * Always queries the chain at the latest block — never returns cached data.
+   * This is critical for the prepare→sign→relay flow where a stale nonce
+   * produces an invalid signature that the on-chain verifier rejects.
+   *
    * @param address - The address to check the nonce for.
    * @returns The current nonce as a bigint.
    */
   async getNonce(address: string): Promise<bigint> {
-    return this.forwarder.nonces(address);
+    // Force "latest" block tag to bypass any RPC-level caching.
+    // ethers v6 Contract.function(..., { blockTag }) passes the tag to eth_call.
+    return this.forwarder.nonces(address, { blockTag: "latest" });
   }
 
   /**
@@ -252,6 +269,9 @@ export class MetaTransactionManager {
    * Unlike `execute()`, this does NOT sign the request — the agent has
    * already signed it locally. The relayer just submits it on-chain.
    *
+   * Serialized via submitQueue to prevent relayer wallet nonce collisions
+   * when multiple agents submit relay requests concurrently.
+   *
    * @param request - The ForwardRequest fields (nonce already included).
    * @param signature - The agent's EIP-712 signature over the request.
    * @returns The mined transaction receipt.
@@ -268,21 +288,31 @@ export class MetaTransactionManager {
     },
     signature: string,
   ): Promise<ethers.TransactionReceipt> {
-    const tx = await this.forwarder.execute({
-      from: request.from,
-      to: request.to,
-      value: request.value,
-      gas: request.gas,
-      deadline: request.deadline,
-      data: request.data,
-      signature,
-    });
+    return new Promise((resolve, reject) => {
+      this.submitQueue = this.submitQueue.then(async () => {
+        try {
+          const tx = await this.forwarder.execute({
+            from: request.from,
+            to: request.to,
+            value: request.value,
+            gas: request.gas,
+            deadline: request.deadline,
+            data: request.data,
+            signature,
+          });
 
-    const receipt = await tx.wait();
-    if (!receipt) {
-      throw new Error("Meta-transaction receipt is null");
-    }
-    return receipt;
+          const receipt = await tx.wait();
+          if (!receipt) {
+            throw new Error("Meta-transaction receipt is null");
+          }
+          resolve(receipt);
+        } catch (error) {
+          reject(error);
+        }
+      }).catch(() => {
+        // Keep the queue alive even if a previous promise rejected
+      });
+    });
   }
 
   /**
@@ -291,6 +321,9 @@ export class MetaTransactionManager {
    * Returns the transaction hash immediately after the tx is broadcast.
    * Use this for non-blocking relay flows where the caller polls for
    * confirmation separately (e.g., via confirm-registration).
+   *
+   * Serialized via submitQueue to prevent relayer wallet nonce collisions
+   * when multiple agents submit relay requests concurrently.
    *
    * @param request - The ForwardRequest fields (nonce already included).
    * @param signature - The agent's EIP-712 signature over the request.
@@ -308,20 +341,30 @@ export class MetaTransactionManager {
     },
     signature: string,
   ): Promise<{ hash: string; waitForReceipt: () => Promise<ethers.TransactionReceipt | null> }> {
-    const tx = await this.forwarder.execute({
-      from: request.from,
-      to: request.to,
-      value: request.value,
-      gas: request.gas,
-      deadline: request.deadline,
-      data: request.data,
-      signature,
-    });
+    return new Promise((resolve, reject) => {
+      this.submitQueue = this.submitQueue.then(async () => {
+        try {
+          const tx = await this.forwarder.execute({
+            from: request.from,
+            to: request.to,
+            value: request.value,
+            gas: request.gas,
+            deadline: request.deadline,
+            data: request.data,
+            signature,
+          });
 
-    return {
-      hash: tx.hash,
-      waitForReceipt: () => tx.wait(),
-    };
+          resolve({
+            hash: tx.hash,
+            waitForReceipt: () => tx.wait(),
+          });
+        } catch (error) {
+          reject(error);
+        }
+      }).catch(() => {
+        // Keep the queue alive even if a previous promise rejected
+      });
+    });
   }
 
   /**

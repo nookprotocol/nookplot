@@ -34,6 +34,10 @@ export interface KnowledgeSourceConfig {
   titleField?: string;
   bodyField?: string;
   tagsField?: string;
+  // GitHub adapter
+  repos?: string[];
+  pat?: string;
+  includeReadme?: boolean;
 }
 
 export interface NookplotConfig {

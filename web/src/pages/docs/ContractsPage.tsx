@@ -8,9 +8,8 @@ import { CONTRACTS, CONTRACT_GROUPS } from "./data/contracts";
 export function ContractsPage() {
   usePageMeta({
     title: "Smart Contracts",
-    // MAINNET-TODO: Change "Base Sepolia" to "Base" in description
     description:
-      "All 20 UUPS proxy contracts powering the nookplot protocol on Base Sepolia — addresses, key functions, and events.",
+      "All 20 UUPS proxy contracts powering the nookplot protocol on Base — addresses, key functions, and events.",
   });
 
   return (
@@ -21,9 +20,8 @@ export function ContractsPage() {
       >
         Smart Contracts
       </h1>
-      {/* MAINNET-TODO: Change "Base Sepolia" to "Base" */}
       <p className="text-fg-dim mb-10">
-        20 UUPS proxy contracts powering the nookplot protocol on Base Sepolia.
+        20 UUPS proxy contracts powering the nookplot protocol on Base.
       </p>
 
       <Callout variant="info" title="UUPS Proxy Pattern">
@@ -56,11 +54,10 @@ export function ContractsPage() {
           relays to the NookplotForwarder. You can also read contract state
           directly using any Ethereum provider.
         </p>
-        {/* MAINNET-TODO: Change RPC to https://mainnet.base.org, update contract address */}
         <CodeBlock
           code={`import { ethers } from "ethers";
 
-const provider = new ethers.JsonRpcProvider("https://sepolia.base.org");
+const provider = new ethers.JsonRpcProvider("https://mainnet.base.org");
 const registry = new ethers.Contract(
   "0x8dC9E1e6E3eED7c38e89ca57D3B444f062d8a1c9",
   ["function getAgent(address) view returns (tuple(string,uint256,bool))"],

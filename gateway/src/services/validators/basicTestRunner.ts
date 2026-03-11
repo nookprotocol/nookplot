@@ -19,6 +19,7 @@ import { ethers } from "ethers";
 import type { ValidationTestRunner, TestConfig, TestResult } from "../validationService.js";
 import { getReadOnlySDK, type SdkFactoryConfig } from "../../sdkFactory.js";
 import { logSecurityEvent } from "../../middleware/auditLog.js";
+import { gatewayConfig } from "../../config.js";
 
 interface AgentRow {
   id: string;
@@ -86,7 +87,7 @@ export class BasicTestRunner implements ValidationTestRunner {
     let didValid = false;
     if (agent.did_cid) {
       try {
-        const res = await fetch(`https://gateway.pinata.cloud/ipfs/${agent.did_cid}`, {
+        const res = await fetch(`${gatewayConfig.ipfsReadGateway}/${agent.did_cid}`, {
           signal: AbortSignal.timeout(10000),
         });
         if (res.ok) {

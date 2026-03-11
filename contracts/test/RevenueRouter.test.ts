@@ -162,6 +162,9 @@ describe("RevenueRouter", function () {
     )) as unknown as RevenueRouter;
     await revenueRouter.waitForDeployment();
 
+    // Call initializeV2 with 0 (preserves V1 backward-compat defaults)
+    await revenueRouter.initializeV2(0);
+
     // Register agents A, B, C, D in the registry
     await registry.connect(agentA).register(DID_CID);
     await registry.connect(agentB).register(DID_CID);
@@ -199,7 +202,7 @@ describe("RevenueRouter", function () {
   // ============================================================
 
   describe("Initialization & defaults", function () {
-    it("should set the owner correctly", async function () {
+    it("should have correct owner", async function () {
       expect(await revenueRouter.owner()).to.equal(owner.address);
     });
 
@@ -272,7 +275,7 @@ describe("RevenueRouter", function () {
       expect(config.isSet).to.be.true;
     });
 
-    it("should allow the owner to set config for any agent", async function () {
+    it("should allow the admin to set config for any agent", async function () {
       await revenueRouter
         .connect(owner)
         .setShareConfig(agentA.address, 3000, 5000, 2000, 0);
@@ -292,7 +295,7 @@ describe("RevenueRouter", function () {
       ).to.be.revertedWithCustomError(revenueRouter, "InvalidShares");
     });
 
-    it("should revert if non-owner non-agent tries to set config", async function () {
+    it("should revert if non-admin non-agent tries to set config", async function () {
       await expect(
         revenueRouter
           .connect(agentB)
@@ -1120,43 +1123,43 @@ describe("RevenueRouter", function () {
       ).to.be.revertedWithCustomError(revenueRouter, "EnforcedPause");
     });
 
-    it("only owner can call setDefaultShares", async function () {
+    it("only admin can call setDefaultShares", async function () {
       await expect(
         revenueRouter.connect(agentA).setDefaultShares(6000, 3000, 1000)
       ).to.be.revertedWithCustomError(
         revenueRouter,
         "OwnableUnauthorizedAccount"
-      );
+      ).withArgs(agentA.address);
     });
 
-    it("only owner can call setDecayFactor", async function () {
+    it("only admin can call setDecayFactor", async function () {
       await expect(
         revenueRouter.connect(agentA).setDecayFactor(7500)
       ).to.be.revertedWithCustomError(
         revenueRouter,
         "OwnableUnauthorizedAccount"
-      );
+      ).withArgs(agentA.address);
     });
 
-    it("only owner can call setMaxChainDepth", async function () {
+    it("only admin can call setMaxChainDepth", async function () {
       await expect(
         revenueRouter.connect(agentA).setMaxChainDepth(10)
       ).to.be.revertedWithCustomError(
         revenueRouter,
         "OwnableUnauthorizedAccount"
-      );
+      ).withArgs(agentA.address);
     });
 
-    it("only owner can call setTreasury", async function () {
+    it("only admin can call setTreasury", async function () {
       await expect(
         revenueRouter.connect(agentA).setTreasury(agentA.address)
       ).to.be.revertedWithCustomError(
         revenueRouter,
         "OwnableUnauthorizedAccount"
-      );
+      ).withArgs(agentA.address);
     });
 
-    it("only owner can call setPaymentToken", async function () {
+    it("only admin can call setPaymentToken", async function () {
       await expect(
         revenueRouter
           .connect(agentA)
@@ -1164,16 +1167,16 @@ describe("RevenueRouter", function () {
       ).to.be.revertedWithCustomError(
         revenueRouter,
         "OwnableUnauthorizedAccount"
-      );
+      ).withArgs(agentA.address);
     });
 
-    it("only owner can call setAgentFactory", async function () {
+    it("only admin can call setAgentFactory", async function () {
       await expect(
         revenueRouter.connect(agentA).setAgentFactory(agentA.address)
       ).to.be.revertedWithCustomError(
         revenueRouter,
         "OwnableUnauthorizedAccount"
-      );
+      ).withArgs(agentA.address);
     });
 
     it("only owner can call pause", async function () {
@@ -1182,10 +1185,10 @@ describe("RevenueRouter", function () {
       ).to.be.revertedWithCustomError(
         revenueRouter,
         "OwnableUnauthorizedAccount"
-      );
+      ).withArgs(agentA.address);
     });
 
-    it("only owner can call unpause", async function () {
+    it("only admin can call unpause", async function () {
       await revenueRouter.connect(owner).pause();
 
       await expect(
@@ -1193,7 +1196,7 @@ describe("RevenueRouter", function () {
       ).to.be.revertedWithCustomError(
         revenueRouter,
         "OwnableUnauthorizedAccount"
-      );
+      ).withArgs(agentA.address);
     });
   });
 
@@ -1482,6 +1485,391 @@ describe("RevenueRouter", function () {
       expect(
         await revenueRouter.getAgentTotalDistributed(agentA.address)
       ).to.equal(ethers.parseEther("30"));
+    });
+  });
+
+  // ============================================================
+  //                V2 — INITIAL SHARE (FLAT DECAY)
+  // ============================================================
+
+  describe("V2 — initialShareBps (flat decay model)", function () {
+    const ETH_AMOUNT = ethers.parseEther("100");
+
+    it("initialShareBps should default to 0", async function () {
+      expect(await revenueRouter.initialShareBps()).to.equal(0);
+    });
+
+    it("should use decayFactorBps for gen 0 when initialShareBps = 0 (backward compat)", async function () {
+      // Default: decayFactorBps=5000, initialShareBps=0
+      // agentC has parent agentA (1-gen chain)
+      await revenueRouter
+        .connect(nonAgent)
+        .distributeRevenue(agentC.address, "bounty", { value: ETH_AMOUNT });
+
+      // chainAmount = 40 ETH. Gen 0: 40*5000/10000 = 20 ETH
+      const agentAEth = await revenueRouter.getClaimableEthBalance(
+        agentA.address
+      );
+      // A(60%) = 12
+      expect(agentAEth).to.equal(ethers.parseEther("12"));
+    });
+
+    it("should use initialShareBps for gen 0 when set", async function () {
+      // Set initialShareBps=2000 (20%), decayFactor stays 5000
+      await revenueRouter.connect(owner).setInitialShareBps(2000);
+
+      await revenueRouter
+        .connect(nonAgent)
+        .distributeRevenue(agentC.address, "bounty", { value: ETH_AMOUNT });
+
+      // chainAmount = 40 ETH
+      // Gen 0: 40 * 2000/10000 = 8 ETH (using initialShareBps)
+      // A(60%) = 4.8, B(40%) = 3.2
+      // Remaining = 32 -> treasury (no gen 1 parent)
+
+      const agentAEth = await revenueRouter.getClaimableEthBalance(
+        agentA.address
+      );
+      expect(agentAEth).to.equal(ethers.parseEther("4.8"));
+
+      const agentBEth = await revenueRouter.getClaimableEthBalance(
+        agentB.address
+      );
+      expect(agentBEth).to.equal(ethers.parseEther("3.2"));
+
+      // Treasury: 10 (direct) + 32 (chain remainder) = 42
+      const treasuryEth = await revenueRouter.getClaimableEthBalance(
+        treasurySigner.address
+      );
+      expect(treasuryEth).to.equal(ethers.parseEther("42"));
+    });
+
+    it("should apply initialShareBps for gen 0 and decayFactorBps for gen 1+", async function () {
+      // Set flat decay params: initialShareBps=2000, decayFactor=8500, maxDepth=15
+      await revenueRouter.connect(owner).setInitialShareBps(2000);
+      await revenueRouter.connect(owner).setDecayFactor(8500);
+      await revenueRouter.connect(owner).setMaxChainDepth(15);
+
+      // Spawn D from C: chain D -> C -> A
+      await agentFactory
+        .connect(agentC)
+        .spawnAgent(0, agentD.address, SOUL_CID_2, 0);
+
+      await revenueRouter
+        .connect(nonAgent)
+        .distributeRevenue(agentD.address, "bounty", { value: ETH_AMOUNT });
+
+      // ownerAmount = 50 ETH -> agentD
+      // chainAmount = 40 ETH
+      // treasuryAmount = 10 ETH
+
+      // Gen 0: parent of D = C. 40 * 2000/10000 = 8 ETH (initialShareBps)
+      //   -> bundle contributors: A(60%)=4.8, B(40%)=3.2
+      //   remaining = 32, genShare = 8
+
+      // Gen 1: parent of C = A. 8 * 8500/10000 = 6.8 ETH (decayFactorBps)
+      //   -> bundle contributors: A(60%)=4.08, B(40%)=2.72
+      //   remaining = 25.2
+
+      // Gen 2: parent of A = 0x0 -> stop. Remaining 25.2 -> treasury
+
+      const agentDEth = await revenueRouter.getClaimableEthBalance(
+        agentD.address
+      );
+      expect(agentDEth).to.equal(ethers.parseEther("50"));
+
+      const agentAEth = await revenueRouter.getClaimableEthBalance(
+        agentA.address
+      );
+      // A gets 4.8 (gen0) + 4.08 (gen1) = 8.88
+      expect(agentAEth).to.equal(ethers.parseEther("8.88"));
+
+      const agentBEth = await revenueRouter.getClaimableEthBalance(
+        agentB.address
+      );
+      // B gets 3.2 (gen0) + 2.72 (gen1) = 5.92
+      expect(agentBEth).to.equal(ethers.parseEther("5.92"));
+
+      // Treasury: 10 (direct) + 25.2 (chain remainder) = 35.2
+      const treasuryEth = await revenueRouter.getClaimableEthBalance(
+        treasurySigner.address
+      );
+      expect(treasuryEth).to.equal(ethers.parseEther("35.2"));
+    });
+
+    it("setInitialShareBps should revert on > 10000", async function () {
+      await expect(
+        revenueRouter.connect(owner).setInitialShareBps(10001)
+      ).to.be.revertedWithCustomError(revenueRouter, "InvalidShares");
+    });
+
+    it("setInitialShareBps should allow 0 (reset to V1 behavior)", async function () {
+      await revenueRouter.connect(owner).setInitialShareBps(2000);
+      await revenueRouter.connect(owner).setInitialShareBps(0);
+      expect(await revenueRouter.initialShareBps()).to.equal(0);
+    });
+
+    it("setInitialShareBps should allow 10000 (100%)", async function () {
+      await revenueRouter.connect(owner).setInitialShareBps(10000);
+      expect(await revenueRouter.initialShareBps()).to.equal(10000);
+    });
+
+    it("should emit InitialShareUpdated event", async function () {
+      await expect(
+        revenueRouter.connect(owner).setInitialShareBps(2000)
+      )
+        .to.emit(revenueRouter, "InitialShareUpdated")
+        .withArgs(0, 2000);
+    });
+
+    it("only admin can call setInitialShareBps", async function () {
+      await expect(
+        revenueRouter.connect(agentA).setInitialShareBps(2000)
+      ).to.be.revertedWithCustomError(
+        revenueRouter,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+    });
+
+    it("initializeV2 should set initialShareBps", async function () {
+      // Deploy a fresh router to test initializeV2
+      const RevenueRouterFactory =
+        await ethers.getContractFactory("RevenueRouter");
+      const freshRouter = (await upgrades.deployProxy(
+        RevenueRouterFactory,
+        [
+          owner.address,
+          await agentFactory.getAddress(),
+          await knowledgeBundle.getAddress(),
+          await registry.getAddress(),
+          treasurySigner.address,
+        ],
+        { ...PROXY_OPTS, constructorArgs: [await forwarder.getAddress()] }
+      )) as unknown as RevenueRouter;
+      await freshRouter.waitForDeployment();
+
+      // initializeV2
+      await freshRouter.connect(owner).initializeV2(2000);
+      expect(await freshRouter.initialShareBps()).to.equal(2000);
+    });
+
+    it("initializeV2 should revert on > 10000", async function () {
+      const RevenueRouterFactory =
+        await ethers.getContractFactory("RevenueRouter");
+      const freshRouter = (await upgrades.deployProxy(
+        RevenueRouterFactory,
+        [
+          owner.address,
+          await agentFactory.getAddress(),
+          await knowledgeBundle.getAddress(),
+          await registry.getAddress(),
+          treasurySigner.address,
+        ],
+        { ...PROXY_OPTS, constructorArgs: [await forwarder.getAddress()] }
+      )) as unknown as RevenueRouter;
+      await freshRouter.waitForDeployment();
+
+      await expect(
+        freshRouter.connect(owner).initializeV2(10001)
+      ).to.be.revertedWithCustomError(freshRouter, "InvalidShares");
+    });
+  });
+
+  // ============================================================
+  //              OWNABLE ACCESS CONTROL
+  // ============================================================
+
+  describe("Ownable access control", function () {
+    it("owner can call all admin functions", async function () {
+      // Verify owner can call each admin function without reverting
+      await revenueRouter.connect(owner).setDefaultShares(6000, 3000, 1000);
+      expect(await revenueRouter.defaultOwnerBps()).to.equal(6000);
+
+      await revenueRouter.connect(owner).setDecayFactor(7000);
+      expect(await revenueRouter.decayFactorBps()).to.equal(7000);
+
+      await revenueRouter.connect(owner).setMaxChainDepth(8);
+      expect(await revenueRouter.maxChainDepth()).to.equal(8);
+
+      await revenueRouter.connect(owner).setInitialShareBps(3000);
+      expect(await revenueRouter.initialShareBps()).to.equal(3000);
+
+      const newTreasury = ethers.Wallet.createRandom().address;
+      await revenueRouter.connect(owner).setTreasury(newTreasury);
+      expect(await revenueRouter.treasury()).to.equal(newTreasury);
+
+      await revenueRouter.connect(owner).setPaymentToken(await mockToken.getAddress());
+      expect(await revenueRouter.paymentToken()).to.equal(await mockToken.getAddress());
+
+      const newFactory = ethers.Wallet.createRandom().address;
+      await revenueRouter.connect(owner).setAgentFactory(newFactory);
+      expect(await revenueRouter.agentFactory()).to.equal(newFactory);
+    });
+
+    it("non-owner reverts with OwnableUnauthorizedAccount", async function () {
+      await expect(
+        revenueRouter.connect(agentA).setDefaultShares(6000, 3000, 1000)
+      ).to.be.revertedWithCustomError(
+        revenueRouter,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+
+      await expect(
+        revenueRouter.connect(agentA).setDecayFactor(7000)
+      ).to.be.revertedWithCustomError(
+        revenueRouter,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+
+      await expect(
+        revenueRouter.connect(agentA).setMaxChainDepth(8)
+      ).to.be.revertedWithCustomError(
+        revenueRouter,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+
+      await expect(
+        revenueRouter.connect(agentA).setInitialShareBps(3000)
+      ).to.be.revertedWithCustomError(
+        revenueRouter,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+
+      await expect(
+        revenueRouter.connect(agentA).setTreasury(agentA.address)
+      ).to.be.revertedWithCustomError(
+        revenueRouter,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+
+      await expect(
+        revenueRouter.connect(agentA).setPaymentToken(await mockToken.getAddress())
+      ).to.be.revertedWithCustomError(
+        revenueRouter,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+
+      await expect(
+        revenueRouter.connect(agentA).setAgentFactory(agentA.address)
+      ).to.be.revertedWithCustomError(
+        revenueRouter,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+
+      await expect(
+        revenueRouter.connect(agentA).unpause()
+      ).to.be.revertedWithCustomError(
+        revenueRouter,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+    });
+
+    it("emergencyWithdraw works for owner", async function () {
+      // Send some tokens to the router contract directly
+      const amount = ethers.parseEther("50");
+      await mockToken.mint(await revenueRouter.getAddress(), amount);
+
+      const balanceBefore = await mockToken.balanceOf(owner.address);
+
+      await expect(
+        revenueRouter.connect(owner).emergencyWithdraw(
+          await mockToken.getAddress(),
+          owner.address,
+          amount
+        )
+      ).to.emit(revenueRouter, "EmergencyWithdraw")
+        .withArgs(await mockToken.getAddress(), owner.address, amount);
+
+      const balanceAfter = await mockToken.balanceOf(owner.address);
+      expect(balanceAfter - balanceBefore).to.equal(amount);
+    });
+
+    it("emergencyWithdraw reverts for non-owner", async function () {
+      const amount = ethers.parseEther("50");
+      await mockToken.mint(await revenueRouter.getAddress(), amount);
+
+      await expect(
+        revenueRouter.connect(agentA).emergencyWithdraw(
+          await mockToken.getAddress(),
+          agentA.address,
+          amount
+        )
+      ).to.be.revertedWithCustomError(
+        revenueRouter,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+    });
+
+    it("emergencyWithdraw reverts with ZeroAmountWithdraw for amount=0", async function () {
+      await expect(
+        revenueRouter.connect(owner).emergencyWithdraw(
+          await mockToken.getAddress(),
+          owner.address,
+          0
+        )
+      ).to.be.revertedWithCustomError(revenueRouter, "ZeroAmountWithdraw");
+    });
+
+    it("emergencyWithdraw reverts with ZeroAddress for to=address(0)", async function () {
+      await expect(
+        revenueRouter.connect(owner).emergencyWithdraw(
+          await mockToken.getAddress(),
+          ethers.ZeroAddress,
+          ethers.parseEther("1")
+        )
+      ).to.be.revertedWithCustomError(revenueRouter, "ZeroAddress");
+    });
+
+    it("rescueETH works for owner and emits EmergencyETHWithdraw", async function () {
+      const amount = ethers.parseEther("1");
+      // Send ETH to the router
+      await owner.sendTransaction({
+        to: await revenueRouter.getAddress(),
+        value: amount,
+      });
+
+      const balanceBefore = await ethers.provider.getBalance(agentB.address);
+
+      await expect(
+        revenueRouter.connect(owner).rescueETH(agentB.address, amount)
+      ).to.emit(revenueRouter, "EmergencyETHWithdraw")
+        .withArgs(agentB.address, amount);
+
+      const balanceAfter = await ethers.provider.getBalance(agentB.address);
+      expect(balanceAfter - balanceBefore).to.equal(amount);
+    });
+
+    it("rescueETH reverts with ZeroAmountWithdraw for amount=0", async function () {
+      await expect(
+        revenueRouter.connect(owner).rescueETH(agentB.address, 0)
+      ).to.be.revertedWithCustomError(revenueRouter, "ZeroAmountWithdraw");
+    });
+
+    it("rescueETH reverts for non-owner", async function () {
+      await expect(
+        revenueRouter.connect(agentA).rescueETH(agentA.address, ethers.parseEther("1"))
+      ).to.be.revertedWithCustomError(
+        revenueRouter,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+    });
+
+    it("_authorizeUpgrade is restricted to onlyOwner", async function () {
+      // Non-owner cannot upgrade
+      const RevenueRouterFactory =
+        await ethers.getContractFactory("RevenueRouter", agentA);
+      const newImpl = await RevenueRouterFactory.deploy(await forwarder.getAddress());
+      await newImpl.waitForDeployment();
+
+      await expect(
+        upgrades.upgradeProxy(await revenueRouter.getAddress(), RevenueRouterFactory, {
+          ...PROXY_OPTS,
+          constructorArgs: [await forwarder.getAddress()],
+        })
+      ).to.be.revertedWithCustomError(
+        revenueRouter,
+        "OwnableUnauthorizedAccount"
+      );
     });
   });
 });

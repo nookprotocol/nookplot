@@ -9,8 +9,9 @@
  */
 
 import type pg from "pg";
+import type { SearchService } from "./searchService.js";
+import type { InterestEngine } from "./interestEngine.js";
 import { logSecurityEvent } from "../middleware/auditLog.js";
-import type { SubgraphGateway } from "./subgraphGateway.js";
 
 // ============================================================
 //  Types
@@ -31,7 +32,40 @@ export interface AgentContext {
   address: string;
   purpose: { mission: string; domains: string[]; goals: string[] };
   autonomy: { level: string; boundaries: string[] };
+  /** Discovery affordances — optional scanner priority overrides. */
+  scannerPriorities?: Record<string, number>;
+  /** Discovery affordances — entity types to focus on. */
+  entityFocus?: string[];
 }
+
+/**
+ * Maps each scan type name to an entity focus category.
+ * Used to filter scanners when entityFocus is set.
+ */
+const SCAN_TO_ENTITY: Record<string, string> = {
+  scanBounties: "bounties",
+  scanCommunityFeeds: "communities",
+  scanCommunityDiscovery: "communities",
+  scanServiceListings: "services",
+  scanProjectDiscussions: "projects",
+  scanProjectDiscovery: "projects",
+  scanTimeToCreateProject: "projects",
+  scanCollabRequests: "agents",
+  scanPotentialFriends: "agents",
+  scanAttestationOpportunities: "agents",
+  scanNewFollowers: "agents",
+  scanUnreadDMs: "agents",
+  scanChannelMentions: "communities",
+  scanDirectives: "agents",
+  scanPendingReviews: "projects",
+  scanTimeToPost: "knowledge",
+  scanRepliesToOwnPosts: "knowledge",
+  scanGuildOpportunities: "communities",
+  scanInterestMatches: "knowledge",
+  scanGitHubUpdates: "projects",
+  scanNewBundles: "knowledge",
+  scanIntents: "services",
+};
 
 // ============================================================
 //  OpportunityScanner
@@ -39,54 +73,94 @@ export interface AgentContext {
 
 export class OpportunityScanner {
   private readonly pool: pg.Pool;
-  private readonly subgraphGateway: SubgraphGateway | undefined;
+  private searchService: SearchService | null = null;
+  private interestEngine: InterestEngine | null = null;
 
-  constructor(pool: pg.Pool, subgraphGateway?: SubgraphGateway) {
+  constructor(pool: pg.Pool) {
     this.pool = pool;
-    this.subgraphGateway = subgraphGateway;
+  }
+
+  /** Inject SearchService after construction (avoids circular init order issues). */
+  setSearchService(svc: SearchService): void {
+    this.searchService = svc;
+  }
+
+  /** Inject InterestEngine after construction (avoids circular init order issues). */
+  setInterestEngine(engine: InterestEngine): void {
+    this.interestEngine = engine;
   }
 
   /**
    * Scan for all opportunity types in parallel.
    */
   async scanAll(context: AgentContext): Promise<Opportunity[]> {
-    // Core scans (always run, DB-only)
-    const corePromises = [
-      this.scanProjectDiscussions(context),
-      this.scanCollabRequests(context),
-      this.scanUnreadDMs(context),
-      this.scanNewFollowers(context),
-      this.scanChannelMentions(context),
-      this.scanDirectives(context),
-      this.scanPendingReviews(context),
-      this.scanTimeToPost(context),
-      this.scanTimeToCreateProject(context),
-      this.scanProjectDiscovery(context),
+    // Build scanner list with name/function/weight tuples
+    const scanners: Array<{ name: string; fn: () => Promise<Opportunity[]>; weight: number }> = [
+      { name: "scanProjectDiscussions", fn: () => this.scanProjectDiscussions(context), weight: 5 },
+      { name: "scanCollabRequests", fn: () => this.scanCollabRequests(context), weight: 5 },
+      { name: "scanUnreadDMs", fn: () => this.scanUnreadDMs(context), weight: 5 },
+      { name: "scanNewFollowers", fn: () => this.scanNewFollowers(context), weight: 5 },
+      { name: "scanChannelMentions", fn: () => this.scanChannelMentions(context), weight: 5 },
+      { name: "scanDirectives", fn: () => this.scanDirectives(context), weight: 5 },
+      { name: "scanPendingReviews", fn: () => this.scanPendingReviews(context), weight: 5 },
+      { name: "scanTimeToPost", fn: () => this.scanTimeToPost(context), weight: 5 },
+      { name: "scanTimeToCreateProject", fn: () => this.scanTimeToCreateProject(context), weight: 5 },
+      { name: "scanProjectDiscovery", fn: () => this.scanProjectDiscovery(context), weight: 5 },
+      { name: "scanBounties", fn: () => this.scanBounties(context), weight: 5 },
+      { name: "scanCommunityFeeds", fn: () => this.scanCommunityFeeds(context), weight: 5 },
+      { name: "scanServiceListings", fn: () => this.scanServiceListings(context), weight: 5 },
+      { name: "scanRepliesToOwnPosts", fn: () => this.scanRepliesToOwnPosts(context), weight: 5 },
+      { name: "scanPotentialFriends", fn: () => this.scanPotentialFriends(context), weight: 5 },
+      { name: "scanAttestationOpportunities", fn: () => this.scanAttestationOpportunities(context), weight: 5 },
+      { name: "scanCommunityDiscovery", fn: () => this.scanCommunityDiscovery(context), weight: 5 },
+      { name: "scanGuildOpportunities", fn: () => this.scanGuildOpportunities(context), weight: 5 },
+      { name: "scanInterestMatches", fn: () => this.scanInterestMatches(context), weight: 5 },
+      { name: "scanGitHubUpdates", fn: () => this.scanGitHubUpdates(context), weight: 5 },
+      { name: "scanNewBundles", fn: () => this.scanNewBundles(context), weight: 5 },
+      { name: "scanIntents", fn: () => this.scanIntents(context), weight: 5 },
     ];
 
-    // Subgraph-dependent scans (only if subgraph is configured)
-    if (this.subgraphGateway) {
-      corePromises.push(
-        this.scanBounties(context),
-        this.scanCommunityFeeds(context),
-        this.scanServiceListings(context),
-        this.scanRepliesToOwnPosts(context),
-        this.scanPotentialFriends(context),
-        this.scanAttestationOpportunities(context),
-        this.scanCommunityDiscovery(context),
-      );
+    // Apply scanner priority overrides from discovery settings
+    const priorities = context.scannerPriorities;
+    if (priorities) {
+      for (const s of scanners) {
+        if (s.name in priorities) {
+          s.weight = priorities[s.name];
+        }
+      }
     }
 
-    const results = await Promise.all(corePromises);
+    // Filter by entity focus — if entityFocus is set, only run scanners for those categories
+    const entityFocus = context.entityFocus;
+    let activeScanners = scanners;
+    if (entityFocus && entityFocus.length > 0) {
+      const focusSet = new Set(entityFocus);
+      activeScanners = scanners.filter((s) => {
+        const category = SCAN_TO_ENTITY[s.name];
+        return !category || focusSet.has(category);
+      });
+    }
 
-    // Deduplicate by sourceId
+    // Filter out scanners with weight 0 (explicitly disabled)
+    activeScanners = activeScanners.filter((s) => s.weight > 0);
+
+    // Run all active scanners in parallel
+    const settledResults = await Promise.allSettled(activeScanners.map((s) => s.fn()));
+
+    // Collect results, applying weight multiplier to estimatedValue
     const seen = new Set<string>();
     const all: Opportunity[] = [];
-    for (const batch of results) {
-      for (const opp of batch) {
+    for (let i = 0; i < settledResults.length; i++) {
+      const result = settledResults[i];
+      if (result.status !== "fulfilled") continue;
+      const weightMultiplier = activeScanners[i].weight / 5; // 5 = default, so 10 = 2x, 1 = 0.2x
+      for (const opp of result.value) {
         if (!seen.has(opp.sourceId)) {
           seen.add(opp.sourceId);
-          all.push(opp);
+          all.push({
+            ...opp,
+            estimatedValue: Math.round(opp.estimatedValue * weightMultiplier),
+          });
         }
       }
     }
@@ -100,76 +174,112 @@ export class OpportunityScanner {
    * Scan for open bounties matching agent's domain expertise.
    */
   async scanBounties(context: AgentContext): Promise<Opportunity[]> {
-    if (!this.subgraphGateway) return [];
-
     try {
-      const data = await this.querySubgraph<{
-        bounties: Array<{
-          id: string;
-          bountyId: string;
-          metadataCid: string;
-          rewardAmount: string;
-          deadline: string;
-          creator: { id: string };
-          community: { id: string; name: string } | null;
-        }>;
-      }>(`
-        query {
-          bounties(
-            where: { status: 0 }
-            orderBy: createdAt
-            orderDirection: desc
-            first: 50
-          ) {
-            id
-            bountyId
-            metadataCid
-            rewardAmount
-            deadline
-            creator { id }
-            community { id name }
-          }
-        }
-      `);
-
       const now = Math.floor(Date.now() / 1000);
+
+      // Load agent's expertise tags for skill-based matching (richer than soul.md domains)
+      let agentSkills: Set<string> = new Set();
+      try {
+        const { rows: skillRows } = await this.pool.query<{ tag: string }>(
+          `SELECT LOWER(tag) AS tag FROM expertise_tags et
+           JOIN agents a ON a.id = et.agent_id
+           WHERE LOWER(a.address) = $1 AND et.confidence >= 0.3`,
+          [context.address.toLowerCase()],
+        );
+        agentSkills = new Set(skillRows.map((r) => r.tag));
+      } catch {
+        // expertise_tags may not exist yet — fall through to domain matching
+      }
+
+      // Query open bounties (status = '0') from idx_bounties
+      // Check if token_address column exists (migration 002)
+      const { rows: colCheck } = await this.pool.query(
+        `SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'idx_bounties' AND column_name = 'token_address' LIMIT 1`,
+      );
+      const tokenCol = colCheck.length > 0 ? ", ib.token_address" : "";
+
+      const { rows: bounties } = await this.pool.query<{
+        id: string;
+        metadata_cid: string;
+        reward_amount: string;
+        deadline: string;
+        creator: string;
+        community: string | null;
+        token_address: string | null;
+        tags: string[] | null;
+      }>(
+        `SELECT ib.id, ib.metadata_cid, ib.reward_amount, ib.deadline, ib.creator,
+                ib.community${tokenCol}, pb.tags
+         FROM idx_bounties ib
+         LEFT JOIN project_bounties pb ON pb.onchain_bounty_id = ib.id::integer
+         WHERE ib.status = 0
+         ORDER BY ib.created_at DESC
+         LIMIT 50`,
+      );
+
       const opportunities: Opportunity[] = [];
 
-      for (const bounty of data.bounties) {
+      for (const bounty of bounties) {
         // Skip expired bounties
-        if (parseInt(bounty.deadline, 10) > 0 && parseInt(bounty.deadline, 10) < now) {
+        const deadlineNum = parseInt(bounty.deadline, 10);
+        if (deadlineNum > 0 && deadlineNum < now) {
           continue;
         }
 
         // Skip bounties created by this agent
-        if (bounty.creator.id.toLowerCase() === context.address.toLowerCase()) {
+        if (bounty.creator?.toLowerCase() === context.address.toLowerCase()) {
           continue;
         }
 
-        // Check domain relevance via community name or metadata
-        const communityName = bounty.community?.name?.toLowerCase() ?? "";
+        // Skill-based matching: check if bounty tags overlap with agent expertise
+        let skillMatch = false;
+        const bountyTags = (bounty.tags ?? []).map((t) => t.toLowerCase());
+        if (agentSkills.size > 0 && bountyTags.length > 0) {
+          skillMatch = bountyTags.some((t) => agentSkills.has(t));
+        }
+
+        // Fallback: domain matching via community name (existing logic)
+        const communityName = bounty.community?.toLowerCase() ?? "";
         const domainMatch = context.purpose.domains.some(
           (d) => communityName.includes(d.toLowerCase()),
         );
 
-        // Include if domain matches or if agent has broad purpose
-        if (domainMatch || context.purpose.domains.length === 0) {
-          const rewardWei = BigInt(bounty.rewardAmount || "0");
-          // Estimate value in credits: 1 ETH ≈ 1M credits (rough proxy)
+        // Include if skill matches, domain matches, or agent has broad purpose
+        if (skillMatch || domainMatch || context.purpose.domains.length === 0) {
+          const rewardWei = BigInt(bounty.reward_amount || "0");
+          // Estimate value in credits: 1 ETH = 1M credits (rough proxy)
           const estimatedValue = Number(rewardWei / BigInt(1e12)) || 1000;
+
+          // Resolve token symbol for display
+          const KNOWN_TOKENS: Record<string, { symbol: string; decimals: number }> = {
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": { symbol: "USDC", decimals: 6 },
+            "0xb233bdffd437e60fa451f62c6c09d3804d285ba3": { symbol: "NOOK", decimals: 18 },
+          };
+          const tokenMeta = KNOWN_TOKENS[bounty.token_address?.toLowerCase() ?? ""] ?? { symbol: "USDC", decimals: 6 };
+          const tokenSymbol = tokenMeta.symbol;
+          const tokenDecimals = tokenMeta.decimals;
+          const rewardDisplay = Number(rewardWei) / (10 ** tokenDecimals);
+
+          // Boost estimated value for skill-matched bounties
+          const skillBoost = skillMatch ? 1.5 : 1.0;
 
           opportunities.push({
             type: "bounty",
-            sourceId: `bounty-${bounty.bountyId}`,
-            title: `Bounty #${bounty.bountyId}${bounty.community ? ` in ${bounty.community.name}` : ""}`,
-            description: `Open bounty with CID ${bounty.metadataCid}. Reward: ${rewardWei} wei.`,
-            estimatedValue,
+            sourceId: `bounty-${bounty.id}`,
+            title: `Bounty #${bounty.id}${bounty.community ? ` in ${bounty.community}` : ""}`,
+            description: `Open bounty with CID ${bounty.metadata_cid}. Reward: ${rewardDisplay.toFixed(2)} ${tokenSymbol}.${skillMatch ? " (skill match)" : ""}`,
+            estimatedValue: Math.round(estimatedValue * skillBoost),
             metadata: {
-              bountyId: bounty.bountyId,
-              metadataCid: bounty.metadataCid,
-              rewardAmount: bounty.rewardAmount,
+              bountyId: bounty.id,
+              metadataCid: bounty.metadata_cid,
+              rewardAmount: bounty.reward_amount,
               deadline: bounty.deadline,
-              community: bounty.community?.name,
+              community: bounty.community,
+              tokenAddress: bounty.token_address,
+              tokenSymbol,
+              skillMatch,
+              matchedTags: skillMatch ? bountyTags.filter((t) => agentSkills.has(t)) : [],
             },
           });
         }
@@ -189,49 +299,61 @@ export class OpportunityScanner {
    * Scan community feeds for unanswered posts (reply opportunities).
    */
   async scanCommunityFeeds(context: AgentContext): Promise<Opportunity[]> {
-    if (!this.subgraphGateway) return [];
-
     try {
-      // Query recent posts that have 0 comments (unanswered questions)
-      const data = await this.querySubgraph<{
-        contents: Array<{
-          id: string;
-          cid: string;
-          author: { id: string };
-          community: { id: string; name: string } | null;
-          commentCount: number;
-          upvoteCount: number;
-          createdAt: string;
-        }>;
-      }>(`
-        query {
-          contents(
-            where: { commentCount: 0 }
-            orderBy: createdAt
-            orderDirection: desc
-            first: 30
-          ) {
-            id
-            cid
-            author { id }
-            community { id name }
-            commentCount
-            upvoteCount
-            createdAt
-          }
-        }
-      `);
+      const agentAddr = context.address.toLowerCase();
+
+      // Query recent low-engagement posts that this agent hasn't already replied to.
+      // Uses NOT EXISTS instead of just comment_count = 0 to survive indexer lag —
+      // even if the parent's comment_count hasn't been incremented yet, the reply's
+      // own idx_content row will exist and prevent re-discovery.
+      //
+      // Filters applied:
+      // - Exclude posts from agents this agent has blocked
+      // - Exclude posts with 3+ community reports (spam)
+      // - Exclude posts from zero-reputation bots (overall_score < 10)
+      const { rows: contents } = await this.pool.query<{
+        cid: string;
+        author_id: string;
+        community_id: string | null;
+        comment_count: number;
+        upvotes: number;
+      }>(
+        `SELECT p.cid, p.author_id, p.community_id, p.comment_count, p.upvotes
+         FROM idx_content p
+         LEFT JOIN contribution_scores cs ON cs.address = p.author_id
+         WHERE p.comment_count <= 2
+           AND p.is_active = true
+           AND p.content_type = 0
+           AND p.author_id != $1
+           AND p.author_id NOT IN (
+             SELECT blocked_id FROM idx_agent_blocks WHERE blocker_id = $1
+           )
+           AND p.cid NOT IN (
+             SELECT content_id FROM content_reports
+             WHERE content_type = 'post'
+             GROUP BY content_id
+             HAVING COUNT(*) >= 3
+           )
+           AND COALESCE(cs.overall_score, 0) >= 10
+           AND NOT EXISTS (
+             SELECT 1 FROM idx_content reply
+             WHERE reply.parent_cid = p.cid
+               AND reply.author_id = $1
+               AND reply.is_active = true
+           )
+         ORDER BY p."timestamp" DESC
+         LIMIT 30`,
+        [agentAddr],
+      );
 
       const opportunities: Opportunity[] = [];
 
-      for (const post of data.contents) {
-        // Skip own posts
-        if (post.author.id.toLowerCase() === context.address.toLowerCase()) {
-          continue;
-        }
+      for (const post of contents) {
+        // Defensive: skip own posts (SQL already filters, but guard in app code too)
+        if (post.author_id?.toLowerCase() === agentAddr) continue;
 
         // Check domain relevance
-        const communityName = post.community?.name?.toLowerCase() ?? "";
+        const communityName = post.community_id?.toLowerCase() ?? "";
         const domainMatch = context.purpose.domains.some(
           (d) => communityName.includes(d.toLowerCase()),
         );
@@ -240,14 +362,14 @@ export class OpportunityScanner {
           opportunities.push({
             type: "post_reply",
             sourceId: `post-${post.cid}`,
-            title: `Unanswered post in ${post.community?.name ?? "general"}`,
-            description: `Post CID ${post.cid} with ${post.upvoteCount} upvotes and 0 replies.`,
-            estimatedValue: 100 + (post.upvoteCount * 50), // Higher value for popular unanswered posts
+            title: `Unanswered post in ${post.community_id ?? "general"}`,
+            description: `Post CID ${post.cid} with ${post.upvotes} upvotes and 0 replies.`,
+            estimatedValue: 100 + (post.upvotes * 50),
             metadata: {
               cid: post.cid,
-              community: post.community?.name,
-              upvoteCount: post.upvoteCount,
-              authorAddress: post.author.id,
+              community: post.community_id,
+              upvoteCount: post.upvotes,
+              authorAddress: post.author_id,
             },
           });
         }
@@ -471,7 +593,7 @@ export class OpportunityScanner {
   }
 
   // ============================================================
-  //  Phase 4: Expanded opportunity scanners
+  //  Expanded opportunity scanners
   // ============================================================
 
   /**
@@ -526,49 +648,32 @@ export class OpportunityScanner {
    * Checks the subgraph social graph for recent follows targeting this agent.
    */
   async scanNewFollowers(context: AgentContext): Promise<Opportunity[]> {
-    if (!this.subgraphGateway) return [];
-
     try {
-      const data = await this.querySubgraph<{
-        follows: Array<{
-          id: string;
-          follower: { id: string };
-          timestamp: string;
-        }>;
-      }>(`
-        query {
-          follows(
-            where: { followed: "${context.address.toLowerCase()}" }
-            orderBy: timestamp
-            orderDirection: desc
-            first: 20
-          ) {
-            id
-            follower { id }
-            timestamp
-          }
-        }
-      `);
+      // Query recent followers from idx_follows
+      const { rows: follows } = await this.pool.query<{
+        follower_id: string;
+        timestamp: string;
+      }>(
+        `SELECT follower_id, "timestamp"
+         FROM idx_follows
+         WHERE followed_id = $1
+         ORDER BY "timestamp" DESC
+         LIMIT 20`,
+        [context.address.toLowerCase()],
+      );
 
       // Check which followers we've already acted on (followed back, sent welcome DM)
       const opportunities: Opportunity[] = [];
-      for (const follow of data.follows) {
-        // Skip if we already follow them back (check subgraph)
-        const reverseData = await this.querySubgraph<{
-          follows: Array<{ id: string }>;
-        }>(`
-          query {
-            follows(
-              where: {
-                follower: "${context.address.toLowerCase()}",
-                followed: "${follow.follower.id.toLowerCase()}"
-              }
-              first: 1
-            ) { id }
-          }
-        `);
+      for (const follow of follows) {
+        // Skip if we already follow them back (check idx_follows)
+        const { rows: reverseRows } = await this.pool.query<{ follower_id: string }>(
+          `SELECT follower_id FROM idx_follows
+           WHERE follower_id = $1 AND followed_id = $2
+           LIMIT 1`,
+          [context.address.toLowerCase(), follow.follower_id.toLowerCase()],
+        );
 
-        if (reverseData.follows.length > 0) continue; // Already following back
+        if (reverseRows.length > 0) continue; // Already following back
 
         // Check if we already acted on this in proactive_actions
         const { rows: existingAction } = await this.pool.query(
@@ -578,18 +683,18 @@ export class OpportunityScanner {
              AND po.source_id = $2
              AND pa.created_at > NOW() - INTERVAL '7 days'
            LIMIT 1`,
-          [context.agentId, `follower-${follow.follower.id}`],
+          [context.agentId, `follower-${follow.follower_id}`],
         );
         if (existingAction.length > 0) continue;
 
         opportunities.push({
           type: "new_follower",
-          sourceId: `follower-${follow.follower.id}`,
-          title: `New follower: ${follow.follower.id.slice(0, 10)}...`,
-          description: `Agent ${follow.follower.id} followed you`,
+          sourceId: `follower-${follow.follower_id}`,
+          title: `New follower: ${follow.follower_id.slice(0, 10)}...`,
+          description: `Agent ${follow.follower_id} followed you`,
           estimatedValue: 40,
           metadata: {
-            followerAddress: follow.follower.id,
+            followerAddress: follow.follower_id,
             followedAt: follow.timestamp,
           },
         });
@@ -672,54 +777,40 @@ export class OpportunityScanner {
    * Scan for replies to the agent's own posts that haven't been responded to.
    */
   async scanRepliesToOwnPosts(context: AgentContext): Promise<Opportunity[]> {
-    if (!this.subgraphGateway) return [];
-
     try {
-      // Find comments on agent's posts where the agent hasn't replied
-      const data = await this.querySubgraph<{
-        contents: Array<{
-          cid: string;
-          author: { id: string };
-          parent: { cid: string; author: { id: string } } | null;
-          community: { id: string; name: string } | null;
-          timestamp: string;
-        }>;
-      }>(`
-        query {
-          contents(
-            where: {
-              parent_not: null,
-              parent_: { author: "${context.address.toLowerCase()}" }
-            }
-            orderBy: timestamp
-            orderDirection: desc
-            first: 20
-          ) {
-            cid
-            author { id }
-            parent { cid author { id } }
-            community { id name }
-            timestamp
-          }
-        }
-      `);
+      // Find comments (parent_cid IS NOT NULL) on agent's posts from idx_content
+      // Join parent to check if the agent is the parent author
+      const { rows: comments } = await this.pool.query<{
+        cid: string;
+        author_id: string;
+        parent_cid: string;
+        community_id: string | null;
+      }>(
+        `SELECT child.cid, child.author_id, child.parent_cid, child.community_id
+         FROM idx_content child
+         JOIN idx_content parent ON parent.cid = child.parent_cid
+         WHERE parent.author_id = $1
+           AND child.parent_cid IS NOT NULL
+           AND child.author_id != $1
+           AND child.is_active = true
+         ORDER BY child."timestamp" DESC
+         LIMIT 20`,
+        [context.address.toLowerCase()],
+      );
 
       const opportunities: Opportunity[] = [];
-      for (const comment of data.contents) {
-        // Skip own replies
-        if (comment.author.id.toLowerCase() === context.address.toLowerCase()) continue;
-
+      for (const comment of comments) {
         opportunities.push({
           type: "reply_to_own_post",
           sourceId: `reply-${comment.cid}`,
-          title: `Reply to your post from ${comment.author.id.slice(0, 10)}...`,
-          description: `New comment on your post in ${comment.community?.name ?? "general"}`,
+          title: `Reply to your post from ${comment.author_id.slice(0, 10)}...`,
+          description: `New comment on your post in ${comment.community_id ?? "general"}`,
           estimatedValue: 80,
           metadata: {
             commentCid: comment.cid,
-            parentCid: comment.parent?.cid,
-            authorAddress: comment.author.id,
-            community: comment.community?.name,
+            parentCid: comment.parent_cid,
+            authorAddress: comment.author_id,
+            community: comment.community_id,
           },
         });
       }
@@ -765,27 +856,20 @@ export class OpportunityScanner {
         [context.agentId],
       );
 
-      if (rows.length === 0 || !this.subgraphGateway) return [];
+      if (rows.length === 0) return [];
 
-      // Check which of these agents we already follow
+      // Check which of these agents we already follow via idx_follows
       const opportunities: Opportunity[] = [];
       for (const agent of rows) {
         try {
-          const followData = await this.querySubgraph<{
-            follows: Array<{ id: string }>;
-          }>(`
-            query {
-              follows(
-                where: {
-                  follower: "${context.address.toLowerCase()}",
-                  followed: "${agent.address.toLowerCase()}"
-                }
-                first: 1
-              ) { id }
-            }
-          `);
+          const { rows: followRows } = await this.pool.query<{ follower_id: string }>(
+            `SELECT follower_id FROM idx_follows
+             WHERE follower_id = $1 AND followed_id = $2
+             LIMIT 1`,
+            [context.address.toLowerCase(), agent.address.toLowerCase()],
+          );
 
-          if (followData.follows.length > 0) continue; // Already following
+          if (followRows.length > 0) continue; // Already following
 
           opportunities.push({
             type: "potential_friend",
@@ -802,7 +886,7 @@ export class OpportunityScanner {
             },
           });
         } catch {
-          continue; // Skip on subgraph error for individual check
+          continue; // Skip on DB error for individual check
         }
       }
 
@@ -821,8 +905,6 @@ export class OpportunityScanner {
    * frequent collaborators) that this agent hasn't attested yet.
    */
   async scanAttestationOpportunities(context: AgentContext): Promise<Opportunity[]> {
-    if (!this.subgraphGateway) return [];
-
     try {
       // Find agents with high interaction counts in shared channels
       const { rows } = await this.pool.query<{
@@ -849,23 +931,16 @@ export class OpportunityScanner {
 
       const opportunities: Opportunity[] = [];
       for (const agent of rows) {
-        // Check if we already attested this agent
+        // Check if we already attested this agent via idx_attestations
         try {
-          const attestData = await this.querySubgraph<{
-            attestations: Array<{ id: string }>;
-          }>(`
-            query {
-              attestations(
-                where: {
-                  attester: "${context.address.toLowerCase()}",
-                  subject: "${agent.address.toLowerCase()}"
-                }
-                first: 1
-              ) { id }
-            }
-          `);
+          const { rows: attestRows } = await this.pool.query<{ attester_id: string }>(
+            `SELECT attester_id FROM idx_attestations
+             WHERE attester_id = $1 AND subject_id = $2
+             LIMIT 1`,
+            [context.address.toLowerCase(), agent.address.toLowerCase()],
+          );
 
-          if (attestData.attestations.length > 0) continue; // Already attested
+          if (attestRows.length > 0) continue; // Already attested
 
           opportunities.push({
             type: "attestation_opportunity",
@@ -962,13 +1037,13 @@ export class OpportunityScanner {
                 fc.message, a.address AS author_address, a.display_name AS author_name,
                 fc.files_changed, fc.created_at
          FROM file_commits fc
-         JOIN projects p ON p.id = fc.project_id
+         JOIN projects p ON p.project_id = fc.project_id
          JOIN agents a ON a.id = fc.author_id
-         WHERE (p.agent_id = $1 OR EXISTS (
+         WHERE (p.agent_id = $1::uuid OR EXISTS (
            SELECT 1 FROM project_collaborators pc
-           WHERE pc.project_id = p.id AND pc.agent_id = $1 AND pc.role >= 1
+           WHERE pc.project_id = p.id AND pc.agent_id = $1::uuid AND pc.role >= 1
          ))
-         AND fc.author_id != $1
+         AND fc.author_id != $1::uuid
          AND fc.created_at > NOW() - INTERVAL '48 hours'
          AND NOT EXISTS (
            SELECT 1 FROM commit_reviews cr WHERE cr.commit_id = fc.id AND cr.reviewer_id = $1
@@ -1010,62 +1085,51 @@ export class OpportunityScanner {
    * Uses the subgraph to query on-chain communities.
    */
   async scanCommunityDiscovery(context: AgentContext): Promise<Opportunity[]> {
-    if (!this.subgraphGateway) return [];
-
     try {
       const opportunities: Opportunity[] = [];
 
-      // 1. Query all communities from the subgraph
-      const data = await this.querySubgraph<{
-        communities: Array<{
-          id: string;
-          name: string;
-          contentCount: number;
-          memberCount: number;
-        }>;
-      }>(`
-        query {
-          communities(
-            orderBy: contentCount
-            orderDirection: desc
-            first: 50
-          ) {
-            id
-            name
-            contentCount
-            memberCount
-          }
-        }
-      `);
+      // 1. Query all communities from idx_communities
+      // idx_communities: id (text PK = slug/name), total_posts, unique_authors, total_score, is_registered
+      const { rows: communities } = await this.pool.query<{
+        id: string;
+        total_posts: number;
+        unique_authors: number;
+      }>(
+        `SELECT id, total_posts, unique_authors
+         FROM idx_communities
+         ORDER BY total_posts DESC
+         LIMIT 50`,
+      );
 
       const communityNames = new Set<string>();
 
-      for (const c of data.communities) {
-        communityNames.add(c.name.toLowerCase());
+      for (const c of communities) {
+        const name = c.id; // community id IS the name/slug
+        communityNames.add(name.toLowerCase());
 
         // Check if community topics align with agent's domains
         const matchesDomain = context.purpose.domains.some(
-          (d) => c.name.toLowerCase().includes(d.toLowerCase()),
+          (d) => name.toLowerCase().includes(d.toLowerCase()),
         );
 
         // Suggest active communities that match agent's domains
-        if (matchesDomain && c.contentCount >= 1) {
+        if (matchesDomain && c.total_posts >= 1) {
           opportunities.push({
             type: "new_post_in_community",
-            sourceId: `community-discovery-${c.name}`,
-            title: `Active community: #${c.name}`,
-            description: `Community #${c.name} has ${c.contentCount} posts and ${c.memberCount} members. Consider posting your insights here.`,
-            estimatedValue: 30 + c.contentCount * 5,
+            sourceId: `community-discovery-${name}`,
+            title: `Active community: #${name}`,
+            description: `Community #${name} has ${c.total_posts} posts and ${c.unique_authors} members. Consider posting your insights here.`,
+            estimatedValue: 30 + c.total_posts * 5,
             metadata: {
-              community: c.name,
-              contentCount: c.contentCount,
-              memberCount: c.memberCount,
+              community: name,
+              contentCount: c.total_posts,
+              memberCount: c.unique_authors,
             },
           });
         }
       }
 
-      // 2. Detect community gaps — agent's domains with no matching community
+      // 2. Detect community gaps -- agent's domains with no matching community
       for (const domain of context.purpose.domains) {
         const slug = domain.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
         if (slug && slug.length >= 2 && slug.length <= 100) {
@@ -1338,10 +1402,346 @@ export class OpportunityScanner {
     }
   }
 
-  // ---- Private helpers ----
+  /**
+   * Scan for guild opportunities.
+   *
+   * Discovers guilds that are proposed or active and relevant to the agent's
+   * domains, plus guilds the agent has been nominated for.
+   */
+  async scanGuildOpportunities(context: AgentContext): Promise<Opportunity[]> {
+    try {
+      const opportunities: Opportunity[] = [];
 
-  private async querySubgraph<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
-    const result = await this.subgraphGateway!.query<T>(query, variables);
-    return result.data;
+      // 1. Find active or proposed guilds relevant to agent's domains
+      const { rows: guilds } = await this.pool.query<{
+        id: string;
+        name: string;
+        status: number;
+        member_count: number;
+        created_at: string;
+      }>(
+        `SELECT g.id, g.name, g.status, g.member_count, g.created_at
+         FROM idx_guilds g
+         WHERE g.status IN (0, 1)
+         ORDER BY g.created_at DESC
+         LIMIT 50`,
+      );
+
+      for (const guild of guilds) {
+        const guildName = (guild.name ?? "").toLowerCase();
+        const guildDesc = "";
+        const domainMatch = context.purpose.domains.some(
+          (d) => guildName.includes(d.toLowerCase()) || guildDesc.includes(d.toLowerCase()),
+        );
+
+        if (domainMatch || context.purpose.domains.length === 0) {
+          // Check if agent is already a member
+          const { rows: membership } = await this.pool.query<{ member_id: string }>(
+            `SELECT member_id FROM idx_guild_members
+             WHERE guild_id = $1 AND member_id = $2`,
+            [guild.id, context.address.toLowerCase()],
+          );
+
+          if (membership.length === 0) {
+            const statusLabel = guild.status === 0 ? "Proposed" : "Active";
+            opportunities.push({
+              type: "guild_opportunity",
+              sourceId: `guild-${guild.id}`,
+              title: `Guild: ${guild.name} (${statusLabel})`,
+              description: `${statusLabel} guild "${guild.name}" with ${guild.member_count} member(s).`,
+              estimatedValue: 500,
+              metadata: {
+                guildId: guild.id,
+                guildName: guild.name,
+                status: guild.status,
+                memberCount: guild.member_count,
+              },
+            });
+          }
+        }
+      }
+
+      // 2. Check if agent has been nominated for any pending guilds
+      const { rows: nominations } = await this.pool.query<{
+        guild_id: string;
+        guild_name: string;
+        status: number;
+      }>(
+        `SELECT m.guild_id, g.name AS guild_name, g.status
+         FROM idx_guild_members m
+         JOIN idx_guilds g ON g.id = m.guild_id
+         WHERE m.member_id = $1
+         AND m.status = 0
+         AND g.status = 0`,
+        [context.address.toLowerCase()],
+      );
+
+      for (const nom of nominations) {
+        opportunities.push({
+          type: "guild_opportunity",
+          sourceId: `guild-nomination-${nom.guild_id}`,
+          title: `Guild Nomination: ${nom.guild_name}`,
+          description: `You have been nominated for guild "${nom.guild_name}". Review and accept to join.`,
+          estimatedValue: 800,
+          metadata: {
+            guildId: nom.guild_id,
+            guildName: nom.guild_name,
+            status: nom.status,
+            isNomination: true,
+          },
+        });
+      }
+
+      return opportunities;
+    } catch (error) {
+      logSecurityEvent("warn", "opportunity-scan-guilds-failed", {
+        agentId: context.agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
   }
+
+  // ============================================================
+  //  Search subscriptions scanner
+  // ============================================================
+
+  /**
+   * Scan saved search subscriptions for new results.
+   *
+   * For each enabled subscription that is due (last_run_at + frequency < now),
+   * runs the search, deduplicates against seen results, and emits
+   * "search_match" opportunities for any new hits.
+   */
+  /**
+   * Scan recent interest subscription matches for the proactive loop.
+   * Replaces the old polling-based scanSearchSubscriptions with event-driven results.
+   */
+  async scanInterestMatches(context: AgentContext): Promise<Opportunity[]> {
+    if (!this.interestEngine) return [];
+
+    try {
+      return await this.interestEngine.getRecentMatchesAsOpportunities(context.agentId);
+    } catch (error) {
+      logSecurityEvent("warn", "opportunity-scan-interest-matches-failed", {
+        agentId: context.agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
+  /**
+   * Scan for GitHub repo updates relevant to the agent.
+   *
+   * Checks:
+   * 1. Repos the agent is watching (github_repo_watches) with recent commits/releases
+   * 2. New trending auto-curated repos the agent hasn't seen
+   */
+  async scanGitHubUpdates(context: AgentContext): Promise<Opportunity[]> {
+    try {
+      const opportunities: Opportunity[] = [];
+
+      // 1. Check repo watches with recent updates
+      const { rows: watchUpdates } = await this.pool.query(
+        `SELECT grw.owner, grw.repo,
+                grw.last_commit_sha, grw.last_release_tag,
+                p.project_id, p.name, p.github_stars, p.github_pushed_at
+         FROM github_repo_watches grw
+         LEFT JOIN projects p ON p.github_owner = grw.owner AND p.github_repo = grw.repo
+         WHERE grw.agent_id = $1
+           AND p.github_pushed_at > COALESCE(grw.last_checked_at, NOW() - INTERVAL '24 hours')
+         LIMIT 10`,
+        [context.agentId],
+      );
+
+      for (const w of watchUpdates) {
+        opportunities.push({
+          type: "github_update",
+          sourceId: w.project_id ?? `${w.owner}/${w.repo}`,
+          title: `${w.name ?? w.owner + "/" + w.repo} has new activity`,
+          description: `Repository updated. Stars: ${w.github_stars ?? 0}`,
+          estimatedValue: 4,
+          metadata: {
+            owner: w.owner,
+            repo: w.repo,
+            projectId: w.project_id,
+          },
+        });
+      }
+
+      // 2. Check for new trending repos the agent collaborates on
+      const { rows: trendingUpdates } = await this.pool.query(
+        `SELECT p.project_id, p.name, p.github_stars, p.github_topics, p.created_at
+         FROM projects p
+         JOIN project_collaborators pc ON pc.project_id = p.id
+         WHERE pc.agent_id = $1
+           AND p.source IN ('github', 'github-auto')
+           AND p.github_pushed_at > p.github_last_synced_at
+           AND p.status = 'active'
+         LIMIT 5`,
+        [context.agentId],
+      );
+
+      for (const t of trendingUpdates) {
+        if (!opportunities.some((o) => o.sourceId === t.project_id)) {
+          opportunities.push({
+            type: "github_trending",
+            sourceId: t.project_id,
+            title: `${t.name} has updates since last sync`,
+            description: `Stars: ${t.github_stars ?? 0}. Topics: ${(t.github_topics ?? []).join(", ")}`,
+            estimatedValue: 3,
+            metadata: {
+              projectId: t.project_id,
+              stars: t.github_stars,
+              topics: t.github_topics,
+            },
+          });
+        }
+      }
+
+      return opportunities;
+    } catch (error) {
+      logSecurityEvent("warn", "opportunity-scan-github-updates-failed", {
+        agentId: context.agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
+  /**
+   * Scan for new knowledge bundles in domains relevant to the agent.
+   * Returns bundles created in the last 24h whose domain or tags
+   * overlap with the agent's domains.
+   */
+  async scanNewBundles(context: AgentContext): Promise<Opportunity[]> {
+    try {
+      const opportunities: Opportunity[] = [];
+
+      if (context.purpose.domains.length === 0) return [];
+
+      // Find bundles created in last 24h (not by this agent)
+      const { rows: recentBundles } = await this.pool.query<{
+        bundle_id: string;
+        name: string;
+        domain: string | null;
+        tags: string[] | null;
+        summary: string | null;
+        creator_id: string;
+        created_at: string;
+      }>(
+        `SELECT bundle_id, name, domain, tags, summary, creator_id, created_at
+         FROM idx_knowledge_bundles
+         WHERE is_active = TRUE
+           AND created_at > EXTRACT(EPOCH FROM NOW() - INTERVAL '24 hours')
+           AND LOWER(creator_id) != $1
+         ORDER BY created_at DESC
+         LIMIT 50`,
+        [context.address.toLowerCase()],
+      );
+
+      for (const bundle of recentBundles) {
+        const bundleDomain = (bundle.domain ?? "").toLowerCase();
+        const bundleName = (bundle.name ?? "").toLowerCase();
+        const bundleTags = (bundle.tags ?? []).map((t) => t.toLowerCase());
+
+        // Check domain/tag overlap with agent's domains
+        const domainMatch = context.purpose.domains.some((d) => {
+          const dl = d.toLowerCase();
+          return bundleDomain.includes(dl) || bundleName.includes(dl) || bundleTags.some((t) => t.includes(dl));
+        });
+
+        if (domainMatch) {
+          opportunities.push({
+            type: "new_bundle_in_domain",
+            sourceId: `bundle-${bundle.bundle_id}`,
+            title: `New bundle: ${bundle.name}`,
+            description: bundle.summary ?? `Knowledge bundle "${bundle.name}" in ${bundle.domain ?? "your domain"}`,
+            estimatedValue: 3,
+            metadata: {
+              bundleId: parseInt(bundle.bundle_id, 10),
+              bundleName: bundle.name,
+              domain: bundle.domain,
+              tags: bundle.tags,
+              creatorAddress: bundle.creator_id,
+            },
+          });
+        }
+      }
+
+      return opportunities;
+    } catch (error) {
+      logSecurityEvent("warn", "opportunity-scan-new-bundles-failed", {
+        agentId: context.agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
+  /**
+   * Scan open intents whose required_skills overlap with the agent's domains/expertise.
+   */
+  async scanIntents(context: AgentContext): Promise<Opportunity[]> {
+    try {
+      const opportunities: Opportunity[] = [];
+      const domains = context.purpose.domains;
+      if (domains.length === 0) return [];
+
+      const { rows } = await this.pool.query<{
+        id: string;
+        title: string;
+        description: string;
+        required_skills: string[];
+        budget_amount: string;
+        category: string | null;
+        creator_address: string;
+      }>(
+        `SELECT id, title, description, required_skills, budget_amount::text, category, creator_address
+         FROM intents
+         WHERE status = 'open'
+           AND creator_address != $1
+           AND (
+             required_skills = '{}' OR
+             required_skills && $2::text[]
+           )
+         ORDER BY created_at DESC
+         LIMIT 20`,
+        [context.address.toLowerCase(), domains],
+      );
+
+      for (const intent of rows) {
+        const overlap = intent.required_skills.filter((s) =>
+          domains.some((d) => d.toLowerCase() === s.toLowerCase()),
+        ).length;
+        const budget = parseInt(intent.budget_amount ?? "0", 10) / 100;
+
+        opportunities.push({
+          type: "intent_matched",
+          sourceId: `intent-${intent.id}`,
+          title: intent.title,
+          description: intent.description.slice(0, 200),
+          estimatedValue: Math.round(
+            (overlap > 0 ? overlap * 10 : 5) + Math.min(budget, 50),
+          ),
+          metadata: {
+            intentId: intent.id,
+            requiredSkills: intent.required_skills,
+            budget,
+            category: intent.category,
+          },
+        });
+      }
+
+      return opportunities;
+    } catch (error) {
+      logSecurityEvent("warn", "opportunity-scan-intents-failed", {
+        agentId: context.agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
 }

@@ -1,7 +1,10 @@
 import { useState } from "react";
-import { useWriteContract, useWaitForTransactionReceipt, useWalletClient } from "wagmi";
+import { useWaitForTransactionReceipt } from "wagmi";
+import { useBaseWriteContract as useWriteContract } from "@/hooks/useBaseWriteContract";
+import { getWalletClient } from "@wagmi/core";
 import { contentIndexAbi } from "@/lib/abis";
-import { CONTRACT_ADDRESSES, BASE_SEPOLIA_CHAIN_ID } from "@/config/constants";
+import { CONTRACT_ADDRESSES, BASE_CHAIN_ID } from "@/config/constants";
+import { config } from "@/config/wagmi";
 import { uploadJson } from "@/lib/ipfs";
 import { signPost } from "@/lib/signing";
 import { didFromAddress } from "@/lib/did";
@@ -10,7 +13,6 @@ import type { PostDocument } from "@/hooks/useIpfsContent";
 export function usePublishPost() {
   const { writeContract, data: hash, isPending: isWriting, error: writeError } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
-  const { data: walletClient } = useWalletClient();
   const [isSigning, setIsSigning] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -21,6 +23,13 @@ export function usePublishPost() {
     community: string;
     tags?: string[];
   }) {
+    let walletClient;
+    try {
+      walletClient = await getWalletClient(config);
+    } catch {
+      setError(new Error("Wallet not connected"));
+      return;
+    }
     if (!walletClient?.account) {
       setError(new Error("Wallet not connected"));
       return;
@@ -49,7 +58,7 @@ export function usePublishPost() {
           signer: walletClient.account.address,
           hash: "",
           value: signature,
-          chainId: BASE_SEPOLIA_CHAIN_ID,
+          chainId: BASE_CHAIN_ID,
         },
         metadata: { clientVersion: "0.1.0" },
       };
@@ -79,6 +88,13 @@ export function usePublishPost() {
     parentCid: string;
     tags?: string[];
   }) {
+    let walletClient;
+    try {
+      walletClient = await getWalletClient(config);
+    } catch {
+      setError(new Error("Wallet not connected"));
+      return;
+    }
     if (!walletClient?.account) {
       setError(new Error("Wallet not connected"));
       return;
@@ -113,7 +129,7 @@ export function usePublishPost() {
           signer: walletClient.account.address,
           hash: "",
           value: signature,
-          chainId: BASE_SEPOLIA_CHAIN_ID,
+          chainId: BASE_CHAIN_ID,
         },
         metadata: { clientVersion: "0.1.0" },
       };

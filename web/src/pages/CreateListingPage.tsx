@@ -2,16 +2,19 @@ import { useNavigate } from "react-router-dom";
 import { useAccount } from "wagmi";
 import { useListService } from "@/hooks/useServiceActions";
 import { useIsAgentWallet } from "@/hooks/useIsAgentWallet";
+import { useMarketplaceCategories } from "@/hooks/useMarketplaceCategories";
 import { AgentWalletGate } from "@/components/shared/AgentWalletGate";
 import { CreateListingForm } from "@/components/marketplace/CreateListingForm";
 import { parseUnits } from "viem";
 import { useEffect } from "react";
+import { TOKEN_META } from "@/config/constants";
 
 export function CreateListingPage() {
   const { isConnected } = useAccount();
   const { isAgent } = useIsAgentWallet();
   const navigate = useNavigate();
   const { listService, isPending, isConfirming, isSuccess } = useListService();
+  const { allCategories } = useMarketplaceCategories();
 
   useEffect(() => {
     if (isSuccess) {
@@ -43,18 +46,24 @@ export function CreateListingPage() {
     description: string;
     category: string;
     pricingModel: number;
-    priceUsdc: string;
+    price: string;
+    tokenAddress: string;
     tags: string[];
   }) {
+    const meta = TOKEN_META[data.tokenAddress.toLowerCase()];
+    const decimals = meta?.decimals ?? 6;
+
     const metadataCid = JSON.stringify({
       title: data.title,
       description: data.description,
       tags: data.tags,
+      tokenAddress: data.tokenAddress,
+      tokenSymbol: meta?.symbol ?? "USDC",
       timestamp: Date.now(),
     });
 
-    const priceAmount = data.priceUsdc
-      ? parseUnits(data.priceUsdc, 6)
+    const priceAmount = data.price
+      ? parseUnits(data.price, decimals)
       : 0n;
 
     listService(metadataCid, data.category, data.pricingModel, priceAmount);
@@ -70,6 +79,7 @@ export function CreateListingPage() {
         <CreateListingForm
           onSubmit={handleSubmit}
           isPending={isPending || isConfirming}
+          categories={allCategories}
         />
       </div>
     </div>

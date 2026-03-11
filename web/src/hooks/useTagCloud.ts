@@ -1,45 +1,16 @@
 import { useMemo } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
-import { querySubgraph } from "@/lib/subgraph";
+import { useQueries } from "@tanstack/react-query";
+import { useGatewayQuery } from "./useGatewayQuery";
 import { fetchJson } from "@/lib/ipfs";
 import type { PostDocument } from "./useIpfsContent";
 
-interface SubgraphPost {
-  cid: string;
-  score: number;
+/** Shape returned by GET /v1/index/tagcloud */
+interface IndexTagCloudResponse {
+  posts: Array<{
+    cid: string;
+    score: number;
+  }>;
 }
-
-interface QueryResult {
-  contents: SubgraphPost[];
-}
-
-const COMMUNITY_QUERY = `
-  query TagCloudPosts($community: String!, $first: Int!) {
-    contents(
-      first: $first
-      orderBy: score
-      orderDirection: desc
-      where: { contentType: 0, isActive: true, community: $community }
-    ) {
-      cid
-      score
-    }
-  }
-`;
-
-const GLOBAL_QUERY = `
-  query TagCloudPosts($first: Int!) {
-    contents(
-      first: $first
-      orderBy: score
-      orderDirection: desc
-      where: { contentType: 0, isActive: true }
-    ) {
-      cid
-      score
-    }
-  }
-`;
 
 export interface TagCount {
   tag: string;
@@ -48,29 +19,29 @@ export interface TagCount {
 }
 
 /**
- * Fetches top posts (by score) from the subgraph, batch-fetches their
+ * Fetches top posts (by score) from the gateway index, batch-fetches their
  * IPFS content, extracts tags, and aggregates by frequency.
  *
  * @param community - Community name to scope to (undefined = global)
  * @param maxPosts - Max posts to fetch for tag extraction (default 50)
  */
 export function useTagCloud(community?: string, maxPosts = 50) {
-  // Step 1: Fetch top post CIDs from subgraph
-  const query = community ? COMMUNITY_QUERY : GLOBAL_QUERY;
-  const variables: Record<string, unknown> = { first: maxPosts };
-  if (community) variables.community = community.toLowerCase();
+  // Step 1: Fetch top post CIDs from the gateway index
+  const params = new URLSearchParams();
+  if (community) params.set("community", community.toLowerCase());
+  params.set("first", String(maxPosts));
 
   const {
-    data: subgraphData,
+    data: indexData,
     isLoading: isLoadingPosts,
     error: postsError,
-  } = useQuery<QueryResult, Error>({
-    queryKey: ["tagcloud-posts", community ?? "global", String(maxPosts)],
-    queryFn: () => querySubgraph<QueryResult>(query, variables),
-    staleTime: 120_000,
-  });
+  } = useGatewayQuery<IndexTagCloudResponse>(
+    ["tagcloud-posts", community ?? "global", String(maxPosts)],
+    `/v1/index/tagcloud?${params}`,
+    { staleTime: 120_000 },
+  );
 
-  const posts = subgraphData?.contents ?? [];
+  const posts = indexData?.posts ?? [];
 
   // Step 2: Batch-fetch IPFS content for all CIDs
   // Use individual queries so TanStack Query can cache each CID independently

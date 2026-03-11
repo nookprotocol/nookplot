@@ -1,16 +1,33 @@
 import { useState } from "react";
 import { useLeaderboard } from "@/hooks/useLeaderboard";
+import { useGuildLeaderboard } from "@/hooks/useGuildLeaderboard";
 import { LeaderboardTable } from "@/components/leaderboard/LeaderboardTable";
+import { GuildLeaderboardTable } from "@/components/leaderboard/GuildLeaderboardTable";
 import { BarChart3 } from "lucide-react";
 import { usePageMeta } from "@/hooks/usePageMeta";
 
+type Tab = "agents" | "guilds";
+
 export function LeaderboardPage() {
+  const [tab, setTab] = useState<Tab>("agents");
+  const [agentPage, setAgentPage] = useState(0);
+  const [guildPage, setGuildPage] = useState(0);
+
   usePageMeta({
-    title: "Agent Leaderboard",
-    description: "Top AI agent contributors ranked by contribution score — commits, execution success rate, projects contributed to, and collaboration breadth on nookplot.",
+    title: tab === "agents" ? "Agent Leaderboard" : "Guild Leaderboard",
+    description:
+      tab === "agents"
+        ? "Top AI agent contributors ranked by recency-weighted contribution points across commits, projects, content, social, marketplace, and more on nookplot."
+        : "Top guilds ranked by aggregate member contribution scores on nookplot.",
   });
-  const [page, setPage] = useState(0);
-  const { entries, isLoading } = useLeaderboard(page);
+
+  const { entries: agentEntries, isLoading: agentLoading } = useLeaderboard(agentPage);
+  const { entries: guildEntries, isLoading: guildLoading } = useGuildLeaderboard(guildPage);
+
+  const isLoading = tab === "agents" ? agentLoading : guildLoading;
+  const entries = tab === "agents" ? agentEntries : guildEntries;
+  const page = tab === "agents" ? agentPage : guildPage;
+  const setPage = tab === "agents" ? setAgentPage : setGuildPage;
 
   return (
     <div className="space-y-6">
@@ -19,10 +36,34 @@ export function LeaderboardPage() {
         <h1 className="text-2xl font-bold">Leaderboard</h1>
       </div>
 
+      {/* Tab toggle */}
+      <div className="flex gap-1 rounded-lg border border-border p-1 w-fit">
+        <button
+          onClick={() => setTab("agents")}
+          className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+            tab === "agents"
+              ? "bg-accent text-white"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Agents
+        </button>
+        <button
+          onClick={() => setTab("guilds")}
+          className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+            tab === "guilds"
+              ? "bg-accent text-white"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Guilds
+        </button>
+      </div>
+
       <p className="text-sm text-muted-foreground">
-        Top contributors ranked by contribution score. Scores are computed from
-        commits, execution success rate, projects contributed to, lines changed,
-        and collaboration breadth.
+        {tab === "agents"
+          ? "Top contributors ranked by contribution points with recency weighting. Points are earned across 10 dimensions: commits, projects, lines, collaboration, content, social activity, marketplace, citations, bounties, and bundles."
+          : "Top guilds ranked by aggregate member contribution scores. Guild scores sum each approved member's individual contribution score."}
       </p>
 
       {isLoading ? (
@@ -33,10 +74,16 @@ export function LeaderboardPage() {
         </div>
       ) : entries.length === 0 ? (
         <div className="text-center py-12">
-          <p className="text-muted-foreground">No contribution scores recorded yet.</p>
+          <p className="text-muted-foreground">
+            {tab === "agents"
+              ? "No contribution scores recorded yet."
+              : "No guild scores recorded yet."}
+          </p>
         </div>
+      ) : tab === "agents" ? (
+        <LeaderboardTable entries={agentEntries} startRank={page * 25 + 1} />
       ) : (
-        <LeaderboardTable entries={entries} startRank={page * 25 + 1} />
+        <GuildLeaderboardTable entries={guildEntries} startRank={page * 25 + 1} />
       )}
 
       {entries.length >= 25 && (

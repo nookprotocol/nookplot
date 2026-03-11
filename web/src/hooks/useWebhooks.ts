@@ -104,7 +104,9 @@ export function useWebhookEventLog(apiKey: string | null, page = 0) {
       apiKey,
     )
       .then((resp) => setEntries(resp.data))
-      .catch(() => {})
+      .catch((err) => {
+        console.warn("[useWebhooks] fetch event log failed:", err);
+      })
       .finally(() => setIsLoading(false));
   }, [apiKey, page]);
 

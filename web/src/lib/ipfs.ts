@@ -19,13 +19,11 @@ export async function uploadJson(
   data: Record<string, unknown>,
   name?: string,
 ): Promise<{ cid: string; size: number }> {
-  const apiKey = sessionStorage.getItem("nookplot_gateway_key") ?? "";
-
   const response = await fetch(`${GATEWAY_URL}/v1/ipfs/upload`, {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
     },
     body: JSON.stringify({ data, name: name ?? "nookplot-data" }),
   });
@@ -41,25 +39,47 @@ export async function uploadJson(
 
 export async function fetchJson<T = unknown>(cid: string): Promise<T> {
   validateCid(cid);
-  const url = `${IPFS_GATEWAY}${cid}`;
 
+  // Primary: fetch via gateway batch endpoint (POST avoids Cloudflare WAF
+  // blocking long CID strings in URL paths)
+  try {
+    const response = await fetch(`${GATEWAY_URL}/v1/ipfs/batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cids: [cid] }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (response.ok) {
+      const { results } = (await response.json()) as { results: Record<string, unknown> };
+      if (results[cid] != null) {
+        return results[cid] as T;
+      }
+    }
+  } catch {
+    // Gateway proxy failed — fall through to public IPFS gateway
+  }
+
+  // Fallback: fetch directly from public IPFS gateway
+  const url = `${IPFS_GATEWAY}${cid}`;
   let lastError: Error | undefined;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(10_000),
+      });
       if (!response.ok) {
         throw new Error(`Gateway returned ${response.status}`);
       }
       return (await response.json()) as T;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      if (attempt < 2) {
-        await new Promise((r) => setTimeout(r, 2000 * Math.pow(2, attempt)));
+      if (attempt < 1) {
+        await new Promise((r) => setTimeout(r, 2000));
       }
     }
   }
 
-  throw new Error(`Failed to fetch CID "${cid}" after 3 attempts: ${lastError?.message}`);
+  throw new Error(`Failed to fetch CID "${cid}": ${lastError?.message}`);
 }
 
 export function gatewayUrl(cid: string): string {

@@ -10,12 +10,11 @@ import "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol
 /**
  * @title ContributionRegistry
  * @author Nookplot
- * @notice On-chain registry of agent contribution scores and expertise tags. Scores are
- *         computed off-chain by the gateway from execution logs, commits, and project
- *         activity, then periodically pushed on-chain as snapshots.
+ * @notice On-chain registry of agent contribution scores and expertise tags. Stores
+ *         contribution scores as on-chain snapshots.
  *
- * @dev Uses UUPS proxy pattern for upgradeability. Only the contract owner (gateway's
- *      sync service) can write scores — agents can read their own and others' scores.
+ * @dev Uses UUPS proxy pattern for upgradeability. Only the contract owner can write
+ *      scores — agents can read their own and others' scores.
  *      Scores use 2-decimal precision (0-10000 representing 0.00-100.00).
  *
  * Security: Ownable for write access, Pausable for emergency stops. No token interactions

@@ -1,93 +1,106 @@
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useGatewayQuery } from "./useGatewayQuery";
 
-interface RevenueDistributionResult {
+/** Shape returned by GET /v1/index/agents/:addr/revenue */
+interface IndexRevenueResponse {
   revenueDistributions: Array<{
     id: string;
-    eventId: string;
+    event_id: string;
     agent: string;
     source: string;
     amount: string;
-    isEth: boolean;
-    ownerAmount: string;
-    receiptChainAmount: string;
-    treasuryAmount: string;
+    is_eth: boolean;
+    owner_amount: string;
+    receipt_chain_amount: string;
+    treasury_amount: string;
     timestamp: string;
   }>;
 }
 
-interface ContributorCreditResult {
+/** Shape returned by GET /v1/index/agents/:addr/credits */
+interface IndexCreditsResponse {
   contributorCredits: Array<{
     id: string;
-    distribution: { id: string; eventId: string };
+    distribution_id: string;
+    distribution_event_id: string;
     contributor: string;
     amount: string;
     generation: number;
   }>;
 }
 
-const REVENUE_DISTRIBUTIONS_QUERY = `
-  query AgentRevenue($agent: Bytes!, $first: Int!, $skip: Int!) {
-    revenueDistributions(
-      where: { agent: $agent }
-      orderBy: timestamp
-      orderDirection: desc
-      first: $first
-      skip: $skip
-    ) {
-      id
-      eventId
-      agent
-      source
-      amount
-      isEth
-      ownerAmount
-      receiptChainAmount
-      treasuryAmount
-      timestamp
-    }
-  }
-`;
+/** Public camelCase types that consumers expect. */
+interface RevenueDistribution {
+  id: string;
+  eventId: string;
+  agent: string;
+  source: string;
+  amount: string;
+  isEth: boolean;
+  ownerAmount: string;
+  receiptChainAmount: string;
+  treasuryAmount: string;
+  timestamp: string;
+}
 
-const CONTRIBUTOR_CREDITS_QUERY = `
-  query ContributorCredits($contributor: Bytes!, $first: Int!, $skip: Int!) {
-    contributorCredits(
-      where: { contributor: $contributor }
-      orderBy: amount
-      orderDirection: desc
-      first: $first
-      skip: $skip
-    ) {
-      id
-      distribution { id eventId }
-      contributor
-      amount
-      generation
-    }
-  }
-`;
+interface ContributorCredit {
+  id: string;
+  distribution: { id: string; eventId: string };
+  contributor: string;
+  amount: string;
+  generation: number;
+}
 
 export function useRevenueDistributions(agent: string | undefined, page = 0, pageSize = 20) {
-  const result = useSubgraphQuery<RevenueDistributionResult>(
+  const params = new URLSearchParams();
+  params.set("first", String(pageSize));
+  params.set("skip", String(page * pageSize));
+
+  const result = useGatewayQuery<IndexRevenueResponse>(
     ["revenueDistributions", agent ?? "", String(page)],
-    REVENUE_DISTRIBUTIONS_QUERY,
-    { agent: agent?.toLowerCase() ?? "", first: pageSize, skip: page * pageSize },
-    { enabled: !!agent, staleTime: 15_000 },
+    `/v1/index/agents/${agent?.toLowerCase()}/revenue?${params}`,
+    { enabled: !!agent, staleTime: 300_000 },
   );
+
+  const distributions: RevenueDistribution[] = (result.data?.revenueDistributions ?? []).map((r) => ({
+    id: r.id,
+    eventId: r.event_id,
+    agent: r.agent,
+    source: r.source,
+    amount: r.amount,
+    isEth: r.is_eth,
+    ownerAmount: r.owner_amount,
+    receiptChainAmount: r.receipt_chain_amount,
+    treasuryAmount: r.treasury_amount,
+    timestamp: r.timestamp,
+  }));
+
   return {
-    distributions: result.data?.revenueDistributions ?? [],
+    distributions,
     isLoading: result.isLoading,
   };
 }
 
 export function useContributorCredits(contributor: string | undefined, page = 0, pageSize = 50) {
-  const result = useSubgraphQuery<ContributorCreditResult>(
+  const params = new URLSearchParams();
+  params.set("first", String(pageSize));
+  params.set("skip", String(page * pageSize));
+
+  const result = useGatewayQuery<IndexCreditsResponse>(
     ["contributorCredits", contributor ?? "", String(page)],
-    CONTRIBUTOR_CREDITS_QUERY,
-    { contributor: contributor?.toLowerCase() ?? "", first: pageSize, skip: page * pageSize },
-    { enabled: !!contributor, staleTime: 15_000 },
+    `/v1/index/agents/${contributor?.toLowerCase()}/credits?${params}`,
+    { enabled: !!contributor, staleTime: 300_000 },
   );
+
+  const credits: ContributorCredit[] = (result.data?.contributorCredits ?? []).map((c) => ({
+    id: c.id,
+    distribution: { id: c.distribution_id, eventId: c.distribution_event_id },
+    contributor: c.contributor,
+    amount: c.amount,
+    generation: c.generation,
+  }));
+
   return {
-    credits: result.data?.contributorCredits ?? [],
+    credits,
     isLoading: result.isLoading,
     error: result.error,
   };

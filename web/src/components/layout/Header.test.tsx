@@ -1,9 +1,34 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { Header } from "./Header";
 import { useUIStore } from "@/store/uiStore";
+
+vi.mock("wagmi", () => ({
+  useDisconnect: () => ({ disconnect: vi.fn() }),
+}));
+
+vi.mock("@/hooks/useAuth", () => ({
+  useAuth: () => ({
+    isAuthenticated: false,
+    canTransact: false,
+    isPrivyUser: false,
+    user: null,
+    walletAddress: undefined,
+    sessionInfo: null,
+    logout: vi.fn(),
+  }),
+}));
+
+vi.mock("@/components/shared/SearchDialog", () => ({
+  SearchDialog: () => null,
+}));
+
+vi.mock("@/lib/authSession", () => ({
+  isAuthenticated: () => false,
+  endSession: vi.fn().mockResolvedValue(undefined),
+}));
 
 function renderHeader(initialPath = "/") {
   return render(
@@ -15,7 +40,6 @@ function renderHeader(initialPath = "/") {
 
 describe("Header", () => {
   beforeEach(() => {
-    // Reset store
     useUIStore.setState({ theme: "dark", sidebarOpen: false });
     localStorage.clear();
     document.documentElement.setAttribute("data-theme", "dark");
@@ -32,21 +56,17 @@ describe("Header", () => {
     renderHeader();
     const wordmark = screen.getByText("nookplot");
     expect(wordmark).toBeInTheDocument();
-    // Verify it's truly lowercase — no uppercase N
     expect(wordmark.textContent).toBe("nookplot");
   });
 
-  it("renders nav pills: Dashboard, Network, Feed", () => {
+  it("renders nav links: Explore, Projects, Hire, Economy, Docs, About", () => {
     renderHeader();
-    expect(screen.getByText("Dashboard")).toBeInTheDocument();
-    expect(screen.getByText("Network")).toBeInTheDocument();
-    expect(screen.getByText("Feed")).toBeInTheDocument();
-  });
-
-  it("renders search button with keyboard shortcut", () => {
-    renderHeader();
-    expect(screen.getByText("Search...")).toBeInTheDocument();
-    expect(screen.getByText("/")).toBeInTheDocument();
+    expect(screen.getByText("Explore")).toBeInTheDocument();
+    expect(screen.getByText("Projects")).toBeInTheDocument();
+    expect(screen.getByText("Hire")).toBeInTheDocument();
+    expect(screen.getByText("Economy")).toBeInTheDocument();
+    expect(screen.getByText("Docs")).toBeInTheDocument();
+    expect(screen.getByText("About")).toBeInTheDocument();
   });
 
   it("renders theme toggle button", () => {
@@ -78,22 +98,16 @@ describe("Header", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
   });
 
-  it("renders Join Network link pointing to /register", () => {
+  it("renders Join Network link pointing to /register when not authenticated", () => {
     renderHeader();
     const joinLink = screen.getByText("Join Network");
     expect(joinLink).toBeInTheDocument();
     expect(joinLink.closest("a")).toHaveAttribute("href", "/register");
   });
 
-  it("highlights Dashboard pill when on home page", () => {
-    renderHeader("/");
-    const dashboardLink = screen.getByText("Dashboard");
-    expect(dashboardLink).toHaveClass("text-foreground");
-  });
-
   it("renders mobile menu button", () => {
     renderHeader();
-    const menuBtn = screen.getByLabelText("Toggle sidebar");
+    const menuBtn = screen.getByLabelText("Toggle menu");
     expect(menuBtn).toBeInTheDocument();
   });
 });

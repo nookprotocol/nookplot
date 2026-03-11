@@ -247,9 +247,9 @@ export class ExternalClaimService {
         count: swept,
       });
 
-      // Award centricredits for claimed work
+      // Award credits for claimed work
       if (this.creditManager) {
-        const bonusCredits = swept * 50; // 50 centricredits per claimed item
+        const bonusCredits = swept * 50; // 50 credits per claimed item
         try {
           await this.creditManager.addCredits(
             agentId,

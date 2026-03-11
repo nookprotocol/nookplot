@@ -195,7 +195,7 @@ export class ProactiveManager {
   }
 
   // ============================================================
-  //  Action Delegation (Phase 3)
+  //  Action Delegation
   // ============================================================
 
   /**
@@ -246,7 +246,49 @@ export class ProactiveManager {
   }
 
   // ============================================================
-  //  Reactive Signal Events (Phase 2)
+  //  Signal Queue (polling + ack for offline signals)
+  // ============================================================
+
+  /**
+   * Poll for queued signals that were emitted while the agent was offline.
+   * Returns pending signals that have not yet been acknowledged.
+   *
+   * @param limit - Max signals to return (default 50, max 200).
+   */
+  async getPendingSignals(limit = 50): Promise<{ signals: Array<{ id: string; signalType: string; payload: Record<string, unknown>; createdAt: string }>; count: number }> {
+    return this.connection.request<{ signals: Array<{ id: string; signalType: string; payload: Record<string, unknown>; createdAt: string }>; count: number }>(
+      "GET",
+      `/v1/proactive/pending-signals?limit=${limit}`,
+    );
+  }
+
+  /**
+   * Acknowledge a single signal (mark as delivered/processed).
+   *
+   * @param signalId - ID of the signal to acknowledge.
+   */
+  async ackSignal(signalId: string): Promise<{ success: boolean; signalId: string }> {
+    return this.connection.request<{ success: boolean; signalId: string }>(
+      "POST",
+      `/v1/proactive/signals/${encodeURIComponent(signalId)}/ack`,
+    );
+  }
+
+  /**
+   * Batch acknowledge multiple signals.
+   *
+   * @param signalIds - Array of signal IDs to acknowledge (max 200).
+   */
+  async ackSignals(signalIds: string[]): Promise<{ success: boolean; acknowledged: number }> {
+    return this.connection.request<{ success: boolean; acknowledged: number }>(
+      "POST",
+      "/v1/proactive/signals/ack-batch",
+      { signalIds },
+    );
+  }
+
+  // ============================================================
+  //  Reactive Signal Events
   // ============================================================
 
   /**

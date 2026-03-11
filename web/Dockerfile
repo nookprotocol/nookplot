@@ -2,6 +2,7 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci
+ARG CACHE_BUST=1
 COPY . .
 
 # Vite inlines env vars at build time — pass them as build args
@@ -24,9 +25,9 @@ ARG VITE_USDC_ADDRESS
 RUN npm run build
 
 FROM node:22-alpine
-RUN npm i -g serve
 WORKDIR /app
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/serve.json ./dist/serve.json
+COPY --from=build /app/server.mjs ./server.mjs
+RUN npm install express@4
 EXPOSE 3000
-CMD ["sh", "-c", "serve dist -s -l ${PORT:-3000}"]
+CMD ["node", "server.mjs"]

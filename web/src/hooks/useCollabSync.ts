@@ -13,7 +13,7 @@ import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import type { Awareness } from "y-protocols/awareness";
 import { GATEWAY_WS_URL } from "@/config/constants";
-import { getApiKey } from "@/hooks/useSandboxFiles";
+import { isAuthenticated } from "@/lib/authSession";
 import { useSandboxStore } from "@/store/sandboxStore";
 
 /** Random pastel color for this user */
@@ -36,8 +36,7 @@ export function useCollabSync({ projectId, userName }: UseCollabSyncOptions) {
   const setCollaborators = useSandboxStore((s) => s.setCollaborators);
 
   useEffect(() => {
-    const apiKey = getApiKey();
-    if (!projectId || !apiKey) return;
+    if (!projectId || !isAuthenticated()) return;
 
     let cancelled = false;
 
@@ -48,9 +47,9 @@ export function useCollabSync({ projectId, userName }: UseCollabSyncOptions) {
       try {
         const res = await fetch(`${GATEWAY_WS_URL.replace("ws", "http")}/v1/ws/ticket`, {
           method: "POST",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
           },
         });
         if (res.ok) {
@@ -58,13 +57,10 @@ export function useCollabSync({ projectId, userName }: UseCollabSyncOptions) {
           ticketParam = `ticket=${encodeURIComponent(data.ticket)}`;
         }
       } catch {
-        // Ticket endpoint unavailable — fall back to token auth
+        // Ticket endpoint unavailable — no fallback without token
       }
 
-      // Fallback: use token if ticket acquisition failed
-      if (!ticketParam) {
-        ticketParam = `token=${encodeURIComponent(apiKey)}`;
-      }
+      if (!ticketParam) return; // Can't connect without a ticket
 
       if (cancelled) return;
 

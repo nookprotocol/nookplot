@@ -1,22 +1,14 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAccount } from "wagmi";
 import { useServiceListings } from "@/hooks/useServiceListings";
+import { useAgentNames } from "@/hooks/useAgentNames";
+import { useMarketplaceCategories } from "@/hooks/useMarketplaceCategories";
 import { ServiceCard } from "@/components/marketplace/ServiceCard";
+import { CategoryMoreDropdown } from "@/components/marketplace/CategoryMoreDropdown";
 import { Plus, Search } from "lucide-react";
 import { usePageMeta } from "@/hooks/usePageMeta";
-
-const CATEGORIES = [
-  { label: "All", value: "" },
-  { label: "Research", value: "research" },
-  { label: "Coding", value: "coding" },
-  { label: "Analysis", value: "analysis" },
-  { label: "Design", value: "design" },
-  { label: "Writing", value: "writing" },
-  { label: "Data", value: "data" },
-  { label: "Security", value: "security" },
-  { label: "Testing", value: "testing" },
-];
+import { isAuthenticated as hasGatewaySession } from "@/lib/authSession";
 
 export function MarketplacePage() {
   usePageMeta({
@@ -24,40 +16,63 @@ export function MarketplacePage() {
     description: "Browse and list agent-to-agent services on nookplot — research, coding, analysis, design, and more with on-chain escrow and reputation-backed providers.",
   });
   const { isConnected } = useAccount();
+  const hasSession = hasGatewaySession();
+  const canManage = isConnected || hasSession;
   const navigate = useNavigate();
   const [categoryFilter, setCategoryFilter] = useState("");
+  const { visibleTabs, overflowTabs } = useMarketplaceCategories();
   const [page, setPage] = useState(0);
 
-  const { listings, isLoading } = useServiceListings(categoryFilter, true, page);
+  const { listings, isLoading, isError } = useServiceListings(categoryFilter, true, page);
+
+  // Batch-resolve agent display names for all provider addresses
+  const providerAddresses = useMemo(
+    () => listings.map((l) => l.provider.id),
+    [listings],
+  );
+  const { data: nameMap } = useAgentNames(providerAddresses);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Marketplace</h1>
+        <div>
+          <h1 className="text-2xl font-bold">Marketplace</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Browse and hire AI agents — secure payments, reputation-backed providers.
+          </p>
+        </div>
         <div className="flex gap-2">
+          {canManage && (
+            <button
+              onClick={() => navigate("/marketplace/agreements")}
+              className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors"
+            >
+              My Agreements
+            </button>
+          )}
           {isConnected && (
-            <>
-              <button
-                onClick={() => navigate("/marketplace/agreements")}
-                className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors"
-              >
-                My Agreements
-              </button>
-              <button
-                onClick={() => navigate("/marketplace/create")}
-                className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 transition-colors"
-              >
-                <Plus className="h-4 w-4" />
-                List Service
-              </button>
-            </>
+            <button
+              onClick={() => navigate("/marketplace/create")}
+              className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 transition-colors"
+            >
+              <Plus className="h-4 w-4" />
+              List Service
+            </button>
+          )}
+          {!canManage && (
+            <button
+              onClick={() => navigate("/register")}
+              className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 transition-colors"
+            >
+              Sign in to Hire
+            </button>
           )}
         </div>
       </div>
 
       {/* Category Filters */}
-      <div className="flex gap-2 flex-wrap">
-        {CATEGORIES.map((cat) => (
+      <div className="flex gap-2 flex-wrap items-center">
+        {visibleTabs.map((cat) => (
           <button
             key={cat.value}
             onClick={() => { setCategoryFilter(cat.value); setPage(0); }}
@@ -70,10 +85,19 @@ export function MarketplacePage() {
             {cat.label}
           </button>
         ))}
+        <CategoryMoreDropdown
+          tabs={overflowTabs}
+          activeValue={categoryFilter}
+          onSelect={(v) => { setCategoryFilter(v); setPage(0); }}
+        />
       </div>
 
       {/* Listings */}
-      {isLoading ? (
+      {isError ? (
+        <div className="text-center py-12">
+          <p className="text-muted-foreground">Unable to load listings right now. Please try again later.</p>
+        </div>
+      ) : isLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="h-24 animate-pulse rounded-lg bg-card" />
@@ -94,9 +118,17 @@ export function MarketplacePage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {listings.map((listing) => (
-            <ServiceCard key={listing.id} listing={listing} />
-          ))}
+          {listings.map((listing) => {
+            const addr = listing.provider.id.toLowerCase();
+            const name = nameMap?.get(addr);
+            return (
+              <ServiceCard
+                key={listing.id}
+                listing={listing}
+                providerName={name ?? undefined}
+              />
+            );
+          })}
         </div>
       )}
 

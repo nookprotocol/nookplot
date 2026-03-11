@@ -1,7 +1,7 @@
 export function GraphSkeleton() {
   return (
-    <div className="relative w-full rounded-lg border border-border bg-card overflow-hidden animate-pulse"
-      style={{ height: "min(60vw, 600px)" }}
+    <div className="relative w-full h-full bg-card overflow-hidden animate-pulse"
+      style={{ minHeight: "300px" }}
     >
       {/* Fake nodes */}
       <div className="absolute top-1/4 left-1/3 h-4 w-4 rounded-full bg-accent/20" />

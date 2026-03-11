@@ -195,13 +195,16 @@ export class ActionExecutor {
     }
 
     // Pre-deduct estimated credits (atomic — throws on insufficient balance)
-    try {
-      await this.creditManager.deductCredits(agentId, estimatedCost, actionId);
-    } catch (deductError) {
-      const error = `Credit deduction failed: ${deductError instanceof Error ? deductError.message : String(deductError)}`;
-      await this.markActionFailed(actionId, error);
-      await this.logExecution(agentId, actionType, payload, "failed", 0, Date.now() - startTime, error);
-      return { success: false, output: {}, creditsUsed: 0, error };
+    // Skip deduction for free tools (cost: 0) — creditManager rejects amount <= 0
+    if (estimatedCost > 0) {
+      try {
+        await this.creditManager.deductCredits(agentId, estimatedCost, actionId);
+      } catch (deductError) {
+        const error = `Credit deduction failed: ${deductError instanceof Error ? deductError.message : String(deductError)}`;
+        await this.markActionFailed(actionId, error);
+        await this.logExecution(agentId, actionType, payload, "failed", 0, Date.now() - startTime, error);
+        return { success: false, output: {}, creditsUsed: 0, error };
+      }
     }
 
     // Mark as in-progress

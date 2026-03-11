@@ -1,4 +1,4 @@
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useGatewayQuery } from "./useGatewayQuery";
 
 export interface SubgraphBounty {
   id: string;
@@ -11,68 +11,71 @@ export interface SubgraphBounty {
   creator: { id: string };
   claimer: { id: string } | null;
   createdAt: string;
-  updatedAt: string;
+  tokenAddress?: string | null;
+  title?: string | null;
+  description?: string | null;
+  applicationCount?: number;
+  submissionCount?: number;
 }
 
-interface Result {
-  created: SubgraphBounty[];
-  claimed: SubgraphBounty[];
+/** Shape returned by GET /v1/index/agents/:addr/bounties */
+interface IndexAgentBountiesResponse {
+  created: Array<{
+    id: string;
+    metadata_cid: string;
+    community: string;
+    reward_amount: string;
+    status: number;
+    escrow_type: number;
+    deadline: string;
+    creator_id: string;
+    claimer_id: string | null;
+    created_at: string;
+    token_address?: string | null;
+  }>;
+  claimed: Array<{
+    id: string;
+    metadata_cid: string;
+    community: string;
+    reward_amount: string;
+    status: number;
+    escrow_type: number;
+    deadline: string;
+    creator_id: string;
+    claimer_id: string | null;
+    created_at: string;
+    token_address?: string | null;
+  }>;
 }
 
-const QUERY = `
-  query AgentBounties($creator: Bytes!, $claimer: Bytes!) {
-    created: bounties(
-      where: { creator: $creator }
-      orderBy: createdAt
-      orderDirection: desc
-      first: 50
-    ) {
-      id
-      metadataCid
-      community
-      rewardAmount
-      status
-      escrowType
-      deadline
-      creator { id }
-      claimer { id }
-      createdAt
-      updatedAt
-    }
-    claimed: bounties(
-      where: { claimer: $claimer, status_in: [3, 4] }
-      orderBy: updatedAt
-      orderDirection: desc
-      first: 50
-    ) {
-      id
-      metadataCid
-      community
-      rewardAmount
-      status
-      escrowType
-      deadline
-      creator { id }
-      claimer { id }
-      createdAt
-      updatedAt
-    }
-  }
-`;
+function toSubgraphBounty(raw: IndexAgentBountiesResponse["created"][number]): SubgraphBounty {
+  return {
+    id: raw.id,
+    metadataCid: raw.metadata_cid,
+    community: raw.community,
+    rewardAmount: raw.reward_amount,
+    status: raw.status,
+    escrowType: raw.escrow_type,
+    deadline: raw.deadline,
+    creator: { id: raw.creator_id },
+    claimer: raw.claimer_id ? { id: raw.claimer_id } : null,
+    createdAt: raw.created_at,
+    tokenAddress: raw.token_address ?? null,
+  };
+}
 
 export function useAgentBounties(address: string | undefined) {
   const normalizedAddress = address?.toLowerCase();
 
-  const result = useSubgraphQuery<Result>(
+  const result = useGatewayQuery<IndexAgentBountiesResponse>(
     ["agentBounties", normalizedAddress ?? ""],
-    QUERY,
-    { creator: normalizedAddress, claimer: normalizedAddress },
-    { enabled: !!normalizedAddress, staleTime: 15_000 },
+    `/v1/index/agents/${normalizedAddress}/bounties`,
+    { enabled: !!normalizedAddress, staleTime: 300_000 },
   );
 
   return {
-    created: result.data?.created ?? [],
-    claimed: result.data?.claimed ?? [],
+    created: result.data?.created?.map(toSubgraphBounty) ?? [],
+    claimed: result.data?.claimed?.map(toSubgraphBounty) ?? [],
     isLoading: result.isLoading,
   };
 }

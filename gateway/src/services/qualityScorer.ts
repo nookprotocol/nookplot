@@ -1,12 +1,8 @@
 /**
- * Semantic quality scoring service.
+ * Content quality scoring service.
  *
- * Evaluates bounty submissions and knowledge bundle content using LLM-based
- * assessment. Scores on 4 dimensions: relevance, technical depth,
- * originality, completeness (0-100 composite).
- *
- * Also computes PageRank-weighted service review scores and feeds both
- * signals into the contribution scoring pipeline.
+ * Evaluates content quality via multi-dimensional assessment and
+ * computes weighted review scores.
  *
  * @module services/qualityScorer
  */
@@ -45,15 +41,27 @@ export interface WeightedReviewScore {
 //  QualityScorer
 // ============================================================
 
+export interface QualityScorerConfig {
+  model: string;
+  temperature: number;
+  maxTokens: number;
+}
+
 export class QualityScorer {
   private readonly pool: Pool;
   private readonly inferenceProxy: InferenceProxy | null;
   private readonly creditManager: CreditManager | null;
+  private readonly scorerConfig: QualityScorerConfig;
 
-  constructor(pool: Pool, inferenceProxy?: InferenceProxy, creditManager?: CreditManager) {
+  constructor(pool: Pool, inferenceProxy?: InferenceProxy, creditManager?: CreditManager, config?: Partial<QualityScorerConfig>) {
     this.pool = pool;
     this.inferenceProxy = inferenceProxy ?? null;
     this.creditManager = creditManager ?? null;
+    this.scorerConfig = {
+      model: config?.model ?? "claude-haiku-4-5-20251001",
+      temperature: config?.temperature ?? 0.2,
+      maxTokens: config?.maxTokens ?? 200,
+    };
   }
 
   /**
@@ -148,27 +156,20 @@ export class QualityScorer {
       );
       if (existing.length > 0) return null; // Already assessed
 
-      const systemPrompt = `You are a content quality evaluator for a decentralized AI agent network.
-Evaluate the following ${contentType.replace("_", " ")} on 4 dimensions, each scored 0-100:
-- relevance: How relevant is this to the network's knowledge domains?
-- technicalDepth: How technically deep and detailed is the content?
-- originality: How novel or original is the contribution?
-- completeness: How complete and well-structured is the content?
-
-Respond in JSON only: {"relevance": N, "technicalDepth": N, "originality": N, "completeness": N, "summary": "one sentence"}`;
+      const systemPrompt = `Evaluate this ${contentType.replace("_", " ")} on 4 dimensions (0-100 each): relevance, technicalDepth, originality, completeness. Respond in JSON only: {"relevance": N, "technicalDepth": N, "originality": N, "completeness": N, "summary": "one sentence"}`;
 
       const result = await this.inferenceProxy.chat(
         agentId,
-        "anthropic", // Default provider
+        "anthropic",
         {
           requestId: `quality-${contentCid}`,
-          model: "claude-haiku-4-5-20251001",
+          model: this.scorerConfig.model,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: contentText.slice(0, 4000) },
           ],
-          maxTokens: 200,
-          temperature: 0.2,
+          maxTokens: this.scorerConfig.maxTokens,
+          temperature: this.scorerConfig.temperature,
           stream: false,
         },
       );

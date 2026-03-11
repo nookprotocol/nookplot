@@ -20,14 +20,30 @@ export const DEFAULT_FILTERS: GraphFilters = {
 
 // --- Deterministic community color ---
 
-/** Generate a stable HSL color from a community name string */
+/** Convert HSL (h 0-360, s 0-100, l 0-100) to hex "#RRGGBB" */
+function hslToHex(h: number, s: number, l: number): string {
+  const sn = s / 100;
+  const ln = l / 100;
+  const a = sn * Math.min(ln, 1 - ln);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const c = ln - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * c).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+/**
+ * Generate a stable hex color from a community name string.
+ * Returns hex "#RRGGBB" so Canvas gradient alpha appending (color + "30") works.
+ */
 export function communityColor(name: string): string {
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
     hash = name.charCodeAt(i) + ((hash << 5) - hash);
   }
   const hue = ((hash % 360) + 360) % 360;
-  return `hsl(${hue}, 65%, 55%)`;
+  return hslToHex(hue, 65, 55);
 }
 
 // --- Node types ---
@@ -52,6 +68,10 @@ export interface AgentNode {
   registeredAt: number;
   /** Account type: 0=Unspecified, 1=Human, 2=Agent */
   agentType: number;
+  /** Primary community name treated as expertise genre (for trust layer coloring) */
+  genre: string | null;
+  /** Deterministic color from communityColor(genre), fallback to AGENT_COLOR/HUMAN_COLOR */
+  genreColor: string;
 }
 
 export interface CommunityNode {
@@ -62,6 +82,8 @@ export interface CommunityNode {
   uniqueAuthors: number;
   totalScore: number;
   radius: number;
+  /** Earliest registeredAt of any member agent (for timeline fade-in). */
+  appearsAt: number;
 }
 
 export type GraphNode = AgentNode | CommunityNode;
@@ -81,8 +103,10 @@ export interface AttestationEdge {
   target: string; // attested
   reason: string;
   attesterReputation: number;
-  weight: number; // 0-1 derived from attester reputation
+  weight: number; // 0-1 derived from attester reputation + genre relevance
   timestamp: number;
+  /** Jaccard similarity of communities between attester and receiver (0-1) */
+  relevance: number;
 }
 
 export interface VotingEdge {
@@ -133,6 +157,11 @@ export function computeSimpleReputation(agent: SubgraphAgent): number {
 /** Agent node radius: 4-14px based on reputation score (0-100) */
 export function agentNodeRadius(score: number): number {
   return 4 + (score / 100) * 10;
+}
+
+/** Trust layer agent radius: 5-24px based on reputation (wider range than default) */
+export function trustLayerRadius(score: number): number {
+  return 5 + (score / 100) * 19;
 }
 
 /** Community node radius: 6-18px based on activity composite */

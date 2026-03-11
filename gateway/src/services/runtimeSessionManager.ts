@@ -229,7 +229,9 @@ export class RuntimeSessionManager {
   startCleanup(intervalMs = 60_000): void {
     this.stopCleanup();
     this.cleanupTimer = setInterval(() => {
-      this.cleanupStaleSessions().catch(() => {});
+      this.cleanupStaleSessions().catch((err) => {
+        logSecurityEvent("debug", "stale-session-cleanup-failed", { error: (err as Error).message });
+      });
     }, intervalMs);
   }
 

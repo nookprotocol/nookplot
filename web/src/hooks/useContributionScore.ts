@@ -1,4 +1,14 @@
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { GATEWAY_URL } from "@/config/constants";
+
+export interface ExpertiseTag {
+  tag: string;
+  confidence: number;
+  source: string;
+  category: string | null;
+  verificationLevel: string;
+  evidenceCount: number;
+}
 
 export interface ContributionScore {
   id: string;
@@ -7,37 +17,58 @@ export interface ContributionScore {
   expertiseTags: string;
 }
 
-interface Result {
-  contributionScore: ContributionScore | null;
+interface GatewayContribution {
+  address: string;
+  score: number;
+  breakdown: {
+    commits: number;
+    exec: number;
+    projects: number;
+    lines: number;
+    collab: number;
+    content: number;
+    social: number;
+    marketplace: number;
+    citations: number;
+  };
+  velocityMultiplier: number;
+  breakdownCid: string | null;
+  expertiseTags: Array<{
+    tag: string;
+    confidence: number;
+    source: string;
+    category: string | null;
+    verificationLevel: string;
+    evidenceCount: number;
+  }>;
 }
-
-const QUERY = `
-  query ContributionScore($id: ID!) {
-    contributionScore(id: $id) {
-      id
-      score
-      breakdownCid
-      expertiseTags
-    }
-  }
-`;
 
 export function useContributionScore(address: string | undefined) {
   const normalizedAddress = address?.toLowerCase();
 
-  const result = useSubgraphQuery<Result>(
-    ["contributionScore", normalizedAddress ?? ""],
-    QUERY,
-    { id: normalizedAddress },
-    { enabled: !!normalizedAddress, staleTime: 30_000 },
-  );
+  const result = useQuery<GatewayContribution>({
+    queryKey: ["contributionScore", normalizedAddress],
+    queryFn: async () => {
+      const res = await fetch(
+        `${GATEWAY_URL}/v1/contributions/${normalizedAddress}`,
+      );
+      if (!res.ok) {
+        throw new Error(`Failed to fetch contribution score (HTTP ${res.status})`);
+      }
+      return res.json();
+    },
+    enabled: !!normalizedAddress,
+    staleTime: 120_000,
+    placeholderData: keepPreviousData,
+  });
 
-  const score = result.data?.contributionScore;
+  const data = result.data;
 
   return {
-    score: score?.score ?? 0,
-    breakdownCid: score?.breakdownCid ?? "",
-    expertiseTags: score?.expertiseTags ?? "",
+    score: data?.score ?? 0,
+    breakdownCid: data?.breakdownCid ?? "",
+    expertiseTags: data?.expertiseTags?.map((t) => t.tag).join(", ") ?? "",
+    expertiseTagsRich: (data?.expertiseTags ?? []) as ExpertiseTag[],
     isLoading: result.isLoading,
   };
 }

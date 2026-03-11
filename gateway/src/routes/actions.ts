@@ -22,6 +22,7 @@ import type { ActionRegistry } from "../services/actionRegistry.js";
 import type { ActionExecutor } from "../services/actionExecutor.js";
 import type { AutonomyLevel } from "../services/actionRegistry.js";
 import type { EgressProxy } from "../services/egressProxy.js";
+import type { ToolDispatcher } from "../services/toolDispatcher.js";
 import { createAuthMiddleware, registeredMiddleware, ownerOnlyMiddleware } from "../middleware/auth.js";
 import { logSecurityEvent } from "../middleware/auditLog.js";
 import { encryptSecret } from "../secretManager.js";
@@ -36,6 +37,7 @@ export function createActionsRouter(
   egressProxy?: EgressProxy | null,
   secretEncryptionKey?: string,
   adminAddress?: string,
+  toolDispatcher?: ToolDispatcher,
 ): Router {
   const router = Router();
   const authMiddleware = createAuthMiddleware(pool, hmacSecret);
@@ -50,7 +52,9 @@ export function createActionsRouter(
   }
 
   // -------------------------------------------------------
-  //  GET /v1/actions/tools — List all registered tools
+  //  GET /v1/actions/tools — List all available tools
+  //  Source: ToolDispatcher (MCP tools) when available,
+  //  falls back to ActionRegistry for backward compat.
   // -------------------------------------------------------
   router.get(
     "/actions/tools",
@@ -58,8 +62,16 @@ export function createActionsRouter(
     async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
       try {
         const category = typeof _req.query.category === "string" ? _req.query.category : undefined;
-        const tools = registry.list(category);
-        res.json({ tools, total: tools.length });
+
+        if (toolDispatcher) {
+          // Primary source: MCP tool definitions (always up-to-date)
+          const tools = toolDispatcher.listTools(category);
+          res.json({ tools, total: tools.length });
+        } else {
+          // Fallback: legacy ActionRegistry
+          const tools = registry.list(category);
+          res.json({ tools, total: tools.length });
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         logSecurityEvent("error", "actions-list-tools-failed", { error: message });
@@ -77,14 +89,20 @@ export function createActionsRouter(
     async (req: AuthenticatedRequest, res: Response): Promise<void> => {
       try {
         const toolName = String(req.params.name);
-        const tool = registry.get(toolName);
-        if (!tool) {
+
+        // Try ToolDispatcher first (MCP tools), then fallback to registry
+        const mcpTool = toolDispatcher?.getTool(toolName);
+        const legacyTool = registry.get(toolName);
+
+        if (!mcpTool && !legacyTool) {
           res.status(404).json({ error: "Tool not found." });
           return;
         }
 
-        // Return tool info without handler
-        const { handler: _handler, ...toolInfo } = tool;
+        // Build tool info from whichever source has it
+        const toolInfo = mcpTool
+          ? { name: mcpTool.name, description: mcpTool.description, category: mcpTool.category, inputSchema: mcpTool.inputSchema }
+          : (() => { const { handler: _h, ...info } = legacyTool!; return info; })();
 
         // If agent is registered, include per-agent config
         let agentConfig = null;
@@ -167,6 +185,8 @@ export function createActionsRouter(
 
   // -------------------------------------------------------
   //  POST /v1/actions/execute — Execute a tool directly
+  //  Uses ToolDispatcher (MCP handlers with internal routing)
+  //  when available, falls back to legacy ActionExecutor.
   // -------------------------------------------------------
   router.post(
     "/actions/execute",
@@ -182,23 +202,50 @@ export function createActionsRouter(
         return;
       }
 
+      // Defense-in-depth: reject toolNames with path traversal, log injection chars, etc.
+      if (!/^[a-zA-Z0-9_]{1,128}$/.test(toolName)) {
+        res.status(400).json({ error: "toolName must match /^[a-zA-Z0-9_]{1,128}$/." });
+        return;
+      }
+
       if (payload && typeof payload !== "object") {
         res.status(400).json({ error: "payload must be an object." });
         return;
       }
 
+      // Normalize tool name: accept both "read_feed" and "nookplot_read_feed"
+      const normalizedToolName = toolName.startsWith("nookplot_") ? toolName : `nookplot_${toolName}`;
+
       try {
+        // --- ToolDispatcher path (preferred) ---
+        if (toolDispatcher && toolDispatcher.has(normalizedToolName)) {
+          // Extract the Bearer token from the original request for internal auth
+          const authHeader = req.headers.authorization ?? "";
+          const apiKey = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
+
+          const dispatchResult = await toolDispatcher.dispatch(
+            normalizedToolName,
+            payload ?? {},
+            agent.address,
+            apiKey,
+          );
+
+          res.json(dispatchResult);
+          return;
+        }
+
+        // --- Legacy ActionExecutor fallback ---
         // Determine agent's autonomy level
         const autonomyResult = await pool.query<{ autonomy_override: string | null }>(
           `SELECT autonomy_override FROM agent_tool_config
            WHERE agent_id = $1 AND tool_name = $2`,
-          [agent.id, toolName],
+          [agent.id, normalizedToolName],
         );
         const autonomyLevel = (autonomyResult.rows[0]?.autonomy_override ?? "semi-autonomous") as AutonomyLevel;
 
         const result = await executor.executeDirectly(
           agent.id,
-          toolName,
+          normalizedToolName,
           payload ?? {},
           autonomyLevel,
         );
@@ -217,7 +264,7 @@ export function createActionsRouter(
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        logSecurityEvent("error", "actions-execute-failed", { agentId: agent.id, toolName, error: message });
+        logSecurityEvent("error", "actions-execute-failed", { agentId: agent.id, toolName: normalizedToolName, error: message });
         res.status(500).json({ error: "Failed to execute action." });
       }
     },
@@ -479,7 +526,7 @@ export function createActionsRouter(
   );
 
   // =============================================================
-  //  Egress proxy routes (Phase 2)
+  //  Egress proxy routes
   // =============================================================
 
   // -------------------------------------------------------

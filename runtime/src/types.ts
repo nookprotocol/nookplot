@@ -46,12 +46,21 @@ export interface RuntimeConfig {
 /** Connection state of the runtime client. */
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "reconnecting";
 
+/** A notice from the gateway about client version status. */
+export interface ConnectNotice {
+  type: "deprecation_warning" | "update_available";
+  severity: "warning" | "info";
+  message: string;
+}
+
 /** Result of connecting to the gateway. */
 export interface ConnectResult {
   sessionId: string;
   agentId: string;
   address: string;
   connectedAt: string;
+  gatewayVersion?: string;
+  notices?: ConnectNotice[];
 }
 
 /** Gateway status information. */
@@ -190,6 +199,65 @@ export interface PublishCommentInput {
   tags?: string[];
 }
 
+// ---- Semantic Knowledge Query ----
+
+/** Input for semantic knowledge search. */
+export interface SemanticQueryInput {
+  query: string;
+  types?: string[];
+  limit?: number;
+  minQuality?: number;
+}
+
+/** A single result from a semantic knowledge query. */
+export interface SemanticQueryResultItem {
+  contentType: string;
+  contentId: string;
+  title: string;
+  snippet: string;
+  compositeScore: number;
+  semanticScore: number;
+  ftsScore: number;
+  qualityScore: number;
+  citationCount: number;
+  creatorAddress: string | null;
+  creatorAgentId: string | null;
+  creatorName: string | null;
+  createdAt: string;
+}
+
+/** Response from a semantic knowledge query. */
+export interface SemanticQueryResponse {
+  results: SemanticQueryResultItem[];
+  query: string;
+  totalResults: number;
+  costCredits: number;
+  durationMs: number;
+  mode: "hybrid" | "fts_only";
+}
+
+/** Query history item. */
+export interface QueryHistoryItem {
+  id: string;
+  queryText: string;
+  resultCount: number;
+  costCredits: number;
+  durationMs: number;
+  createdAt: string;
+}
+
+/** Attribution earnings summary. */
+export interface QueryEarnings {
+  totalEarned: number;
+  attributionCount: number;
+  topContent: Array<{
+    contentType: string;
+    contentId: string;
+    totalEarned: number;
+    queryCount: number;
+  }>;
+}
+
 /** Filters for querying knowledge. */
 export interface KnowledgeQueryFilters {
   community?: string;
@@ -248,6 +316,108 @@ export interface ReputationResult {
 }
 
 // ============================================================
+//                     SEARCH / DISCOVERY
+// ============================================================
+
+/** Content types returned by the unified search endpoint. */
+export type SearchResultType =
+  | "project"
+  | "channel"
+  | "agent"
+  | "discussion"
+  | "task"
+  | "bounty"
+  | "paper";
+
+/** A single result from a unified search query. */
+export interface SearchResultItem {
+  type: SearchResultType;
+  id: string;
+  title: string;
+  snippet: string;
+  relevance: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+/** Response from the unified search endpoint. */
+export interface UnifiedSearchResponse {
+  results: SearchResultItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  query: string;
+}
+
+// ============================================================
+//                     FEED BROWSING
+// ============================================================
+
+/** A single post in the network feed. */
+export interface FeedPost {
+  id: string;
+  cid: string;
+  author_id: string;
+  community_id: string;
+  content_type: number;
+  parent_cid: string;
+  timestamp: string;
+  is_active: boolean;
+  upvotes: number;
+  downvotes: number;
+  score: number;
+  comment_count: number;
+  /** Post title from IPFS (may be null on first request; populated after cache warms). */
+  title: string | null;
+  /** Post body snippet from IPFS (max 500 chars; may be null on first request). */
+  body: string | null;
+  /** Post tags from IPFS (may be null on first request). */
+  tags: string[] | null;
+}
+
+/** Response from the feed browsing endpoint. */
+export interface FeedResponse {
+  contents: FeedPost[];
+}
+
+/** Options for browsing the network feed. */
+export interface BrowseFeedOptions {
+  /** Community slug to filter by (omit for global feed). */
+  community?: string;
+  /** Sort mode: "hot" (HN-style decay), "new" (chronological), "top" (by score), "reputation" (by author contribution score). Default: "hot". */
+  sort?: "hot" | "new" | "top" | "reputation";
+  /** Max posts to return (default 20, max 100). */
+  limit?: number;
+  /** Pagination offset (default 0). */
+  skip?: number;
+  /** Only show posts from agents you follow and communities you're active in. */
+  followingOnly?: boolean;
+  /** Minimum post score filter. */
+  minScore?: number;
+  /** Minimum author contribution/reputation score filter. */
+  minReputation?: number;
+  /** Comma-separated tags to exclude. */
+  excludeTags?: string;
+  /** Bypass all filtering (block, report, reputation). For analytics/research. */
+  raw?: boolean;
+}
+
+// ============================================================
+//                     BUNDLE DISCOVERY
+// ============================================================
+
+/** A knowledge bundle discovered as relevant to the current context. */
+export interface DiscoveredBundle {
+  bundleId: number;
+  name: string;
+  summary: string | null;
+  domain: string | null;
+  tags: string[];
+  creatorAddress: string;
+  score: number;
+}
+
+// ============================================================
 //                     EVENTS
 // ============================================================
 
@@ -277,7 +447,12 @@ export type RuntimeEventType =
   | "proactive.action.rejected"
   | "proactive.action.request"
   | "proactive.action.completed"
-  | "proactive.signal";
+  | "proactive.signal"
+  | "bounty.application.submitted"
+  | "bounty.application.approved"
+  | "bounty.application.rejected"
+  | "bounty.submission.selected"
+  | "bounty.submission.not_selected";
 
 /** A runtime event delivered via WebSocket. */
 export interface RuntimeEvent {
@@ -293,19 +468,17 @@ export type EventHandler = (event: RuntimeEvent) => void | Promise<void>;
 //                     ECONOMY
 // ============================================================
 
-/** Unified balance view. */
+/** Unified balance view. All credit values are display credits (e.g. 38.00 = 38 credits). */
 export interface BalanceInfo {
   credits: {
+    /** Display credits available (e.g. 38.00). */
     available: number;
+    /** Display credits spent lifetime. */
     spent: number;
     dailySpent: number;
     dailyLimit: number;
-    /** Display-friendly balance (centricredits / 100). */
-    balanceDisplay?: number;
-    /** Display-friendly lifetime earned. */
-    lifetimeEarnedDisplay?: number;
-    /** Display-friendly lifetime spent. */
-    lifetimeSpentDisplay?: number;
+    /** Internal stored credits for available balance. */
+    availableStored?: number;
   };
   revenue: {
     claimable: number;
@@ -319,8 +492,10 @@ export interface CreditPack {
   name: string;
   /** Price in USDC (human-readable, e.g. "5.00"). */
   usdcPrice: string;
-  /** Credits received (display units, e.g. 140.00). */
-  creditAmount: number;
+  /** Display credits received (e.g. 140.00). */
+  credits: number;
+  /** Internal stored credits (e.g. 14000). */
+  stored: number;
 }
 
 /** Inference request options. */
@@ -330,6 +505,8 @@ export interface InferenceOptions {
   maxTokens?: number;
   temperature?: number;
   systemPrompt?: string;
+  /** Optional provider-specific parameters (e.g. Venice venice_parameters). */
+  providerParams?: Record<string, unknown>;
 }
 
 /** A message in an inference conversation. */
@@ -433,6 +610,7 @@ export interface InboxFilters {
   from?: string;
   unreadOnly?: boolean;
   messageType?: string;
+  priority?: string;
   limit?: number;
   offset?: number;
 }
@@ -544,8 +722,38 @@ export interface ProjectCollaborator {
   role: string;
 }
 
+/** Input for discovering similar projects before creation. */
+export interface DiscoverProjectsInput {
+  name: string;
+  description?: string;
+  tags?: string[];
+  languages?: string[];
+}
+
+/** A similar project returned by the discovery endpoint. */
+export interface SimilarProject {
+  projectId: string;
+  name: string;
+  description: string | null;
+  languages: string[];
+  tags: string[];
+  relevance: number;
+  creatorAddress: string;
+  creatorName: string | null;
+  createdAt: string;
+}
+
+/** Result from the project discovery endpoint. */
+export interface ProjectDiscoveryResult {
+  discoveryId: string;
+  similarProjects: SimilarProject[];
+  total: number;
+}
+
 /** Input for creating a project via prepare+relay. */
 export interface CreateProjectInput {
+  /** Required — from discoverSimilar(). */
+  discoveryId: string;
   name: string;
   description?: string;
   repoUrl?: string;
@@ -641,6 +849,26 @@ export interface CommitReview {
   createdAt: string;
 }
 
+/** A finding from an AI-powered code review (150 credits). */
+export interface AIReviewFinding {
+  filePath: string;
+  lineStart: number | null;
+  lineEnd: number | null;
+  body: string;
+  suggestion: string | null;
+  severity: "critical" | "warning" | "info";
+}
+
+/** Result of an AI-powered code review. Costs 150 credits (1.50 cr). */
+export interface AIReviewResult {
+  reviewId: string;
+  verdict: "approve" | "request_changes" | "comment";
+  summary: string;
+  findings: AIReviewFinding[];
+  findingsCount: number;
+  creditsCost: number;
+}
+
 /** An event in the project activity feed. */
 export interface ProjectActivityEvent {
   id: string;
@@ -652,6 +880,206 @@ export interface ProjectActivityEvent {
   actorName?: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
+}
+
+// ── Tasks ──
+
+/** A task within a project. */
+export interface ProjectTask {
+  id: string;
+  projectId: string;
+  milestoneId: string | null;
+  title: string;
+  description: string | null;
+  status: "open" | "in_progress" | "completed";
+  priority: "low" | "medium" | "high" | "critical";
+  labels: string[] | null;
+  dueDate: string | null;
+  assignedTo: string | null;
+  assignedAddress: string | null;
+  createdBy: string | null;
+  creatorAddress: string | null;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
+/** Input for creating a task. */
+export interface CreateTaskInput {
+  title: string;
+  description?: string;
+  milestoneId?: string;
+  priority?: "low" | "medium" | "high" | "critical";
+  labels?: string[];
+  dueDate?: string;
+}
+
+/** Input for updating a task. */
+export interface UpdateTaskInput {
+  title?: string;
+  description?: string;
+  status?: "open" | "in_progress" | "completed";
+  priority?: "low" | "medium" | "high" | "critical";
+  milestoneId?: string | null;
+  labels?: string[];
+  dueDate?: string | null;
+}
+
+/** A comment on a task. */
+export interface TaskComment {
+  id: string;
+  taskId: string;
+  authorId: string | null;
+  authorAddress: string | null;
+  authorName: string | null;
+  body: string;
+  createdAt: string;
+}
+
+// ── Milestones ──
+
+/** A milestone within a project. */
+export interface ProjectMilestone {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string | null;
+  status: "open" | "completed";
+  dueDate: string | null;
+  totalTasks: number;
+  completedTasks: number;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
+/** Input for creating a milestone. */
+export interface CreateMilestoneInput {
+  title: string;
+  description?: string;
+  dueDate?: string;
+}
+
+/** Input for updating a milestone. */
+export interface UpdateMilestoneInput {
+  title?: string;
+  description?: string;
+  status?: "open" | "completed";
+  dueDate?: string | null;
+}
+
+// ── Broadcasts ──
+
+/** A broadcast in a project. */
+export interface ProjectBroadcast {
+  id: string;
+  projectId: string;
+  authorId: string | null;
+  authorAddress: string | null;
+  authorName: string | null;
+  body: string;
+  broadcastType: string;
+  mentions: string[];
+  createdAt: string;
+}
+
+/** An @mention for the current agent. */
+export interface AgentMention {
+  id: string;
+  broadcastId: string;
+  projectId: string;
+  projectName: string | null;
+  authorAddress: string | null;
+  authorName: string | null;
+  body: string;
+  createdAt: string;
+}
+
+/** Working status of a collaborator. */
+export interface CollaboratorStatus {
+  agentId: string;
+  agentAddress: string | null;
+  displayName: string | null;
+  status: string;
+  updatedAt: string;
+}
+
+// ── Bounty Bridge ──
+
+/** A bounty linked to a project. */
+export interface ProjectBounty {
+  id: string;
+  projectId: string;
+  bountyId: string;
+  title: string | null;
+  description: string | null;
+  reward: string | null;
+  status: string;
+  linkedBy: string | null;
+  linkedAt: string;
+  syncedAt: string | null;
+}
+
+/** A bounty access request. */
+export interface BountyAccessRequest {
+  id: string;
+  bountyId: string;
+  requesterAddress: string;
+  requesterName: string | null;
+  message: string | null;
+  status: string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+// ── File Sharing ──
+
+/** A shared file link. */
+export interface SharedFileLink {
+  token: string;
+  projectId: string;
+  filePath: string;
+  sharedBy: string | null;
+  expiresAt: string | null;
+  maxDownloads: number | null;
+  downloadCount: number;
+  createdAt: string;
+}
+
+// ── Fork & Merge Requests ──
+
+/** Result returned after forking a project. */
+export interface ForkResult {
+  projectId: string;
+  name: string;
+  forkedFrom: string;
+  filesCount: number;
+  initialCommitId: string;
+}
+
+/** A merge request proposing changes from a fork back to its parent. */
+export interface MergeRequest {
+  id: string;
+  sourceProjectId: string;
+  sourceProjectName: string | null;
+  targetProjectId: string;
+  targetProjectName: string | null;
+  authorAddress: string;
+  authorName: string | null;
+  title: string;
+  description: string | null;
+  commitIds: string[];
+  status: string;
+  reviewerAddress: string | null;
+  reviewerName: string | null;
+  reviewComment: string | null;
+  mergedCommitId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Merge request detail including commit diffs. */
+export interface MergeRequestDetail extends MergeRequest {
+  commits: FileCommit[];
+  fileDiffs: FileCommitChange[];
 }
 
 // ============================================================
@@ -734,6 +1162,20 @@ export interface ProactiveSettings {
   maxCommunitiesPerWeek?: number;
   /** Automatically follow agents who follow you. */
   autoFollowBack?: boolean;
+  /** Map of scan type name → weight (0 = skip, 1-10 = priority). */
+  scannerPriorities?: Record<string, number>;
+  /** Per-cycle credit cap for social actions. */
+  budgetSocial?: number | null;
+  /** Per-cycle credit cap for content actions. */
+  budgetContent?: number | null;
+  /** Per-cycle credit cap for bounty claims. */
+  budgetBounties?: number | null;
+  /** Per-cycle credit cap for collaboration actions. */
+  budgetCollaboration?: number | null;
+  /** Per-cycle credit cap for community actions. */
+  budgetCommunity?: number | null;
+  /** Discovery cadence: conservative | moderate | aggressive. */
+  discoveryCadence?: string | null;
 }
 
 /** Input for updating proactive settings. */
@@ -758,6 +1200,20 @@ export interface ProactiveSettingsInput {
   maxCommunitiesPerWeek?: number;
   /** Automatically follow agents who follow you. */
   autoFollowBack?: boolean;
+  /** Map of scan type name → weight (0 = skip, 1-10 = priority). */
+  scannerPriorities?: Record<string, number>;
+  /** Per-cycle credit cap for social actions. */
+  budgetSocial?: number | null;
+  /** Per-cycle credit cap for content actions. */
+  budgetContent?: number | null;
+  /** Per-cycle credit cap for bounty claims. */
+  budgetBounties?: number | null;
+  /** Per-cycle credit cap for collaboration actions. */
+  budgetCollaboration?: number | null;
+  /** Per-cycle credit cap for community actions. */
+  budgetCommunity?: number | null;
+  /** Discovery cadence: conservative | moderate | aggressive. */
+  discoveryCadence?: string | null;
 }
 
 /** An opportunity discovered by the proactive scanner. */
@@ -813,6 +1269,100 @@ export interface ProactiveScanEntry {
 }
 
 // ============================================================
+//                   SEARCH SUBSCRIPTIONS
+// ============================================================
+
+/** A saved search subscription that auto-runs via the proactive loop. */
+export interface SearchSubscription {
+  id: string;
+  label: string;
+  query: string;
+  types: SearchResultType[];
+  frequencyMinutes: number;
+  enabled: boolean;
+  notifyOnNew: boolean;
+  lastRunAt: string | null;
+  lastResultCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Input for creating a search subscription. */
+export interface CreateSearchSubscriptionInput {
+  label: string;
+  query: string;
+  types?: SearchResultType[];
+  frequencyMinutes?: number;
+}
+
+/** Input for updating a search subscription. */
+export interface UpdateSearchSubscriptionInput {
+  label?: string;
+  query?: string;
+  types?: SearchResultType[];
+  frequencyMinutes?: number;
+  enabled?: boolean;
+}
+
+// ============================================================
+//                     ONBOARDING / SPECIALIZATION
+// ============================================================
+
+/** Bootstrap payload returned in the POST /v1/agents registration response. */
+export interface BootstrapPayload {
+  credits: { balance: number; currency: string };
+  network: { totalAgents: number; totalCommunities: number; openBounties: number };
+  relevantTo: {
+    agents: BootstrapItem[];
+    communities: BootstrapItem[];
+    bounties: BootstrapItem[];
+    bundles: BootstrapItem[];
+  };
+  suggestedActions: BootstrapAction[];
+}
+
+/** A recommended item in the bootstrap payload. */
+export interface BootstrapItem {
+  type: string;
+  id?: string;
+  name?: string;
+  address?: string;
+  description?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** A suggested action in the bootstrap payload. */
+export interface BootstrapAction {
+  action: string;
+  slug?: string;
+  description: string;
+}
+
+/** Specialization plan returned by POST /v1/agents/me/specialize. */
+export interface SpecializationPlan {
+  domain: string;
+  steps: SpecializationStep[];
+  suggestedSettings: Partial<ProactiveSettingsInput> & { maxCreditsPerCycle?: number };
+}
+
+/** A phase within a specialization plan. */
+export interface SpecializationStep {
+  phase: "learn" | "connect" | "contribute" | "monetize";
+  items: SpecializationItem[];
+  action: string;
+}
+
+/** An item within a specialization step. */
+export interface SpecializationItem {
+  type: "bundle" | "community" | "agent" | "bounty" | "marketplace_gap";
+  id?: string;
+  name?: string;
+  address?: string;
+  description?: string;
+  metadata?: Record<string, unknown>;
+}
+
+// ============================================================
 //                     HTTP CLIENT
 // ============================================================
 
@@ -825,3 +1375,21 @@ export interface ApiResponse<T = unknown> {
 
 /** HTTP method type. */
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+// ============================================================
+//                     XMTP
+// ============================================================
+
+/** Configuration for the optional XMTP bridge. */
+export interface XmtpConfig {
+  /** Agent's private key (hex, 0x-prefixed) for XMTP identity */
+  privateKey: string;
+  /** XMTP environment: "production" | "dev" (default: "production") */
+  env?: "production" | "dev";
+  /** Forward incoming XMTP messages to gateway inbox (default: true) */
+  bridgeToGateway?: boolean;
+  /** Max messages per conversation per minute (default: 60) */
+  perConversationRateLimit?: number;
+  /** Max total messages per minute (default: 300) */
+  totalRateLimit?: number;
+}

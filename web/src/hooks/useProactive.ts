@@ -215,7 +215,7 @@ export function useProactiveStats(apiKey: string | null) {
 
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 30_000);
+    const interval = setInterval(refresh, 60_000);
     return () => clearInterval(interval);
   }, [refresh]);
 
@@ -234,7 +234,9 @@ export function useProactiveScanHistory(apiKey: string | null, limit = 20) {
     setIsLoading(true);
     gatewayFetch<{ scans: ScanLogEntry[] }>(`/v1/proactive/scans?limit=${limit}`, apiKey)
       .then((data) => setScans(data.scans))
-      .catch(() => {})
+      .catch((err) => {
+        console.warn("[useProactive] fetch scan history failed:", err);
+      })
       .finally(() => setIsLoading(false));
   }, [apiKey, limit]);
 

@@ -22,7 +22,7 @@ load_dotenv()
 
 # -- Initialize runtime ------------------------------------------------
 runtime = NookplotRuntime(
-    gateway_url=os.getenv("NOOKPLOT_GATEWAY_URL", "http://localhost:4022"),
+    gateway_url=os.getenv("NOOKPLOT_GATEWAY_URL", "https://gateway.nookplot.com"),
     api_key=os.getenv("NOOKPLOT_API_KEY", ""),
     private_key=os.getenv("NOOKPLOT_AGENT_PRIVATE_KEY") or None,
 )

@@ -18,7 +18,10 @@ import type { SelfImprovementEngine } from "./selfImprovementEngine.js";
 import type { ActionRegistry } from "./actionRegistry.js";
 import type { ActionExecutor } from "./actionExecutor.js";
 import type { RuntimeEventBroadcaster, RuntimeWsEvent } from "./runtimeEventBroadcaster.js";
+import type { InterestEngine } from "./interestEngine.js";
+import type { OnboardingService } from "./onboardingService.js";
 import { logSecurityEvent } from "../middleware/auditLog.js";
+import { encryptSecret, decryptSecret } from "../secretManager.js";
 
 // ============================================================
 //  Types
@@ -37,6 +40,16 @@ export interface ProactiveSettings {
   maxCreditsPerCycle: number;
   maxActionsPerDay: number;
   pausedUntil: string | null;
+  callbackUrl: string | null;
+  callbackSecretSet: boolean;
+  callbackFormat: string;
+  scannerPriorities: Record<string, number> | null;
+  budgetSocial: number | null;
+  budgetContent: number | null;
+  budgetBounties: number | null;
+  budgetCollaboration: number | null;
+  budgetCommunity: number | null;
+  discoveryCadence: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -46,6 +59,16 @@ export interface ProactiveSettingsInput {
   scanIntervalMinutes?: number;
   maxCreditsPerCycle?: number;
   maxActionsPerDay?: number;
+  callbackUrl?: string | null;
+  callbackSecret?: string | null;
+  callbackFormat?: string;
+}
+
+export interface QueuedSignal {
+  id: string;
+  signalType: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface ProactiveAction {
@@ -102,6 +125,7 @@ export class ProactiveScheduler {
   private readonly registry: ActionRegistry;
   private readonly executor: ActionExecutor;
   private readonly config: ProactiveSchedulerConfig;
+  private readonly secretEncryptionKey: string | null;
 
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private inProgressScans = new Set<Promise<void>>();
@@ -109,6 +133,15 @@ export class ProactiveScheduler {
 
   /** Optional event broadcaster for pushing proactive events to connected agents. */
   private broadcaster: RuntimeEventBroadcaster | null = null;
+
+  /** Optional interest engine for digest compilation and repo watch polling. */
+  private interestEngine: InterestEngine | null = null;
+
+  /** Optional onboarding service for progressive nudge signals. */
+  private onboardingService: OnboardingService | null = null;
+  private digestTimerId: ReturnType<typeof setInterval> | null = null;
+  private repoWatchTimerId: ReturnType<typeof setInterval> | null = null;
+  private pruneTimerId: ReturnType<typeof setInterval> | null = null;
 
   /**
    * In-memory cooldown tracker: agentId → channelId → lastResponseTimestamp.
@@ -132,6 +165,7 @@ export class ProactiveScheduler {
     registry: ActionRegistry,
     executor: ActionExecutor,
     config: ProactiveSchedulerConfig,
+    secretEncryptionKey?: string | null,
   ) {
     this.pool = pool;
     this.scanner = scanner;
@@ -142,6 +176,7 @@ export class ProactiveScheduler {
     this.registry = registry;
     this.executor = executor;
     this.config = config;
+    this.secretEncryptionKey = secretEncryptionKey ?? null;
   }
 
   /**
@@ -216,6 +251,11 @@ export class ProactiveScheduler {
         return `friend:${addr}`;
       case "attestation_opportunity":
         return `attest_opp:${addr}`;
+      case "new_post_in_community":
+        // Include postCid so each post gets its own dedup key (not just by author)
+        return `post:${signal.postCid ?? (signal as Record<string, unknown>).sourceId ?? addr}`;
+      case "post_reply":
+        return `post_reply:${signal.postCid ?? (signal as Record<string, unknown>).sourceId ?? addr}`;
       case "bounty":
         return `bounty:${(signal as Record<string, unknown>).sourceId ?? addr}`;
       case "community_gap":
@@ -236,6 +276,90 @@ export class ProactiveScheduler {
         return `time_proj:${addr}`;
       case "interesting_project":
         return `proj_disc:${(signal as Record<string, unknown>).projectId ?? ""}:${addr}`;
+      // Wave 1 collaboration signals
+      case "task_assigned":
+        return `task_assign:${(signal as Record<string, unknown>).taskId ?? ""}:${addr}`;
+      case "task_completed":
+        return `task_done:${(signal as Record<string, unknown>).taskId ?? ""}`;
+      case "milestone_reached":
+        return `milestone:${(signal as Record<string, unknown>).milestoneId ?? ""}`;
+      case "review_comment_added":
+        return `review_comment:${(signal as Record<string, unknown>).commitId ?? ""}:${addr}`;
+      case "agent_mentioned":
+        return `mention:${(signal as Record<string, unknown>).broadcastId ?? ""}:${addr}`;
+      case "project_status_update":
+        return `broadcast:${(signal as Record<string, unknown>).broadcastId ?? ""}`;
+      case "file_shared":
+        return `share:${(signal as Record<string, unknown>).shareId ?? ""}`;
+      // Bounty-project bridge signals
+      case "bounty_posted_to_project":
+        return `proj_bounty:${(signal as Record<string, unknown>).bountyId ?? ""}`;
+      case "bounty_access_requested":
+        return `bounty_access_req:${(signal as Record<string, unknown>).requestId ?? ""}`;
+      case "bounty_access_granted":
+        return `bounty_access_grant:${(signal as Record<string, unknown>).requestId ?? ""}`;
+      case "bounty_access_denied":
+        return `bounty_access_deny:${(signal as Record<string, unknown>).requestId ?? ""}`;
+      case "project_bounty_claimed":
+        return `proj_bounty_claim:${(signal as Record<string, unknown>).bountyId ?? ""}`;
+      case "project_bounty_completed":
+        return `proj_bounty_done:${(signal as Record<string, unknown>).bountyId ?? ""}`;
+      // Bounty application/submission signals
+      case "bounty_application_submitted":
+        return `bounty_app:${(signal as Record<string, unknown>).applicationId ?? ""}`;
+      case "bounty_application_approved":
+        return `bounty_app_approve:${(signal as Record<string, unknown>).applicationId ?? ""}`;
+      case "bounty_application_rejected":
+        return `bounty_app_reject:${(signal as Record<string, unknown>).applicationId ?? ""}`;
+      case "bounty_work_submitted":
+        return `bounty_work:${(signal as Record<string, unknown>).submissionId ?? ""}`;
+      case "bounty_submission_selected":
+        return `bounty_sel:${(signal as Record<string, unknown>).submissionId ?? ""}`;
+      case "bounty_submission_not_selected":
+        return `bounty_notsel:${(signal as Record<string, unknown>).bountyId ?? ""}:${addr}`;
+      // On-chain bounty lifecycle signals
+      case "bounty_claimed":
+        return `bounty_claimed:${(signal as Record<string, unknown>).bountyId ?? ""}`;
+      case "bounty_work_approved":
+        return `bounty_work_approved:${(signal as Record<string, unknown>).bountyId ?? ""}`;
+      case "bounty_disputed":
+        return `bounty_disputed:${(signal as Record<string, unknown>).bountyId ?? ""}:${addr}`;
+      case "bounty_cancelled":
+        return `bounty_cancelled:${(signal as Record<string, unknown>).bountyId ?? ""}`;
+      case "bounty_claimer_approved":
+        return `bounty_claimer_approved:${(signal as Record<string, unknown>).bountyId ?? ""}:${addr}`;
+      case "new_bundle_in_domain":
+        return `new_bundle:${(signal as Record<string, unknown>).bundleId ?? ""}`;
+      case "bundle_cited":
+        return `bundle_cited:${(signal as Record<string, unknown>).bundleId ?? ""}:${addr}`;
+      case "team_assembly_suggested":
+        return `team_suggest:${(signal as Record<string, unknown>).txHash ?? ""}`;
+      case "team_invitation":
+        return `team_inv:${(signal as Record<string, unknown>).invitationId ?? ""}`;
+      case "team_invitation_accepted":
+      case "team_invitation_declined":
+        return `team_resp:${(signal as Record<string, unknown>).invitationId ?? ""}`;
+      // Marketplace signals
+      case "agreement_created":
+        return `agreement_created:${(signal as Record<string, unknown>).agreementId ?? ""}`;
+      case "work_delivered":
+        return `work_delivered:${(signal as Record<string, unknown>).agreementId ?? ""}`;
+      case "agreement_settled":
+        return `agreement_settled:${(signal as Record<string, unknown>).agreementId ?? ""}`;
+      case "agreement_disputed":
+        return `agreement_disputed:${(signal as Record<string, unknown>).agreementId ?? ""}`;
+      case "agreement_cancelled":
+        return `agreement_cancelled:${(signal as Record<string, unknown>).agreementId ?? ""}`;
+      case "revision_requested":
+        return `revision_requested:${(signal as Record<string, unknown>).agreementId ?? ""}`;
+      case "review_received":
+        return `review_received:${(signal as Record<string, unknown>).agreementId ?? ""}`;
+      case "welcome_guide":
+        return `welcome:${addr}`;
+      case "onboarding_suggestion":
+        return `onboard:${(signal as Record<string, unknown>).milestone ?? ""}`;
+      case "specialization_path":
+        return `specialize:${(signal as Record<string, unknown>).domain ?? ""}`;
       default:
         // Fallback — still dedup by type+addr with a 5-minute window
         return `${signal.signalType}:${addr}`;
@@ -281,6 +405,14 @@ export class ProactiveScheduler {
         const addr = ((meta.address as string) ?? "").toLowerCase();
         return addr ? `attest_opp:${addr}` : null;
       }
+      case "new_post_in_community": {
+        const postCid = (meta.postCid as string) ?? (meta.cid as string) ?? "";
+        return postCid ? `post:${postCid}` : (opp.sourceId ? `post:${opp.sourceId}` : null);
+      }
+      case "post_reply": {
+        const postCid = (meta.cid as string) ?? (meta.postCid as string) ?? "";
+        return postCid ? `post_reply:${postCid}` : (opp.sourceId ? `post_reply:${opp.sourceId}` : null);
+      }
       case "bounty": {
         return opp.sourceId ? `bounty:${opp.sourceId}` : null;
       }
@@ -321,6 +453,10 @@ export class ProactiveScheduler {
         const projId = (meta.projectId as string) ?? "";
         return projId ? `proj_disc:${projId}:${opp.sourceId ?? ""}` : null;
       }
+      case "new_bundle_in_domain": {
+        const bundleId = (meta.bundleId as string) ?? opp.sourceId ?? "";
+        return bundleId ? `new_bundle:${bundleId}` : null;
+      }
       default:
         return null;
     }
@@ -335,6 +471,45 @@ export class ProactiveScheduler {
   }
 
   /**
+   * Set the interest engine for periodic digest compilation and repo watch polling.
+   * Called after construction to avoid ordering dependency.
+   */
+  setInterestEngine(engine: InterestEngine): void {
+    this.interestEngine = engine;
+
+    // Schedule daily digest compilation (check every hour, run at configured UTC hour)
+    this.digestTimerId = setInterval(() => {
+      const currentHour = new Date().getUTCHours();
+      // Run at hour 8 UTC by default — close enough check (within 1-hour window)
+      if (currentHour === 8 && this.interestEngine) {
+        this.interestEngine.processDigestQueue().catch((err) => {
+          logSecurityEvent("warn", "interest-digest-cron-failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+    }, 3_600_000); // Check every hour
+
+    // Schedule GitHub repo watch polling (every 15 min)
+    this.repoWatchTimerId = setInterval(() => {
+      if (this.interestEngine) {
+        this.interestEngine.pollRepoWatches().catch((err) => {
+          logSecurityEvent("warn", "interest-repo-watch-cron-failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+    }, 900_000); // 15 min
+  }
+
+  /**
+   * Set the onboarding service for progressive nudge signals.
+   */
+  setOnboardingService(service: OnboardingService): void {
+    this.onboardingService = service;
+  }
+
+  /**
    * Whether the scheduler is actively running and will process scans.
    * Useful for diagnostics — agents can check if the gateway scheduler is alive.
    */
@@ -343,7 +518,7 @@ export class ProactiveScheduler {
   }
 
   // ============================================================
-  //  Reactive signal handling (Phase 2)
+  //  Reactive signal handling
   // ============================================================
 
   /**
@@ -412,7 +587,8 @@ export class ProactiveScheduler {
     // Emit the signal directly to the agent's WebSocket.
     // The agent has its own LLM brain — it decides what to do and responds
     // through the normal API (POST /v1/channels/:id/messages, etc.).
-    this.emitEvent(agentId, "proactive.signal", {
+    // Build the event payload, including Wave 1 metadata
+    const signalPayload: Record<string, unknown> = {
       signalType: signal.signalType,
       channelId: signal.channelId,
       channelName: signal.channelName,
@@ -422,7 +598,39 @@ export class ProactiveScheduler {
       community: signal.community,
       postCid: signal.postCid,
       reactive: true,
-    });
+    };
+    // Wave 1 metadata — forward project/task/bounty context to agents
+    if (signal.projectId) signalPayload.projectId = signal.projectId;
+    if (signal.commitId) signalPayload.commitId = signal.commitId;
+    if (signal.taskId) signalPayload.taskId = signal.taskId;
+    if (signal.milestoneId) signalPayload.milestoneId = signal.milestoneId;
+    if (signal.bountyId) signalPayload.bountyId = signal.bountyId;
+    if (signal.broadcastId) signalPayload.broadcastId = signal.broadcastId;
+    if (signal.requestId) signalPayload.requestId = signal.requestId;
+    if (signal.title) signalPayload.title = signal.title;
+    // Team assembly metadata
+    if (signal.projectName) signalPayload.projectName = signal.projectName;
+    if (signal.txHash) signalPayload.txHash = signal.txHash;
+    // Marketplace metadata
+    if (signal.agreementId) signalPayload.agreementId = signal.agreementId;
+    if (signal.escrowAmount) signalPayload.escrowAmount = signal.escrowAmount;
+    if (signal.buyerAddress) signalPayload.buyerAddress = signal.buyerAddress;
+    if (signal.providerAgentId) signalPayload.providerAgentId = signal.providerAgentId;
+    if (signal.buyerAgentId) signalPayload.buyerAgentId = signal.buyerAgentId;
+    if (signal.rating) signalPayload.rating = signal.rating;
+    if (signal.comment) signalPayload.comment = signal.comment;
+    if (signal.reviewerAddress) signalPayload.reviewerAddress = signal.reviewerAddress;
+    if (signal.description) signalPayload.description = signal.description;
+    if (signal.message) signalPayload.message = signal.message;
+    // Bounty application/submission metadata
+    if (signal.applicationId) signalPayload.applicationId = signal.applicationId;
+    if (signal.submissionId) signalPayload.submissionId = signal.submissionId;
+    // On-chain bounty lifecycle metadata
+    if (signal.claimerAddress) signalPayload.claimerAddress = signal.claimerAddress;
+    if (signal.creatorAddress) signalPayload.creatorAddress = signal.creatorAddress;
+    if (signal.rewardAmount) signalPayload.rewardAmount = signal.rewardAmount;
+
+    this.emitEvent(agentId, "proactive.signal", signalPayload);
 
     // Record in rate limiter
     agentLog.push(now);
@@ -467,10 +675,37 @@ export class ProactiveScheduler {
       });
     }, this.config.tickIntervalMs);
 
+    // Prune expired entries from in-memory Maps every 30 minutes
+    this.pruneTimerId = setInterval(() => this.pruneExpiredEntries(), 30 * 60_000);
+
     logSecurityEvent("info", "proactive-scheduler-started", {
       tickIntervalMs: this.config.tickIntervalMs,
       maxConcurrent: this.config.maxConcurrentScans,
     });
+  }
+
+  /** Remove expired entries from in-memory caches and expire stale signal queue rows. */
+  private pruneExpiredEntries(): void {
+    // Expire stale signal queue rows (48h default)
+    this.expireStaleSignals().catch((err) => {
+      logSecurityEvent("warn", "signal-queue-expire-failed", { error: (err as Error).message });
+    });
+    const now = Date.now();
+    // Prune reactiveSignalDedup — entries older than 24 hours (matches DB dedup window)
+    const oneHourAgo = now - 86_400_000;
+    for (const [agentId, agentMap] of this.reactiveSignalDedup) {
+      for (const [key, ts] of agentMap) {
+        if (ts < oneHourAgo) agentMap.delete(key);
+      }
+      if (agentMap.size === 0) this.reactiveSignalDedup.delete(agentId);
+    }
+    // Prune channelCooldowns — entries older than 1 hour
+    for (const [agentId, agentMap] of this.channelCooldowns) {
+      for (const [key, ts] of agentMap) {
+        if (ts < oneHourAgo) agentMap.delete(key);
+      }
+      if (agentMap.size === 0) this.channelCooldowns.delete(agentId);
+    }
   }
 
   /**
@@ -482,6 +717,22 @@ export class ProactiveScheduler {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
+    if (this.digestTimerId) {
+      clearInterval(this.digestTimerId);
+      this.digestTimerId = null;
+    }
+    if (this.repoWatchTimerId) {
+      clearInterval(this.repoWatchTimerId);
+      this.repoWatchTimerId = null;
+    }
+    if (this.pruneTimerId) {
+      clearInterval(this.pruneTimerId);
+      this.pruneTimerId = null;
+    }
+    // Clear in-memory Maps to free memory on shutdown
+    this.channelCooldowns.clear();
+    this.dailyMessageCounts.clear();
+    this.reactiveSignalDedup.clear();
     // Wait for any in-progress scans to finish
     if (this.inProgressScans.size > 0) {
       await Promise.allSettled([...this.inProgressScans]);
@@ -563,9 +814,57 @@ export class ProactiveScheduler {
       });
     }
 
+    // Onboarding nudge tick — check new agents for missing milestones
+    if (this.onboardingService && this.broadcaster) {
+      await this.onboardingNudgeTick();
+    }
+
     // Self-improvement tick (separate from proactive scanning)
     if (this.improvementEngine) {
       await this.improvementTick();
+    }
+  }
+
+  /**
+   * Check recently-registered agents for onboarding milestones and emit
+   * nudge signals for the first missing one.
+   */
+  private async onboardingNudgeTick(): Promise<void> {
+    if (!this.onboardingService || !this.broadcaster) return;
+
+    try {
+      // Find agents created within 14 days that haven't completed onboarding
+      const { rows: agents } = await this.pool.query<{ agent_id: string }>(
+        `SELECT ps.agent_id FROM proactive_settings ps
+         JOIN agents a ON a.id = ps.agent_id
+         WHERE ps.enabled = true
+           AND ps.onboarding_completed_at IS NULL
+           AND a.created_at > NOW() - INTERVAL '14 days'
+           AND a.status = 'active'
+         LIMIT 10`,
+      );
+
+      for (const agent of agents) {
+        const nudge = await this.onboardingService.checkOnboardingProgress(agent.agent_id);
+        if (!nudge) continue;
+
+        // Emit nudge signal to the agent's WebSocket
+        this.emitEvent(agent.agent_id, "proactive.signal", {
+          signalType: nudge.signalType,
+          milestone: nudge.milestone,
+          description: nudge.description,
+          suggestedItems: nudge.suggestedItems,
+          reactive: true,
+        });
+
+        // Record nudge as sent to prevent re-fire
+        const nudgeKey = `onboarding_nudge_${nudge.milestone}`;
+        await this.onboardingService.recordNudgeSent(agent.agent_id, nudgeKey);
+      }
+    } catch (err) {
+      logSecurityEvent("warn", "onboarding-nudge-tick-failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -701,6 +1000,12 @@ export class ProactiveScheduler {
       // Load enhanced settings for cooldown checks
       const enhancedSettings = await this.getEnhancedSettings(agentId);
 
+      // Load per-category budgets for budget enforcement
+      const categoryBudgets = await this.getCategoryBudgets(agentId);
+      const categorySpend: Record<string, number> = {
+        social: 0, content: 0, bounties: 0, collaboration: 0, community: 0,
+      };
+
       for (const opp of opportunities.slice(0, 20)) {
         // Skip if this was already emitted as a reactive signal (prevents duplicates)
         if (this.shouldSkipScanSignal(agentId, opp)) {
@@ -716,6 +1021,17 @@ export class ProactiveScheduler {
           if (!this.isDailyMessageLimitClear(agentId, channelId, enhancedSettings.maxMessagesPerChannelPerDay)) {
             continue;
           }
+        }
+
+        // Per-category budget enforcement
+        const budgetCategory = this.getOpportunityBudgetCategory(opp.type);
+        if (budgetCategory && categoryBudgets[budgetCategory] != null) {
+          const cap = categoryBudgets[budgetCategory]!;
+          const estimatedCost = opp.estimatedValue || 25; // default action cost
+          if (categorySpend[budgetCategory] + estimatedCost > cap) {
+            continue; // category budget exhausted for this cycle
+          }
+          categorySpend[budgetCategory] += estimatedCost;
         }
 
         this.emitEvent(agentId, "proactive.signal", {
@@ -745,6 +1061,16 @@ export class ProactiveScheduler {
           requesterName: opp.metadata?.requesterName,
         });
         signalsSent++;
+
+        // Record emitted signal in proactive_opportunities so the 24h dedup
+        // in deduplicateOpportunities() actually filters it on subsequent scans.
+        this.recordEmittedOpportunity(agentId, opp).catch((err) => {
+          logSecurityEvent("warn", "proactive-record-opportunity-failed", {
+            agentId,
+            sourceId: opp.sourceId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
       }
 
       await this.logScan(agentId, opportunitiesFound, signalsSent, 0, 0, Date.now() - startTime, null);
@@ -773,7 +1099,10 @@ export class ProactiveScheduler {
   async getSettings(agentId: string): Promise<ProactiveSettings | null> {
     const result = await this.pool.query(
       `SELECT agent_id, enabled, scan_interval_minutes, max_credits_per_cycle,
-              max_actions_per_day, paused_until, created_at, updated_at
+              max_actions_per_day, paused_until, callback_url, callback_secret,
+              scanner_priorities, budget_social, budget_content, budget_bounties,
+              budget_collaboration, budget_community, discovery_cadence,
+              created_at, updated_at
        FROM proactive_settings WHERE agent_id = $1`,
       [agentId],
     );
@@ -786,24 +1115,51 @@ export class ProactiveScheduler {
    * Update (or create) proactive settings for an agent.
    */
   async updateSettings(agentId: string, input: ProactiveSettingsInput): Promise<ProactiveSettings> {
+    // Encrypt callback secret if provided
+    let callbackSecretJson: string | null = null;
+    if (input.callbackSecret !== undefined && input.callbackSecret !== null && input.callbackSecret !== "") {
+      if (this.secretEncryptionKey) {
+        const { encryptedKey, iv, authTag } = encryptSecret(input.callbackSecret, this.secretEncryptionKey);
+        callbackSecretJson = JSON.stringify({ encryptedKey, iv, authTag });
+      } else {
+        // Fallback storage path
+        callbackSecretJson = JSON.stringify({ plaintext: input.callbackSecret });
+      }
+    }
+
+    // Use boolean flags to distinguish "not provided" (keep existing) from "explicitly null" (clear)
+    const callbackUrlProvided = input.callbackUrl !== undefined;
+    const callbackSecretProvided = input.callbackSecret !== undefined;
+    const callbackFormatProvided = input.callbackFormat !== undefined;
+
     const result = await this.pool.query(
-      `INSERT INTO proactive_settings (agent_id, enabled, scan_interval_minutes, max_credits_per_cycle, max_actions_per_day)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO proactive_settings (agent_id, enabled, scan_interval_minutes, max_credits_per_cycle, max_actions_per_day, callback_url, callback_secret, callback_format)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $10)
        ON CONFLICT (agent_id) DO UPDATE SET
          enabled = COALESCE($2, proactive_settings.enabled),
          scan_interval_minutes = COALESCE($3, proactive_settings.scan_interval_minutes),
          max_credits_per_cycle = COALESCE($4, proactive_settings.max_credits_per_cycle),
          max_actions_per_day = COALESCE($5, proactive_settings.max_actions_per_day),
+         callback_url = CASE WHEN $8::boolean THEN $6 ELSE proactive_settings.callback_url END,
+         callback_secret = CASE WHEN $9::boolean THEN $7 ELSE proactive_settings.callback_secret END,
+         callback_format = CASE WHEN $11::boolean THEN $10 ELSE proactive_settings.callback_format END,
          paused_until = CASE WHEN $2 = true THEN NULL ELSE proactive_settings.paused_until END,
          updated_at = NOW()
        RETURNING agent_id, enabled, scan_interval_minutes, max_credits_per_cycle,
-                 max_actions_per_day, paused_until, created_at, updated_at`,
+                 max_actions_per_day, paused_until, callback_url, callback_secret, callback_format,
+                 created_at, updated_at`,
       [
         agentId,
         input.enabled ?? false,
         input.scanIntervalMinutes ?? 60,
         input.maxCreditsPerCycle ?? 5000,
         input.maxActionsPerDay ?? 10,
+        callbackUrlProvided ? (input.callbackUrl ?? null) : null,
+        callbackSecretProvided ? (callbackSecretJson ?? null) : null,
+        callbackUrlProvided,
+        callbackSecretProvided,
+        callbackFormatProvided ? (input.callbackFormat ?? "raw") : "raw",
+        callbackFormatProvided,
       ],
     );
     return this.mapSettingsRow((result as { rows: Array<Record<string, unknown>> }).rows[0]);
@@ -1047,13 +1403,104 @@ export class ProactiveScheduler {
       maxFollowsPerDay: Number(row?.max_follows_per_day ?? 5),
       maxAttestationsPerDay: Number(row?.max_attestations_per_day ?? 3),
       maxCommunitiesPerWeek: Number(row?.max_communities_per_week ?? 1),
-      autoFollowBack: Boolean(row?.auto_follow_back ?? true),
+      autoFollowBack: Boolean(row?.auto_follow_back ?? false),
     };
   }
 
+  /**
+   * Load per-category budget caps from proactive_settings.
+   * Returns null values for uncapped categories.
+   */
+  private async getCategoryBudgets(agentId: string): Promise<Record<string, number | null>> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT budget_social, budget_content, budget_bounties,
+                budget_collaboration, budget_community
+         FROM proactive_settings WHERE agent_id = $1`,
+        [agentId],
+      );
+      const row = rows[0] as Record<string, unknown> | undefined;
+      return {
+        social: row?.budget_social != null ? Number(row.budget_social) : null,
+        content: row?.budget_content != null ? Number(row.budget_content) : null,
+        bounties: row?.budget_bounties != null ? Number(row.budget_bounties) : null,
+        collaboration: row?.budget_collaboration != null ? Number(row.budget_collaboration) : null,
+        community: row?.budget_community != null ? Number(row.budget_community) : null,
+      };
+    } catch {
+      return { social: null, content: null, bounties: null, collaboration: null, community: null };
+    }
+  }
+
+  /**
+   * Map an opportunity type to a budget category.
+   */
+  private getOpportunityBudgetCategory(oppType: string): string | null {
+    const mapping: Record<string, string> = {
+      follow_agent: "social",
+      attest_agent: "social",
+      send_dm: "social",
+      potential_friend: "social",
+      new_follower: "social",
+      attestation_opportunity: "social",
+      create_post: "content",
+      post_reply: "content",
+      send_channel_message: "content",
+      vote: "content",
+      time_to_post: "content",
+      replies_to_own_posts: "content",
+      project_discussion: "content",
+      channel_mention: "content",
+      interest_match: "content",
+      claim_bounty: "bounties",
+      bounty: "bounties",
+      propose_collab: "collaboration",
+      add_collaborator: "collaboration",
+      review_commit: "collaboration",
+      create_project: "collaboration",
+      accept_service: "collaboration",
+      collab_request: "collaboration",
+      pending_review: "collaboration",
+      project_discovery: "collaboration",
+      time_to_create_project: "collaboration",
+      service_listing: "collaboration",
+      directive: "collaboration",
+      create_community: "community",
+      propose_guild: "community",
+      community_feed: "community",
+      community_discovery: "community",
+      guild_opportunity: "community",
+    };
+    return mapping[oppType] ?? null;
+  }
+
   // ============================================================
-  //  Quality safeguards (Phase 6)
+  //  Quality safeguards
   // ============================================================
+
+  /**
+   * Record an emitted scan signal in `proactive_opportunities` so that
+   * `deduplicateOpportunities()` can filter it on subsequent scan cycles.
+   * Without this, the 24h dedup was a no-op because nothing wrote to the table.
+   */
+  private async recordEmittedOpportunity(agentId: string, opp: Opportunity): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO proactive_opportunities
+        (agent_id, type, source_id, title, description, estimated_cost, estimated_value, alignment_score, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        agentId,
+        opp.type,
+        opp.sourceId,
+        (opp.title ?? "").slice(0, 500),
+        (opp.description ?? "").slice(0, 1000),
+        0,
+        opp.estimatedValue ?? 0,
+        0,
+        "emitted",
+      ],
+    );
+  }
 
   /**
    * Remove opportunities that this agent has already acted on in the past 24 hours.
@@ -1159,7 +1606,7 @@ export class ProactiveScheduler {
       // a minimal context that still exercises the proactive loop.
 
       // Query the agent's description/capabilities and autonomy level from the DB
-      const [agentResult, autonomyResult] = await Promise.all([
+      const [agentResult, autonomyResult, discoveryResult] = await Promise.all([
         this.pool.query(
           `SELECT display_name, description, capabilities FROM agents WHERE id = $1`,
           [agentId],
@@ -1171,6 +1618,12 @@ export class ProactiveScheduler {
            FROM agent_tool_config
            WHERE agent_id = $1 AND autonomy_override IS NOT NULL
            LIMIT 1`,
+          [agentId],
+        ),
+        // Load discovery affordance settings
+        this.pool.query(
+          `SELECT scanner_priorities, discovery_cadence
+           FROM proactive_settings WHERE agent_id = $1`,
           [agentId],
         ),
       ]);
@@ -1186,6 +1639,9 @@ export class ProactiveScheduler {
       const autonomyRow = (autonomyResult as { rows: Array<{ autonomy_override: string | null }> }).rows[0];
       const autonomyLevel = autonomyRow?.autonomy_override ?? "semi-autonomous";
 
+      // Discovery affordances: scanner priorities from proactive_settings
+      const discoveryRow = (discoveryResult as { rows: Array<{ scanner_priorities: Record<string, number> | null; discovery_cadence: string | null }> }).rows[0];
+
       return {
         agentId,
         address,
@@ -1198,6 +1654,7 @@ export class ProactiveScheduler {
           level: autonomyLevel,
           boundaries: [],
         },
+        scannerPriorities: discoveryRow?.scanner_priorities ?? undefined,
       };
     } catch (error) {
       logSecurityEvent("warn", "proactive-context-build-failed", {
@@ -1248,16 +1705,203 @@ export class ProactiveScheduler {
   }
 
   /**
-   * Emit a proactive event to a connected agent via WebSocket.
+   * Emit a proactive event to a connected agent via WebSocket and/or callback URL.
+   * For proactive.signal events, persists to the signal queue FIRST so signals
+   * are never lost — delivery is attempted via WS + callback, and agents can
+   * poll for undelivered signals via GET /v1/proactive/pending-signals.
    */
-  private emitEvent(agentId: string, type: string, data: Record<string, unknown>): void {
-    if (!this.broadcaster) return;
+  private async emitEvent(agentId: string, type: string, data: Record<string, unknown>): Promise<void> {
     const event: RuntimeWsEvent = {
       type,
       timestamp: new Date().toISOString(),
       data: { agentId, ...data },
     };
-    this.broadcaster.broadcast(agentId, event);
+
+    // 1. Persist to signal queue (proactive.signal only)
+    let signalId: string | null = null;
+    if (type === "proactive.signal") {
+      try {
+        const result = await this.pool.query(
+          `INSERT INTO proactive_signal_queue (agent_id, signal_type, payload)
+           VALUES ($1, $2, $3)
+           RETURNING id`,
+          [agentId, (data.signalType as string) || type, JSON.stringify(event)],
+        );
+        signalId = (result as { rows: Array<{ id: string }> }).rows[0]?.id ?? null;
+      } catch (err) {
+        logSecurityEvent("warn", "signal-queue-persist-failed", {
+          agentId, error: (err as Error).message,
+        });
+      }
+    }
+
+    // 2. Try WebSocket delivery
+    let wsDelivered = false;
+    if (this.broadcaster) {
+      if (this.broadcaster.hasConnection(agentId)) {
+        this.broadcaster.broadcast(agentId, event);
+        wsDelivered = true;
+      }
+    }
+
+    // 3. Try callback delivery (proactive.signal only)
+    let callbackDelivered = false;
+    if (type === "proactive.signal") {
+      callbackDelivered = await this.pushToCallback(agentId, event).catch(() => false);
+    }
+
+    // 4. Mark as delivered if either path succeeded
+    if (signalId && (wsDelivered || callbackDelivered)) {
+      this.markSignalDelivered(signalId).catch(() => {});
+    }
+  }
+
+  /**
+   * POST a proactive signal event to the agent's configured callback URL.
+   * Supports multiple payload formats: raw, agent-hook, openai, generic.
+   * Returns true if callback delivered successfully, false otherwise.
+   */
+  private async pushToCallback(agentId: string, event: RuntimeWsEvent): Promise<boolean> {
+    try {
+      // Load callback settings
+      const result = await this.pool.query(
+        `SELECT callback_url, callback_secret, callback_format FROM proactive_settings WHERE agent_id = $1`,
+        [agentId],
+      );
+      const row = (result as { rows: Array<Record<string, unknown>> }).rows[0];
+      if (!row?.callback_url) return false;
+
+      const callbackUrl = String(row.callback_url);
+      const format = String(row.callback_format || "raw");
+
+      // Build headers
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+      // Decrypt and add Authorization header if secret is set
+      if (row.callback_secret) {
+        try {
+          const secretData = JSON.parse(String(row.callback_secret)) as Record<string, string>;
+          let bearerToken: string;
+          if (secretData.plaintext) {
+            bearerToken = secretData.plaintext;
+          } else if (secretData.encryptedKey && secretData.iv && secretData.authTag && this.secretEncryptionKey) {
+            bearerToken = decryptSecret(secretData.encryptedKey, secretData.iv, secretData.authTag, this.secretEncryptionKey);
+          } else {
+            bearerToken = "";
+          }
+          if (bearerToken) {
+            headers["Authorization"] = `Bearer ${bearerToken}`;
+          }
+        } catch {
+          logSecurityEvent("warn", "proactive-callback-secret-decrypt-failed", { agentId });
+        }
+      }
+
+      // Format payload based on callback_format
+      const signalData = (event.data ?? {}) as Record<string, unknown>;
+      let body: string;
+
+      switch (format) {
+        case "agent-hook": {
+          // Agent hook format: {message: "...", agentId: "main"} at /hooks/agent
+          const message = this.formatSignalAsMessage(signalData);
+          body = JSON.stringify({ message, agentId: "main" });
+          break;
+        }
+        case "openai": {
+          // OpenAI chat completions format
+          const message = this.formatSignalAsMessage(signalData);
+          body = JSON.stringify({
+            model: "default",
+            messages: [
+              { role: "system", content: "You are receiving a real-time signal from the Nookplot network. Respond with a JSON action or plain text." },
+              { role: "user", content: message },
+            ],
+          });
+          break;
+        }
+        case "raw":
+        case "generic":
+        default:
+          body = JSON.stringify(event);
+          break;
+      }
+
+      // POST with 10s timeout
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+
+      try {
+        const response = await fetch(callbackUrl, {
+          method: "POST",
+          headers,
+          body,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          logSecurityEvent("warn", "proactive-callback-failed", {
+            agentId, url: callbackUrl, status: response.status, format,
+          });
+          return false;
+        }
+        logSecurityEvent("info", "proactive-callback-delivered", {
+          agentId, url: callbackUrl, format,
+          signalType: (signalData.signalType as string) ?? event.type,
+        });
+        return true;
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== "This operation was aborted") {
+        logSecurityEvent("warn", "proactive-callback-error", { agentId, error: message });
+      }
+      return false;
+    }
+  }
+
+  /**
+   * Convert a signal payload into a human-readable message string.
+   * Used by format-aware callback delivery (agent-hook, openai formats).
+   */
+  private formatSignalAsMessage(data: Record<string, unknown>): string {
+    const signalType = (data.signalType as string) || "unknown";
+    const sender = (data.senderAddress as string) || "someone";
+    const channel = (data.channelName as string) || "";
+    const message = (data.messagePreview as string) || (data.message as string) || "";
+    const community = (data.community as string) || "";
+
+    switch (signalType) {
+      case "dm_received":
+        return `[Nookplot Signal] Direct message from ${sender}: "${message}"`;
+      case "channel_message":
+      case "channel_mention":
+        return `[Nookplot Signal] Message in channel "${channel}" from ${sender}: "${message}"`;
+      case "project_discussion":
+        return `[Nookplot Signal] Project discussion message from ${sender}: "${message}"`;
+      case "new_follower":
+        return `[Nookplot Signal] ${sender} followed you on Nookplot.`;
+      case "attestation_received":
+        return `[Nookplot Signal] ${sender} gave you an attestation.`;
+      case "new_post_in_community":
+        return `[Nookplot Signal] New post in ${community}: "${message}"`;
+      case "reply_to_own_post":
+        return `[Nookplot Signal] ${sender} replied to your post: "${message}"`;
+      case "bounty_opportunity":
+        return `[Nookplot Signal] New bounty opportunity: "${(data.title as string) || "untitled"}" — ${(data.description as string) || ""}`;
+      case "bounty_application_submitted":
+        return `[Nookplot Signal] New bounty application from ${sender} for bounty ${(data.bountyId as string) || ""}`;
+      case "service_hired":
+        return `[Nookplot Signal] You've been hired for a service agreement by ${(data.buyerAddress as string) || sender}`;
+      case "merge_request_opened":
+        return `[Nookplot Signal] New merge request: "${(data.title as string) || "untitled"}" on project ${(data.projectId as string) || ""}`;
+      case "files_committed":
+        return `[Nookplot Signal] New commit on project ${(data.projectId as string) || ""} by ${sender}`;
+      default:
+        return `[Nookplot Signal] ${signalType}: ${message || JSON.stringify(data).slice(0, 500)}`;
+    }
   }
 
   /**
@@ -1271,6 +1915,16 @@ export class ProactiveScheduler {
       maxCreditsPerCycle: Number(row.max_credits_per_cycle),
       maxActionsPerDay: Number(row.max_actions_per_day),
       pausedUntil: row.paused_until ? String(row.paused_until) : null,
+      callbackUrl: row.callback_url ? String(row.callback_url) : null,
+      callbackSecretSet: !!row.callback_secret,
+      callbackFormat: row.callback_format ? String(row.callback_format) : "raw",
+      scannerPriorities: row.scanner_priorities ? (row.scanner_priorities as Record<string, number>) : null,
+      budgetSocial: row.budget_social != null ? Number(row.budget_social) : null,
+      budgetContent: row.budget_content != null ? Number(row.budget_content) : null,
+      budgetBounties: row.budget_bounties != null ? Number(row.budget_bounties) : null,
+      budgetCollaboration: row.budget_collaboration != null ? Number(row.budget_collaboration) : null,
+      budgetCommunity: row.budget_community != null ? Number(row.budget_community) : null,
+      discoveryCadence: row.discovery_cadence ? String(row.discovery_cadence) : null,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };
@@ -1300,5 +1954,71 @@ export class ProactiveScheduler {
           }
         : null,
     };
+  }
+
+  // ============================================================
+  //  Signal Queue Management
+  // ============================================================
+
+  /** Get pending (undelivered, unexpired) signals for an agent. */
+  async getPendingSignals(agentId: string, limit = 50): Promise<QueuedSignal[]> {
+    const result = await this.pool.query(
+      `SELECT id, signal_type, payload, created_at
+       FROM proactive_signal_queue
+       WHERE agent_id = $1 AND status = 'pending' AND expires_at > NOW()
+       ORDER BY created_at ASC
+       LIMIT $2`,
+      [agentId, limit],
+    );
+    return (result as { rows: Array<Record<string, unknown>> }).rows.map((r) => ({
+      id: String(r.id),
+      signalType: String(r.signal_type),
+      payload: r.payload as Record<string, unknown>,
+      createdAt: String(r.created_at),
+    }));
+  }
+
+  /** Mark a queued signal as delivered. */
+  async markSignalDelivered(signalId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE proactive_signal_queue
+       SET status = 'delivered', delivered_at = NOW(), delivery_attempts = delivery_attempts + 1
+       WHERE id = $1 AND status = 'pending'`,
+      [signalId],
+    );
+  }
+
+  /** Acknowledge receipt of a queued signal (validates agent ownership). */
+  async ackSignal(signalId: string, agentId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE proactive_signal_queue
+       SET status = 'delivered', delivered_at = NOW(), delivery_attempts = delivery_attempts + 1
+       WHERE id = $1 AND agent_id = $2 AND status = 'pending'
+       RETURNING id`,
+      [signalId, agentId],
+    );
+    return (result as { rows: unknown[] }).rows.length > 0;
+  }
+
+  /** Batch acknowledge multiple queued signals. */
+  async ackSignals(signalIds: string[], agentId: string): Promise<number> {
+    if (signalIds.length === 0) return 0;
+    const result = await this.pool.query(
+      `UPDATE proactive_signal_queue
+       SET status = 'delivered', delivered_at = NOW(), delivery_attempts = delivery_attempts + 1
+       WHERE id = ANY($1) AND agent_id = $2 AND status = 'pending'`,
+      [signalIds, agentId],
+    );
+    return (result as { rowCount: number }).rowCount;
+  }
+
+  /** Expire old pending signals (called periodically by pruneTimerId). */
+  async expireStaleSignals(): Promise<number> {
+    const result = await this.pool.query(
+      `UPDATE proactive_signal_queue
+       SET status = 'expired'
+       WHERE status = 'pending' AND expires_at <= NOW()`,
+    );
+    return (result as { rowCount: number }).rowCount;
   }
 }

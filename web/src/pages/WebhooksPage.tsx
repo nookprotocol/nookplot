@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useWebhookRegistrations, useWebhookEventLog } from "@/hooks/useWebhooks";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 import type { WebhookConfig } from "@/hooks/useWebhooks";
 import { Webhook, Key, Plus, Trash2, CheckCircle, XCircle, Clock, Copy, Shield } from "lucide-react";
 
 export function WebhooksPage() {
   const [apiKey, setApiKey] = useState("");
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(isAuthenticated());
 
   // New registration form
   const [newSource, setNewSource] = useState("");
@@ -19,8 +20,19 @@ export function WebhooksPage() {
   const { registrations, isLoading: regLoading, register, remove } = useWebhookRegistrations(connected ? apiKey : null);
   const { entries, isLoading: logLoading } = useWebhookEventLog(connected ? apiKey : null, logPage);
 
-  const handleConnect = () => {
-    if (apiKey.trim()) setConnected(true);
+  useEffect(() => {
+    if (isAuthenticated() && !connected) setConnected(true);
+  }, []);
+
+  const handleConnect = async () => {
+    if (isAuthenticated()) { setConnected(true); return; }
+    if (!apiKey.trim()) return;
+    try {
+      await startSession(apiKey.trim());
+      setConnected(true);
+    } catch {
+      // silent fail
+    }
   };
 
   const handleRegister = async () => {
@@ -47,7 +59,9 @@ export function WebhooksPage() {
   };
 
   const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text).catch(() => {});
+    navigator.clipboard.writeText(text).catch((err) => {
+      console.warn("[WebhooksPage] clipboard write failed:", err);
+    });
   };
 
   if (!connected) {

@@ -115,41 +115,66 @@ function detectCommand(image: string, files: Record<string, string>): string {
 }
 
 function detectPythonEntry(fileNames: string[]): string {
-  const priority = ["main.py", "app.py", "manage.py"];
+  const rootFiles = fileNames.filter((f) => !f.includes("/"));
+  const priority = ["main.py", "app.py", "manage.py", "run.py"];
   for (const name of priority) {
-    if (fileNames.includes(name)) return name;
+    if (rootFiles.includes(name)) return name;
   }
-  const pyFile = fileNames.find((f) => f.endsWith(".py"));
-  return pyFile ?? "main.py";
+  const rootPy = rootFiles.find((f) => f.endsWith(".py"));
+  if (rootPy) return rootPy;
+  const anyPy = fileNames.find((f) => f.endsWith(".py"));
+  return anyPy ?? "main.py";
 }
 
 function detectDenoEntry(fileNames: string[]): string {
+  const rootFiles = fileNames.filter((f) => !f.includes("/"));
   const priority = ["main.ts", "mod.ts"];
   for (const name of priority) {
-    if (fileNames.includes(name)) return name;
+    if (rootFiles.includes(name)) return name;
   }
-  const tsFile = fileNames.find((f) => f.endsWith(".ts"));
-  return tsFile ?? "main.ts";
+  const rootTs = rootFiles.find((f) => f.endsWith(".ts"));
+  if (rootTs) return rootTs;
+  const anyTs = fileNames.find((f) => f.endsWith(".ts"));
+  return anyTs ?? "main.ts";
 }
 
 function detectNodeCommand(files: Record<string, string>, fileNames: string[]): string {
-  // Check package.json for start script
+  // Check package.json for start/dev/build scripts
   const pkgContent = files["package.json"];
   if (pkgContent) {
     try {
       const pkg = JSON.parse(pkgContent);
-      if (pkg.scripts?.start) return "npm start";
-      if (pkg.scripts?.dev) return "npm run dev";
+      const hasDeps = !!(pkg.dependencies || pkg.devDependencies);
+      // Prepend npm install when dependencies exist (sandbox has no node_modules)
+      const prefix = hasDeps ? "npm install --silent && " : "";
+      if (pkg.scripts?.start) return `${prefix}npm start`;
+      if (pkg.scripts?.dev) return `${prefix}npm run dev`;
+      if (pkg.scripts?.build) return `${prefix}npm run build`;
     } catch {
       // Invalid JSON
     }
   }
 
-  const priority = ["index.js", "index.ts", "main.js", "main.ts"];
+  // Prefer root-level files over nested ones
+  const rootFiles = fileNames.filter((f) => !f.includes("/"));
+
+  const priority = ["index.js", "index.ts", "main.js", "main.ts", "app.js", "app.ts", "server.js", "server.ts"];
   for (const name of priority) {
-    if (fileNames.includes(name)) return `node ${name}`;
+    if (rootFiles.includes(name)) return nodeCmd(name);
   }
 
-  const jsFile = fileNames.find((f) => f.endsWith(".js") || f.endsWith(".ts"));
-  return jsFile ? `node ${jsFile}` : "node index.js";
+  // Fallback: any JS/TS file at root level
+  const rootEntry = rootFiles.find((f) => f.endsWith(".js") || f.endsWith(".ts"));
+  if (rootEntry) return nodeCmd(rootEntry);
+
+  // Last resort: any JS/TS file anywhere
+  const anyEntry = fileNames.find((f) => f.endsWith(".js") || f.endsWith(".ts"));
+  return anyEntry ? nodeCmd(anyEntry) : "node index.js";
+}
+
+/** Use npx tsx for TypeScript files since bare node can't handle them. */
+function nodeCmd(file: string): string {
+  return file.endsWith(".ts") || file.endsWith(".tsx")
+    ? `npx tsx ${file}`
+    : `node ${file}`;
 }

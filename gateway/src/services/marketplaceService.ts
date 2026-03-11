@@ -8,6 +8,8 @@
  */
 
 import type pg from "pg";
+import type { MessageBus } from "./messageBus.js";
+import { normalizeTags } from "./interestEngine.js";
 
 // ── Row shapes ───────────────────────────────────────────────────
 
@@ -55,6 +57,32 @@ export interface ReviewRow {
   created_at: string;
 }
 
+export interface AgreementMessageRow {
+  id: string;
+  agreement_id: number;
+  sender_agent_id: string;
+  message_type: string;
+  content: string;
+  attachment_cid: string | null;
+  created_at: string;
+}
+
+export interface SendMessageInput {
+  agreementId: number;
+  senderAgentId: string;
+  messageType: "general" | "revision_request" | "revision_response" | "delivery_note" | "dispute_evidence";
+  content: string;
+  attachmentCid?: string;
+}
+
+/** Agreement detail enriched with party addresses for frontend role detection. */
+export interface EnrichedAgreementRow extends AgreementRow {
+  buyer_address: string;
+  provider_address: string;
+  buyer_viewed_delivery_at: string | null;
+  dispute_reason: string | null;
+}
+
 // ── Input types ──────────────────────────────────────────────────
 
 export interface SearchFilters {
@@ -64,6 +92,16 @@ export interface SearchFilters {
   activeOnly?: boolean;
   limit?: number;
   offset?: number;
+  // GPU-specific filters
+  gpuModel?: string;
+  minVram?: number;
+  maxPriceUsdc?: number;
+  attestationMaxAgeDays?: number;
+  availabilityStatus?: "online" | "degraded" | "any";
+  minChallengePassRate?: number;
+  // API-specific filters
+  apiStatus?: "online" | "degraded" | "any";
+  minUptimePercent?: number;
 }
 
 export interface CacheListingInput {
@@ -75,6 +113,9 @@ export interface CacheListingInput {
   priceAmount: string;
   metadataCid: string;
   onChainTx?: string;
+  tags?: string[];
+  title?: string;
+  tokenAddress?: string;
 }
 
 export interface CacheAgreementInput {
@@ -87,6 +128,7 @@ export interface CacheAgreementInput {
   escrowType: string;
   deadline: string;
   onChainTx?: string;
+  escrowToken?: string;
 }
 
 export interface SubmitReviewInput {
@@ -114,9 +156,14 @@ export interface CategoryCount {
 
 export class MarketplaceService {
   private readonly pool: pg.Pool;
+  private messageBus: MessageBus | null = null;
 
   constructor(pool: pg.Pool) {
     this.pool = pool;
+  }
+
+  setMessageBus(bus: MessageBus): void {
+    this.messageBus = bus;
   }
 
   /**
@@ -126,6 +173,9 @@ export class MarketplaceService {
     const conditions: string[] = [];
     const params: unknown[] = [];
     let paramIndex = 1;
+    const hasGpuFilters = !!(filters.gpuModel || filters.minVram || filters.maxPriceUsdc !== undefined ||
+      filters.attestationMaxAgeDays || filters.availabilityStatus || filters.minChallengePassRate);
+    const hasApiFilters = !!(filters.apiStatus || filters.minUptimePercent);
 
     if (filters.activeOnly !== false) {
       conditions.push("sl.active = TRUE");
@@ -141,6 +191,50 @@ export class MarketplaceService {
       params.push(filters.maxPrice);
     }
 
+    // GPU-specific filters (join with attestation + availability tables)
+    if (filters.gpuModel) {
+      conditions.push(`ga.gpu_model ILIKE $${paramIndex++}`);
+      params.push(`%${filters.gpuModel}%`);
+    }
+    if (filters.minVram !== undefined) {
+      conditions.push(`ga.vram_gb >= $${paramIndex++}`);
+      params.push(filters.minVram);
+    }
+    if (filters.maxPriceUsdc !== undefined) {
+      conditions.push(`CAST(sl.price_amount AS NUMERIC) <= $${paramIndex++}`);
+      params.push(filters.maxPriceUsdc);
+    }
+    if (filters.attestationMaxAgeDays) {
+      conditions.push(`ga.attested_at >= NOW() - INTERVAL '1 day' * $${paramIndex++}`);
+      params.push(filters.attestationMaxAgeDays);
+    }
+    if (filters.availabilityStatus && filters.availabilityStatus !== "any") {
+      conditions.push(`gv.status = $${paramIndex++}`);
+      params.push(filters.availabilityStatus);
+    }
+    if (filters.minChallengePassRate !== undefined) {
+      // Subquery for challenge pass rate
+      conditions.push(`(
+        SELECT CASE WHEN COUNT(*) = 0 THEN 100
+        ELSE (COUNT(*) FILTER (WHERE status = 'completed') * 100.0 / COUNT(*))
+        END FROM gpu_challenges gc
+        WHERE gc.provider_address = sl.provider_address
+      ) >= $${paramIndex++}`);
+      params.push(filters.minChallengePassRate);
+    }
+
+    // API-specific filters (join with api_availability table)
+    if (filters.apiStatus && filters.apiStatus !== "any") {
+      conditions.push(`aa.status = $${paramIndex++}`);
+      params.push(filters.apiStatus);
+    }
+    if (filters.minUptimePercent !== undefined) {
+      conditions.push(
+        `CASE WHEN aa.uptime_checks > 0 THEN (aa.uptime_passes::float / aa.uptime_checks * 100) ELSE 0 END >= $${paramIndex++}`,
+      );
+      params.push(filters.minUptimePercent);
+    }
+
     const whereClause = conditions.length > 0
       ? `WHERE ${conditions.join(" AND ")}`
       : "";
@@ -151,9 +245,37 @@ export class MarketplaceService {
     params.push(limit);
     params.push(offset);
 
+    // When GPU filters are used, join with attestation and availability tables
+    const gpuJoins = hasGpuFilters
+      ? `LEFT JOIN idx_gpu_attestations ga ON LOWER(ga.provider_address) = LOWER(sl.provider_address)
+         LEFT JOIN gpu_availability gv ON gv.listing_id = sl.listing_id`
+      : "";
+
+    // When API filters are used, join with api_availability table
+    const apiJoins = hasApiFilters
+      ? `LEFT JOIN api_availability aa ON aa.listing_id = sl.listing_id`
+      : "";
+
+    const joins = `${gpuJoins} ${apiJoins}`.trim();
+
+    const gpuCols = hasGpuFilters
+      ? `, ga.gpu_model AS gpu_model, ga.vram_gb AS gpu_vram_gb,
+         ga.compute_capability, ga.cuda_version, ga.attested_at AS gpu_attested_at,
+         ga.benchmark_hash, gv.status AS gpu_status, gv.last_heartbeat`
+      : "";
+
+    const apiCols = hasApiFilters
+      ? `, aa.status AS api_status, aa.last_heartbeat AS api_last_heartbeat,
+         aa.uptime_checks AS api_uptime_checks, aa.uptime_passes AS api_uptime_passes,
+         aa.last_latency_ms AS api_latency_ms`
+      : "";
+
+    const selectCols = `sl.*${gpuCols}${apiCols}`;
+
     const { rows } = await this.pool.query<ListingRow>(
-      `SELECT sl.*
+      `SELECT ${selectCols}
        FROM service_listings sl
+       ${joins}
        ${whereClause}
        ORDER BY sl.total_completed DESC, sl.created_at DESC
        LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
@@ -178,16 +300,20 @@ export class MarketplaceService {
    * Cache a listing from on-chain data into PostgreSQL.
    */
   async cacheListingFromChain(input: CacheListingInput): Promise<void> {
+    const listingTags = input.tags ? normalizeTags(input.tags) : [];
+
     await this.pool.query(
       `INSERT INTO service_listings
-        (listing_id, agent_id, provider_address, category, pricing_model, price_amount, metadata_cid, on_chain_tx)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (listing_id, agent_id, provider_address, category, pricing_model, price_amount, metadata_cid, on_chain_tx, tags, token_address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (listing_id) DO UPDATE SET
         category = EXCLUDED.category,
         pricing_model = EXCLUDED.pricing_model,
         price_amount = EXCLUDED.price_amount,
         metadata_cid = EXCLUDED.metadata_cid,
         on_chain_tx = EXCLUDED.on_chain_tx,
+        tags = EXCLUDED.tags,
+        token_address = COALESCE(EXCLUDED.token_address, service_listings.token_address),
         updated_at = NOW()`,
       [
         input.listingId,
@@ -198,8 +324,25 @@ export class MarketplaceService {
         input.priceAmount,
         input.metadataCid,
         input.onChainTx ?? null,
+        listingTags,
+        input.tokenAddress ?? null,
       ],
     );
+
+    // Emit entity:service_listing event for interest engine matching
+    if (this.messageBus) {
+      this.messageBus.publish("entity:service_listing", {
+        type: "entity.created",
+        timestamp: new Date().toISOString(),
+        data: {
+          entityType: "service_listing",
+          entityId: String(input.listingId),
+          title: input.title ?? `Service listing #${input.listingId}`,
+          tags: listingTags,
+          metadata: { category: input.category, pricingModel: input.pricingModel, priceAmount: input.priceAmount },
+        },
+      });
+    }
   }
 
   /**
@@ -208,12 +351,13 @@ export class MarketplaceService {
   async cacheAgreementFromChain(input: CacheAgreementInput): Promise<void> {
     await this.pool.query(
       `INSERT INTO service_agreements
-        (agreement_id, listing_id, buyer_agent_id, provider_agent_id, terms_cid, escrow_amount, escrow_type, deadline, on_chain_tx)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        (agreement_id, listing_id, buyer_agent_id, provider_agent_id, terms_cid, escrow_amount, escrow_type, deadline, on_chain_tx, escrow_token)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (agreement_id) DO UPDATE SET
         terms_cid = EXCLUDED.terms_cid,
         escrow_amount = EXCLUDED.escrow_amount,
-        on_chain_tx = EXCLUDED.on_chain_tx`,
+        on_chain_tx = EXCLUDED.on_chain_tx,
+        escrow_token = COALESCE(EXCLUDED.escrow_token, service_agreements.escrow_token)`,
       [
         input.agreementId,
         input.listingId,
@@ -224,6 +368,7 @@ export class MarketplaceService {
         input.escrowType,
         input.deadline,
         input.onChainTx ?? null,
+        input.escrowToken ?? null,
       ],
     );
   }
@@ -325,14 +470,20 @@ export class MarketplaceService {
   async getReviews(
     agentId: string,
     options: { limit?: number; offset?: number } = {},
-  ): Promise<ReviewRow[]> {
+  ) {
     const limit = Math.min(options.limit ?? 50, 200);
     const offset = Math.max(options.offset ?? 0, 0);
 
-    const { rows } = await this.pool.query<ReviewRow>(
-      `SELECT * FROM service_reviews
-       WHERE reviewee_agent_id = $1
-       ORDER BY created_at DESC
+    const { rows } = await this.pool.query(
+      `SELECT sr.agreement_id AS "agreementId",
+              a.address AS reviewer,
+              sr.rating,
+              sr.comment,
+              sr.created_at AS "createdAt"
+       FROM service_reviews sr
+       JOIN agents a ON a.id = sr.reviewer_agent_id
+       WHERE sr.reviewee_agent_id = $1
+       ORDER BY sr.created_at DESC
        LIMIT $2 OFFSET $3`,
       [agentId, limit, offset],
     );
@@ -417,13 +568,143 @@ export class MarketplaceService {
   }
 
   /**
-   * Get a single agreement by on-chain agreement ID.
+   * Get a single agreement by on-chain agreement ID, enriched with party addresses.
    */
-  async getAgreementDetail(agreementId: number): Promise<AgreementRow | null> {
-    const { rows } = await this.pool.query<AgreementRow>(
-      `SELECT * FROM service_agreements WHERE agreement_id = $1`,
+  async getAgreementDetail(agreementId: number): Promise<EnrichedAgreementRow | null> {
+    const { rows } = await this.pool.query<EnrichedAgreementRow>(
+      `SELECT sa.*,
+              buyer.address AS buyer_address,
+              provider.address AS provider_address
+       FROM service_agreements sa
+       LEFT JOIN agents buyer ON buyer.id = sa.buyer_agent_id
+       LEFT JOIN agents provider ON provider.id = sa.provider_agent_id
+       WHERE sa.agreement_id = $1`,
       [agreementId],
     );
     return rows[0] ?? null;
+  }
+
+  /**
+   * Mark that the buyer has viewed the delivered work (fire-and-forget).
+   */
+  async markDeliveryViewed(agreementId: number, buyerAgentId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE service_agreements
+       SET buyer_viewed_delivery_at = NOW()
+       WHERE agreement_id = $1
+         AND buyer_agent_id = $2
+         AND buyer_viewed_delivery_at IS NULL`,
+      [agreementId, buyerAgentId],
+    );
+  }
+
+  // ── Agreement Messages ────────────────────────────────────────
+
+  /**
+   * Send a message on an agreement thread.
+   * Validates caller is a party and message type is valid for current status.
+   */
+  async sendMessage(input: SendMessageInput): Promise<AgreementMessageRow> {
+    // Fetch agreement to validate
+    const { rows: agreements } = await this.pool.query<AgreementRow>(
+      `SELECT * FROM service_agreements WHERE agreement_id = $1`,
+      [input.agreementId],
+    );
+    if (agreements.length === 0) {
+      throw new Error("Agreement not found.");
+    }
+
+    const agreement = agreements[0];
+
+    // Validate caller is a party
+    if (
+      input.senderAgentId !== agreement.buyer_agent_id &&
+      input.senderAgentId !== agreement.provider_agent_id
+    ) {
+      throw new Error("Not a party to this agreement.");
+    }
+
+    const isBuyer = input.senderAgentId === agreement.buyer_agent_id;
+    const status = agreement.status;
+
+    // Validate message type constraints per status
+    switch (input.messageType) {
+      case "revision_request":
+        if (!isBuyer) throw new Error("Only the buyer can request revisions.");
+        if (status !== "delivered") throw new Error("Revisions can only be requested when work is delivered.");
+        break;
+      case "revision_response":
+        if (isBuyer) throw new Error("Only the provider can respond to revision requests.");
+        if (status !== "delivered") throw new Error("Revision responses are only valid when work is delivered.");
+        break;
+      case "delivery_note":
+        if (isBuyer) throw new Error("Only the provider can add delivery notes.");
+        if (status !== "delivered") throw new Error("Delivery notes are only valid when work is delivered.");
+        break;
+      case "dispute_evidence":
+        if (status !== "disputed") throw new Error("Evidence can only be submitted for disputed agreements.");
+        break;
+      case "general":
+        if (!["agreed", "delivered", "disputed"].includes(status)) {
+          throw new Error("Messages can only be sent on active agreements.");
+        }
+        break;
+      default:
+        throw new Error(`Invalid message type: ${input.messageType}`);
+    }
+
+    // Validate content length
+    if (!input.content || input.content.trim().length === 0) {
+      throw new Error("Message content is required.");
+    }
+    if (input.content.length > 5000) {
+      throw new Error("Message must be 5000 characters or fewer.");
+    }
+
+    const { rows } = await this.pool.query<AgreementMessageRow>(
+      `INSERT INTO agreement_messages (agreement_id, sender_agent_id, message_type, content, attachment_cid)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [input.agreementId, input.senderAgentId, input.messageType, input.content.trim(), input.attachmentCid ?? null],
+    );
+
+    return rows[0];
+  }
+
+  /**
+   * Get messages for an agreement thread. Caller must be a party.
+   */
+  async getMessages(
+    agreementId: number,
+    callerAgentId: string,
+    options: { limit?: number; offset?: number } = {},
+  ): Promise<AgreementMessageRow[]> {
+    // Validate caller is a party
+    const { rows: agreements } = await this.pool.query<AgreementRow>(
+      `SELECT buyer_agent_id, provider_agent_id FROM service_agreements WHERE agreement_id = $1`,
+      [agreementId],
+    );
+    if (agreements.length === 0) {
+      throw new Error("Agreement not found.");
+    }
+    if (
+      callerAgentId !== agreements[0].buyer_agent_id &&
+      callerAgentId !== agreements[0].provider_agent_id
+    ) {
+      throw new Error("Not a party to this agreement.");
+    }
+
+    const limit = Math.min(options.limit ?? 100, 500);
+    const offset = Math.max(options.offset ?? 0, 0);
+
+    const { rows } = await this.pool.query<AgreementMessageRow>(
+      `SELECT * FROM agreement_messages
+       WHERE agreement_id = $1
+       ORDER BY created_at ASC
+       LIMIT $2 OFFSET $3`,
+      [agreementId, limit, offset],
+    );
+
+    return rows;
   }
 }

@@ -1,11 +1,13 @@
 /**
  * Agent inbox routes — direct messaging between agents.
  *
- * POST   /v1/inbox/send      — Send a message
- * GET    /v1/inbox            — List inbox messages
- * POST   /v1/inbox/:id/read  — Mark message as read
- * GET    /v1/inbox/unread     — Unread count
- * DELETE /v1/inbox/:id        — Delete a message
+ * POST   /v1/inbox/send              — Send a message
+ * GET    /v1/inbox                   — List inbox messages (received only)
+ * GET    /v1/inbox/threads           — Conversation threads (latest per partner)
+ * GET    /v1/inbox/conversation/:address — Full conversation with an agent
+ * POST   /v1/inbox/:id/read         — Mark message as read
+ * GET    /v1/inbox/unread            — Unread count
+ * DELETE /v1/inbox/:id               — Delete a message
  *
  * @module routes/inbox
  */
@@ -23,6 +25,7 @@ import { shouldQuarantine } from "../services/contentScanner.js";
 import { createAuthMiddleware, registeredMiddleware, ownerOnlyMiddleware } from "../middleware/auth.js";
 import { logSecurityEvent } from "../middleware/auditLog.js";
 import { gatewayConfig } from "../config.js";
+import { dmRateLimit } from "../middleware/agentRateLimit.js";
 
 /** Allowed message types — prevents arbitrary type injection. */
 const ALLOWED_MESSAGE_TYPES = new Set([
@@ -32,6 +35,7 @@ const ALLOWED_MESSAGE_TYPES = new Set([
   "trade",
   "attestation",
   "proposal",
+  "xmtp",
 ]);
 
 /** Maximum metadata JSON size in bytes. */
@@ -45,6 +49,7 @@ export function createInboxRouter(
   messageBus?: MessageBus,
   proactiveScheduler?: ProactiveScheduler,
   contentScanner?: ContentScanner,
+  tierGate?: (req: any, res: any, next: any) => void,
 ): Router {
   const router = Router();
   const authMiddleware = createAuthMiddleware(pool, hmacSecret);
@@ -56,8 +61,10 @@ export function createInboxRouter(
   router.post(
     "/inbox/send",
     authMiddleware,
+    ...(tierGate ? [tierGate] : []),
     registeredMiddleware,
     ownerOnlyMiddleware,
+    dmRateLimit,
     async (req: AuthenticatedRequest, res: Response): Promise<void> => {
       const agent = req.agent!;
 
@@ -78,7 +85,7 @@ export function createInboxRouter(
         }
 
         // Look up recipient by address OR display name (case-insensitive).
-        // Agents may pass an address ("0x9ebE...") or a name ("MyAgent").
+        // Agents may pass an address ("0x9ebE...") or a name ("Kimmy").
         const { rows: recipientRows } = await pool.query<{ id: string }>(
           `SELECT id FROM agents WHERE LOWER(address) = LOWER($1)
            UNION
@@ -132,7 +139,9 @@ export function createInboxRouter(
             gatewayConfig.contentScanBlockThreshold,
           );
           if (blocked) {
-            contentScanner.recordBlockedContent(agent.id, "dm", scanResult).catch(() => {});
+            contentScanner.recordBlockedContent(agent.id, "dm", scanResult).catch((err) => {
+              logSecurityEvent("warn", "content-scan-failed", { error: (err as Error).message });
+            });
             logSecurityEvent("warn", "inbox-send-blocked", {
               agentId: agent.id,
               threatLevel: scanResult.threatLevel,
@@ -159,7 +168,9 @@ export function createInboxRouter(
 
         // Fire-and-forget content safety scan — flags medium/low threats for admin review
         if (contentScanner) {
-          contentScanner.scanAndRecord(agent.id, "dm", message.id, content).catch(() => {});
+          contentScanner.scanAndRecord(agent.id, "dm", message.id, content).catch((err) => {
+            logSecurityEvent("warn", "content-scan-failed", { error: (err as Error).message });
+          });
         }
 
         // Broadcast real-time event — prefer message bus, fall back to direct broadcast
@@ -187,7 +198,9 @@ export function createInboxRouter(
             senderId: agent.id,
             senderAddress: agent.address,
             messagePreview: content.slice(0, 300),
-          }).catch(() => {}); // Best-effort — don't block response
+          }).catch((err) => {
+            logSecurityEvent("debug", "reactive-signal-failed", { signalType: "dm_received", error: (err as Error).message });
+          });
         }
 
         res.status(201).json({
@@ -221,6 +234,10 @@ export function createInboxRouter(
         const from = req.query.from ? String(req.query.from) : undefined;
         const unreadOnly = req.query.unreadOnly === "true";
         const messageType = req.query.messageType ? String(req.query.messageType) : undefined;
+        const priorityParam = req.query.priority ? String(req.query.priority) : undefined;
+        const priority = priorityParam && ["high", "normal", "low"].includes(priorityParam)
+          ? (priorityParam as "high" | "normal" | "low")
+          : undefined;
         const limit = parseInt(String(req.query.limit ?? "50"), 10) || 50;
         const offset = parseInt(String(req.query.offset ?? "0"), 10) || 0;
 
@@ -244,6 +261,8 @@ export function createInboxRouter(
           fromAgentId,
           unreadOnly,
           messageType,
+          excludeMuted: true,
+          priority,
           limit,
           offset,
         });
@@ -292,6 +311,7 @@ export function createInboxRouter(
             metadata: m.metadata,
             readAt: m.read_at,
             createdAt: m.created_at,
+            priority: (m as any).priority ?? "normal",
             ...(contentScanner ? {
               _contentSafety: {
                 scanned: !!flag,
@@ -308,6 +328,152 @@ export function createInboxRouter(
           error: err instanceof Error ? err.message : String(err),
         });
         res.status(500).json({ error: "Failed to list messages" });
+      }
+    },
+  );
+
+  // -------------------------------------------------------
+  //  GET /v1/inbox/threads
+  //  Conversation threads — latest message per conversation partner.
+  //  Includes both sent AND received messages.
+  // -------------------------------------------------------
+  router.get(
+    "/inbox/threads",
+    authMiddleware,
+    registeredMiddleware,
+    async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+      const agent = req.agent!;
+
+      try {
+        const limit = parseInt(String(req.query.limit ?? "50"), 10) || 50;
+        const offset = parseInt(String(req.query.offset ?? "0"), 10) || 0;
+
+        const threads = await inboxService.getThreads(agent.id, limit, offset);
+
+        // Collect all "other" agent IDs for enrichment
+        const otherIds = [...new Set(threads.map((t) => t.other_agent_id))];
+        let addressMap = new Map<string, { address: string; display_name: string | null }>();
+        if (otherIds.length > 0) {
+          const placeholders = otherIds.map((_, i) => `$${i + 1}`).join(", ");
+          const { rows: agentRows } = await pool.query<{
+            id: string; address: string; display_name: string | null;
+          }>(
+            `SELECT id, address, display_name FROM agents WHERE id IN (${placeholders})`,
+            otherIds,
+          );
+          addressMap = new Map(agentRows.map((r) => [r.id, { address: r.address, display_name: r.display_name }]));
+        }
+
+        // Get unread counts per conversation partner
+        const unreadCounts = new Map<string, number>();
+        if (otherIds.length > 0) {
+          const ph = otherIds.map((_, i) => `$${i + 2}`).join(", ");
+          const { rows: unreadRows } = await pool.query<{ from_agent_id: string; count: string }>(
+            `SELECT from_agent_id, COUNT(*)::text as count
+             FROM agent_messages
+             WHERE to_agent_id = $1 AND read_at IS NULL AND quarantined = false
+               AND from_agent_id IN (${ph})
+             GROUP BY from_agent_id`,
+            [agent.id, ...otherIds],
+          );
+          for (const row of unreadRows) {
+            unreadCounts.set(row.from_agent_id, parseInt(row.count, 10));
+          }
+        }
+
+        const enriched = threads.map((t) => {
+          const other = addressMap.get(t.other_agent_id);
+          return {
+            id: t.id,
+            otherAddress: other?.address ?? "unknown",
+            otherName: other?.display_name ?? null,
+            direction: t.direction,
+            lastMessage: t.content,
+            messageType: t.message_type,
+            createdAt: t.created_at,
+            unreadCount: unreadCounts.get(t.other_agent_id) ?? 0,
+          };
+        });
+
+        res.json({ threads: enriched, limit, offset });
+      } catch (err) {
+        logSecurityEvent("error", "inbox-threads-failed", {
+          agentId: agent.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        res.status(500).json({ error: "Failed to fetch threads" });
+      }
+    },
+  );
+
+  // -------------------------------------------------------
+  //  GET /v1/inbox/conversation/:address
+  //  Full bidirectional conversation with another agent.
+  // -------------------------------------------------------
+  router.get(
+    "/inbox/conversation/:address",
+    authMiddleware,
+    registeredMiddleware,
+    async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+      const agent = req.agent!;
+
+      try {
+        const otherAddress = String(req.params.address);
+        const limit = parseInt(String(req.query.limit ?? "100"), 10) || 100;
+        const offset = parseInt(String(req.query.offset ?? "0"), 10) || 0;
+
+        // Resolve other agent by address
+        const { rows: otherRows } = await pool.query<{ id: string; display_name: string | null }>(
+          "SELECT id, display_name FROM agents WHERE LOWER(address) = LOWER($1)",
+          [otherAddress],
+        );
+        if (otherRows.length === 0) {
+          res.status(404).json({ error: "Agent not found" });
+          return;
+        }
+
+        const otherAgentId = otherRows[0].id;
+        const otherName = otherRows[0].display_name;
+
+        const messages = await inboxService.getConversation(agent.id, otherAgentId, limit, offset);
+
+        // Mark received messages as read (fire-and-forget)
+        const unreadIds = messages
+          .filter((m) => m.direction === "received" && !m.read_at)
+          .map((m) => m.id);
+        if (unreadIds.length > 0) {
+          const ph = unreadIds.map((_, i) => `$${i + 1}`).join(", ");
+          pool.query(
+            `UPDATE agent_messages SET read_at = NOW() WHERE id IN (${ph}) AND read_at IS NULL`,
+            unreadIds,
+          ).catch((err) => {
+            logSecurityEvent("warn", "inbox-auto-read-failed", { error: (err as Error).message });
+          });
+        }
+
+        const enriched = messages.map((m) => ({
+          id: m.id,
+          direction: m.direction,
+          content: m.content,
+          messageType: m.message_type,
+          metadata: m.metadata,
+          createdAt: m.created_at,
+        }));
+
+        res.json({
+          messages: enriched,
+          otherAddress,
+          otherName,
+          myAddress: agent.address,
+          limit,
+          offset,
+        });
+      } catch (err) {
+        logSecurityEvent("error", "inbox-conversation-failed", {
+          agentId: agent.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        res.status(500).json({ error: "Failed to fetch conversation" });
       }
     },
   );

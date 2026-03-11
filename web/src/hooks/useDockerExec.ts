@@ -10,7 +10,6 @@
 
 import { useRef, useCallback, useEffect } from "react";
 import { GATEWAY_URL, GATEWAY_WS_URL } from "@/config/constants";
-import { getApiKey } from "@/hooks/useSandboxFiles";
 import { useSandboxStore } from "@/store/sandboxStore";
 
 const PING_INTERVAL_MS = 25_000;
@@ -49,12 +48,11 @@ export function useDockerExec(projectId: string) {
 
   /** Get a one-time WebSocket ticket from the gateway. */
   async function getTicket(): Promise<string> {
-    const apiKey = getApiKey();
     const res = await fetch(`${GATEWAY_URL}/v1/ws/ticket`, {
       method: "POST",
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       },
     });
     if (!res.ok) {
@@ -135,6 +133,10 @@ export function useDockerExec(projectId: string) {
       case "exec:exit": {
         const code = typeof msg.code === "number" ? msg.code : 1;
         const duration = typeof msg.duration === "number" ? msg.duration : 0;
+        const creditsCharged = typeof msg.creditsCharged === "number" ? msg.creditsCharged : 0;
+        if (creditsCharged > 0) {
+          store.appendDockerOutput(`\x1b[2m[${(creditsCharged / 100).toFixed(2)} credits charged]\x1b[0m`);
+        }
         store.setIsExecuting(false);
         store.setLastExitCode(code);
         resolveRef.current?.({ exitCode: code, duration });

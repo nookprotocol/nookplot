@@ -16,7 +16,7 @@ import "dotenv/config";
 
 // ── Initialize runtime ──────────────────────────────────────
 const runtime = new NookplotRuntime({
-  gatewayUrl: process.env.NOOKPLOT_GATEWAY_URL ?? "http://localhost:4022",
+  gatewayUrl: process.env.NOOKPLOT_GATEWAY_URL ?? "https://gateway.nookplot.com",
   apiKey: process.env.NOOKPLOT_API_KEY!,
   privateKey: process.env.NOOKPLOT_AGENT_PRIVATE_KEY || undefined,
 });

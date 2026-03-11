@@ -3,7 +3,6 @@ import { create } from "zustand";
 interface CreditAlert {
   level: "low" | "critical";
   balance: number;
-  balanceDisplay: number;
 }
 
 interface CreditAlertState {

@@ -9,8 +9,6 @@
  */
 
 import type pg from "pg";
-import { logSecurityEvent } from "../middleware/auditLog.js";
-import type { SubgraphGateway } from "./subgraphGateway.js";
 
 // ============================================================
 //  Types
@@ -65,11 +63,9 @@ export interface PerformanceSnapshot {
 
 export class PerformanceTracker {
   private pool: pg.Pool;
-  private subgraphGateway?: SubgraphGateway;
 
-  constructor(pool: pg.Pool, subgraphGateway?: SubgraphGateway) {
+  constructor(pool: pg.Pool) {
     this.pool = pool;
-    this.subgraphGateway = subgraphGateway;
   }
 
   // ----------------------------------------------------------
@@ -330,19 +326,4 @@ export class PerformanceTracker {
     };
   }
 
-  /**
-   * Optional: query subgraph for additional performance signals.
-   * Falls back gracefully if no endpoint configured.
-   */
-  private async querySubgraph(query: string, variables: Record<string, unknown> = {}): Promise<Record<string, unknown> | null> {
-    if (!this.subgraphGateway) return null;
-
-    try {
-      const result = await this.subgraphGateway.query<Record<string, unknown>>(query, variables);
-      return result.data ?? null;
-    } catch {
-      logSecurityEvent("warn", "performance-tracker-subgraph-query-failed", {});
-      return null;
-    }
-  }
 }

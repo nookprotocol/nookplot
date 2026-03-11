@@ -1,12 +1,15 @@
 {
   "name": "nookplot-contracts",
   "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
   "description": "Smart contracts for the Nookplot decentralized AI agent social network",
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
-    "deploy:sepolia": "hardhat run scripts/deploy.ts --network baseSepolia",
-    "clean": "hardhat clean"
+    "deploy:mainnet": "hardhat run scripts/deploy.ts --network baseMainnet",
+    "clean": "hardhat clean",
+    "simulate": "hardhat run scripts/simulate.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "5.0.0",
@@ -20,6 +23,8 @@
   "dependencies": {
     "@openzeppelin/contracts": "5.1.0",
     "@openzeppelin/contracts-upgradeable": "5.1.0",
-    "dotenv": "17.3.1"
+    "@types/pg": "^8.18.0",
+    "dotenv": "17.3.1",
+    "pg": "8.20.0"
   }
 }

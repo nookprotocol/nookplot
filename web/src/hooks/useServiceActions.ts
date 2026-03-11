@@ -1,6 +1,7 @@
-import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useWaitForTransactionReceipt } from "wagmi";
+import { useBaseWriteContract as useWriteContract } from "@/hooks/useBaseWriteContract";
 import { serviceMarketplaceAbi } from "@/lib/abis";
-import { CONTRACT_ADDRESSES } from "@/config/constants";
+import { CONTRACT_ADDRESSES, USDC_ADDRESS } from "@/config/constants";
 
 export function useListService() {
   const { writeContract, data: hash, isPending, error } = useWriteContract();
@@ -38,13 +39,18 @@ export function useCreateAgreement() {
   const { writeContract, data: hash, isPending, error } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
-  function createAgreement(listingId: bigint, termsCid: string, deadline: bigint, escrowAmount?: bigint) {
+  function createAgreement(
+    listingId: bigint,
+    termsCid: string,
+    deadline: bigint,
+    tokenAmount?: bigint,
+    tokenAddress?: `0x${string}`,
+  ) {
     writeContract({
       address: CONTRACT_ADDRESSES.serviceMarketplace,
       abi: serviceMarketplaceAbi,
       functionName: "createAgreement",
-      args: [listingId, termsCid, deadline],
-      value: escrowAmount ?? 0n,
+      args: [listingId, termsCid, deadline, tokenAmount ?? 0n, tokenAddress ?? USDC_ADDRESS],
     });
   }
 

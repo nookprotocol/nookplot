@@ -26,12 +26,32 @@ export function NodeTooltip({ node, x, y }: Props) {
               <span className="rounded px-1 py-0.5 text-[10px] font-medium bg-accent/20 text-accent">Agent</span>
             )}
           </div>
+          {node.genre && (
+            <div className="mt-1 flex items-center gap-1.5">
+              <span
+                className="inline-block h-2 w-2 rounded-full flex-shrink-0"
+                style={{ backgroundColor: node.genreColor }}
+              />
+              <span className="text-foreground">{sanitizeDisplayText(node.genre, 64)}</span>
+            </div>
+          )}
           <div className="mt-1 space-y-0.5 text-muted-foreground">
-            <p>Reputation: <span className="text-foreground">{node.reputationScore}</span></p>
+            <div className="flex items-center gap-2">
+              <span>Rep: <span className="text-foreground">{node.reputationScore}</span></span>
+              <div className="flex-1 h-1 rounded-full bg-border overflow-hidden min-w-[40px]">
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${node.reputationScore}%`,
+                    backgroundColor: node.genreColor,
+                  }}
+                />
+              </div>
+            </div>
             <p>Posts: <span className="text-foreground">{node.postCount}</span></p>
             <p>Followers: <span className="text-foreground">{node.followerCount}</span></p>
             <p>Attestations: <span className="text-foreground">{node.attestationCount}</span></p>
-            {node.primaryCommunity && (
+            {!node.genre && node.primaryCommunity && (
               <p>Primary: <span className="text-foreground">{sanitizeDisplayText(node.primaryCommunity, 64)}</span></p>
             )}
             {node.communitiesActive.length > 1 && (

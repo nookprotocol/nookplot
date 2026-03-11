@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { Plus, X, Loader2 } from "lucide-react";
+import { TokenSelector } from "@/components/shared/TokenSelector";
+import { USDC_ADDRESS, resolveTokenMeta } from "@/config/constants";
+import { usePlatformFeeBps } from "@/hooks/usePlatformFeeBps";
 
 interface FormData {
   title: string;
@@ -9,6 +12,7 @@ interface FormData {
   deadline: string;
   rewardUsdc: string;
   difficulty: number;
+  tokenAddress: `0x${string}`;
 }
 
 interface Props {
@@ -26,6 +30,10 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
   const [deadline, setDeadline] = useState("");
   const [rewardUsdc, setRewardEth] = useState("");
   const [difficulty, setDifficulty] = useState(1);
+  const [tokenAddress, setTokenAddress] = useState<`0x${string}`>(USDC_ADDRESS);
+  const tokenMeta = resolveTokenMeta(tokenAddress);
+  const { data: feeBpsRaw } = usePlatformFeeBps();
+  const feePct = Number(feeBpsRaw ?? 250n) / 10000;
 
   function addRequirement() {
     setRequirements((prev) => [...prev, ""]);
@@ -50,6 +58,7 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
       deadline,
       rewardUsdc,
       difficulty,
+      tokenAddress,
     });
   }
 
@@ -57,7 +66,7 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
     <form onSubmit={handleSubmit} className="space-y-5">
       {/* Title */}
       <div>
-        <label htmlFor="bounty-title" className="block text-sm font-medium text-gray-200 mb-1">
+        <label htmlFor="bounty-title" className="block text-sm font-medium text-foreground mb-1">
           Title
         </label>
         <input
@@ -68,13 +77,13 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
           required
           maxLength={200}
           placeholder="What needs to be done?"
-          className="w-full bg-gray-800 border border-gray-600 text-gray-100 rounded-lg px-4 py-2 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          className="w-full bg-card border border-border text-foreground rounded-lg px-4 py-2 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
         />
       </div>
 
       {/* Description */}
       <div>
-        <label htmlFor="bounty-desc" className="block text-sm font-medium text-gray-200 mb-1">
+        <label htmlFor="bounty-desc" className="block text-sm font-medium text-foreground mb-1">
           Description
         </label>
         <textarea
@@ -85,13 +94,13 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
           rows={4}
           maxLength={5000}
           placeholder="Detailed description of the bounty..."
-          className="w-full bg-gray-800 border border-gray-600 text-gray-100 rounded-lg px-4 py-2 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y"
+          className="w-full bg-card border border-border text-foreground rounded-lg px-4 py-2 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent resize-y"
         />
       </div>
 
       {/* Requirements */}
       <div>
-        <label className="block text-sm font-medium text-gray-200 mb-1">
+        <label className="block text-sm font-medium text-foreground mb-1">
           Requirements
         </label>
         <div className="space-y-2">
@@ -103,13 +112,13 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
                 onChange={(e) => updateRequirement(i, e.target.value)}
                 placeholder={`Requirement ${i + 1}`}
                 maxLength={500}
-                className="flex-1 bg-gray-800 border border-gray-600 text-gray-100 rounded-lg px-4 py-2 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="flex-1 bg-card border border-border text-foreground rounded-lg px-4 py-2 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
               />
               {requirements.length > 1 && (
                 <button
                   type="button"
                   onClick={() => removeRequirement(i)}
-                  className="p-2 text-gray-400 hover:text-red-400 transition-colors"
+                  className="p-2 text-muted-foreground hover:text-red-400 transition-colors"
                   title="Remove requirement"
                 >
                   <X className="h-4 w-4" />
@@ -121,7 +130,7 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
         <button
           type="button"
           onClick={addRequirement}
-          className="mt-2 inline-flex items-center gap-1 text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+          className="mt-2 inline-flex items-center gap-1 text-sm text-accent hover:text-accent/80 transition-colors"
         >
           <Plus className="h-3.5 w-3.5" />
           Add requirement
@@ -130,7 +139,7 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
 
       {/* Community */}
       <div>
-        <label htmlFor="bounty-community" className="block text-sm font-medium text-gray-200 mb-1">
+        <label htmlFor="bounty-community" className="block text-sm font-medium text-foreground mb-1">
           Community
         </label>
         <input
@@ -141,14 +150,14 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
           required
           maxLength={64}
           placeholder="e.g. general, solidity, frontend"
-          className="w-full bg-gray-800 border border-gray-600 text-gray-100 rounded-lg px-4 py-2 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          className="w-full bg-card border border-border text-foreground rounded-lg px-4 py-2 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
         />
       </div>
 
       {/* Deadline + Reward row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label htmlFor="bounty-deadline" className="block text-sm font-medium text-gray-200 mb-1">
+          <label htmlFor="bounty-deadline" className="block text-sm font-medium text-foreground mb-1">
             Deadline
           </label>
           <input
@@ -157,28 +166,35 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
             value={deadline}
             onChange={(e) => setDeadline(e.target.value)}
             required
-            className="w-full bg-gray-800 border border-gray-600 text-gray-100 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full bg-card border border-border text-foreground rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
           />
         </div>
 
         <div>
-          <label htmlFor="bounty-reward" className="block text-sm font-medium text-gray-200 mb-1">
-            Reward (USDC, optional)
+          <label htmlFor="bounty-reward" className="block text-sm font-medium text-foreground mb-1">
+            Reward ({tokenMeta.symbol}) <span className="text-red-400">*</span>
           </label>
+          <div className="flex gap-2 mb-2">
+            <TokenSelector value={tokenAddress} onChange={setTokenAddress} />
+          </div>
           <input
             id="bounty-reward"
             type="number"
             step="0.01"
-            min="0"
+            min="0.01"
             value={rewardUsdc}
             onChange={(e) => setRewardEth(e.target.value)}
-            placeholder="0.00"
-            className="w-full bg-gray-800 border border-gray-600 text-gray-100 rounded-lg px-4 py-2 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            required
+            placeholder="5.00"
+            className="w-full bg-card border border-border text-foreground rounded-lg px-4 py-2 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
           />
+          <p className="mt-1 text-xs text-muted-foreground">
+            {tokenMeta.symbol} will be deposited into escrow on creation. You must hold sufficient {tokenMeta.symbol}.
+          </p>
           {rewardUsdc && parseFloat(rewardUsdc) > 0 && (
-            <p className="mt-1 text-xs text-gray-400">
-              2.5% network fee on completion — worker receives{" "}
-              {(parseFloat(rewardUsdc) * 0.975).toFixed(2)} USDC
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {(feePct * 100).toFixed(1)}% network fee on completion — worker receives{" "}
+              {(parseFloat(rewardUsdc) * (1 - feePct)).toFixed(2)} {tokenMeta.symbol}
             </p>
           )}
         </div>
@@ -186,7 +202,7 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
 
       {/* Difficulty */}
       <div>
-        <label className="block text-sm font-medium text-gray-200 mb-2">
+        <label className="block text-sm font-medium text-foreground mb-2">
           Difficulty
         </label>
         <div className="flex gap-2">
@@ -197,8 +213,8 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
               onClick={() => setDifficulty(i)}
               className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 difficulty === i
-                  ? "bg-indigo-600 text-white"
-                  : "bg-gray-800 text-gray-400 border border-gray-600 hover:text-gray-200"
+                  ? "bg-accent text-white"
+                  : "bg-card text-muted-foreground border border-border hover:text-foreground"
               }`}
             >
               {label}
@@ -210,8 +226,8 @@ export function CreateBountyForm({ onSubmit, isPending }: Props) {
       {/* Submit */}
       <button
         type="submit"
-        disabled={isPending || !title || !description || !community || !deadline}
-        className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg px-4 py-2.5 transition-colors"
+        disabled={isPending || !title || !description || !community || !deadline || !rewardUsdc || parseFloat(rewardUsdc) < 0.01}
+        className="w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg px-4 py-2.5 transition-colors"
       >
         {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
         {isPending ? "Creating..." : "Create Bounty"}

@@ -9,9 +9,9 @@ interface ContractCardProps {
 export function ContractCard({ contract }: ContractCardProps) {
   const [expanded, setExpanded] = useState(false);
 
-  // MAINNET-TODO: Change to https://basescan.org/address/ (remove sepolia subdomain)
+  // Mainnet basescan explorer link
   const basescanUrl = contract.address
-    ? `https://sepolia.basescan.org/address/${contract.address}`
+    ? `https://basescan.org/address/${contract.address}`
     : null;
 
   return (

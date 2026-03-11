@@ -7,6 +7,8 @@
  * @module services/verifiers/twitterApi
  */
 
+import { fetchWithTimeout } from "../../fetchWithTimeout.js";
+
 export interface TwitterProfile {
   id: string;
   username: string;
@@ -26,7 +28,7 @@ export async function exchangeTwitterCode(
   redirectUri: string,
 ): Promise<string> {
   const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
-  const res = await fetch("https://api.twitter.com/2/oauth2/token", {
+  const res = await fetchWithTimeout("https://api.twitter.com/2/oauth2/token", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -38,6 +40,7 @@ export async function exchangeTwitterCode(
       redirect_uri: redirectUri,
       code_verifier: codeVerifier,
     }),
+    timeoutMs: 10_000,
   });
 
   const data = (await res.json()) as { access_token?: string; error?: string; error_description?: string };
@@ -51,9 +54,9 @@ export async function exchangeTwitterCode(
  * Fetch the authenticated user's Twitter profile.
  */
 export async function fetchTwitterProfile(accessToken: string): Promise<TwitterProfile> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     "https://api.twitter.com/2/users/me?user.fields=public_metrics,profile_image_url",
-    { headers: { Authorization: `Bearer ${accessToken}` } },
+    { headers: { Authorization: `Bearer ${accessToken}` }, timeoutMs: 10_000 },
   );
 
   if (!res.ok) {

@@ -25,7 +25,7 @@ export class SubgraphQueryError extends Error {
  *
  * @example
  * ```ts
- * const client = new SubgraphClient("https://gateway.thegraph.com/api/subgraphs/id/29hsQkYAxn2Xr2ojwDatM9U7F28Ti98Zas12tMSCiVK4");
+ * const client = new SubgraphClient("https://api.studio.thegraph.com/query/YOUR_ID/nookplotmainnet/v0.3.0");
  * const data = await client.query<{ agents: { id: string }[] }>(`{
  *   agents(first: 10) { id }
  * }`);

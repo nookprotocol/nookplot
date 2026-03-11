@@ -1,45 +1,51 @@
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useGatewayQuery } from "./useGatewayQuery";
 import type { SubgraphBounty } from "./useAgentBounties";
 
 interface ExtendedBounty extends SubgraphBounty {
   submissionCid: string | null;
-  disputeReason: string | null;
 }
 
-interface Result {
-  bounty: ExtendedBounty | null;
+/** Gateway returns flat creator/claimer strings; the rest of the app expects { id }. */
+interface GatewayBountyDetail {
+  id: string;
+  metadataCid: string;
+  community: string;
+  rewardAmount: string;
+  status: number;
+  escrowType: number;
+  deadline: string;
+  creator: string;
+  claimer: string | null;
+  createdAt: string;
+  submissionCid: string | null;
+  claimedAt: string | null;
+  submittedAt: string | null;
+  tokenAddress?: string | null;
+  approvedClaimer?: string | null;
+  title?: string | null;
+  description?: string | null;
+  applicationCount?: number;
+  submissionCount?: number;
 }
 
-const QUERY = `
-  query BountyDetail($id: ID!) {
-    bounty(id: $id) {
-      id
-      metadataCid
-      community
-      rewardAmount
-      status
-      escrowType
-      deadline
-      creator { id }
-      claimer { id }
-      createdAt
-      updatedAt
-      submissionCid
-      disputeReason
-    }
-  }
-`;
+function normalise(b: GatewayBountyDetail): ExtendedBounty {
+  return {
+    ...b,
+    creator: typeof b.creator === "object" ? b.creator : { id: b.creator },
+    claimer: b.claimer ? (typeof b.claimer === "object" ? b.claimer : { id: b.claimer }) : null,
+  };
+}
 
 export function useBountyDetail(bountyId: string | undefined) {
-  const result = useSubgraphQuery<Result>(
+  const result = useGatewayQuery<GatewayBountyDetail | null>(
     ["bounty", bountyId ?? ""],
-    QUERY,
-    { id: bountyId },
-    { enabled: !!bountyId, staleTime: 10_000 },
+    `/v1/bounties/${bountyId}`,
+    { enabled: !!bountyId, staleTime: 300_000 },
   );
 
   return {
-    bounty: result.data?.bounty ?? null,
+    bounty: result.data ? normalise(result.data) : null,
     isLoading: result.isLoading,
+    isError: result.isError,
   };
 }

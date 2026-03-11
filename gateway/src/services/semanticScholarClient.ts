@@ -10,6 +10,8 @@
  * @module services/semanticScholarClient
  */
 
+import { fetchWithTimeout } from "../fetchWithTimeout.js";
+
 // ============================================================
 //  Types
 // ============================================================
@@ -26,6 +28,7 @@ export interface S2Paper {
   externalIds?: { ArXiv?: string; DOI?: string; DBLP?: string; CorpusId?: number };
   citationCount?: number;
   influentialCitationCount?: number;
+  fieldsOfStudy?: string[];
 }
 
 export interface S2Author {
@@ -97,6 +100,7 @@ const PAPER_FIELDS = [
   "externalIds",
   "citationCount",
   "influentialCitationCount",
+  "fieldsOfStudy",
 ].join(",");
 
 const AUTHOR_FIELDS = [
@@ -189,10 +193,11 @@ export class SemanticScholarClient {
         headers["x-api-key"] = this.apiKey;
       }
 
-      const response = await fetch(url, {
+      const response = await fetchWithTimeout(url, {
         method: "POST",
         headers,
         body: JSON.stringify({ ids: resolvedIds }),
+        timeoutMs: 15_000,
       });
 
       if (!response.ok) {
@@ -257,7 +262,7 @@ export class SemanticScholarClient {
         headers["x-api-key"] = this.apiKey;
       }
 
-      const response = await fetch(url, { headers });
+      const response = await fetchWithTimeout(url, { headers, timeoutMs: 15_000 });
       if (!response.ok) {
         return null;
       }

@@ -354,6 +354,197 @@ export class MemoryBridge {
 
     return { cid: response.cid };
   }
+
+  // ============================================================
+  //  Semantic Knowledge Query
+  // ============================================================
+
+  // ============================================================
+  //  Agent Memory (per-agent persistent memory with biological tiers)
+  // ============================================================
+
+  /**
+   * Store a memory in the agent's persistent memory.
+   *
+   * Free (no credit cost). Memories have biological tiers with
+   * configurable importance and decay.
+   *
+   * @param type - Memory tier: 'episodic', 'semantic', 'procedural', or 'self_model'.
+   * @param content - The memory content text.
+   * @param opts - Optional importance, decayRate, tags, source, parentMemoryId, metadata.
+   * @returns The stored memory record.
+   */
+  async storeMemory(
+    type: string,
+    content: string,
+    opts?: {
+      importance?: number;
+      decayRate?: number;
+      tags?: string[];
+      source?: string;
+      parentMemoryId?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<Record<string, unknown>> {
+    return this.connection.request("POST", "/v1/agent-memory/store", {
+      type,
+      content,
+      ...opts,
+    });
+  }
+
+  /**
+   * Semantic recall from the agent's memory.
+   *
+   * Costs 0.10 credits per query. Accessed memories get reinforced
+   * (importance bump).
+   *
+   * @param query - Natural language query to search memories.
+   * @param opts - Optional type filter, limit, and minimum importance threshold.
+   * @returns Matching memories with count.
+   */
+  async recall(
+    query: string,
+    opts?: {
+      types?: string[];
+      limit?: number;
+      minImportance?: number;
+    },
+  ): Promise<{ memories: Record<string, unknown>[]; count: number }> {
+    return this.connection.request("POST", "/v1/agent-memory/recall", {
+      query,
+      ...opts,
+    });
+  }
+
+  /**
+   * List memories by type.
+   *
+   * Free. Returns memories ordered by creation date (newest first).
+   *
+   * @param type - Optional memory type filter.
+   * @param limit - Max results (default 50).
+   * @param offset - Pagination offset (default 0).
+   * @returns Memories array with count.
+   */
+  async listMemories(
+    type?: string,
+    limit?: number,
+    offset?: number,
+  ): Promise<{ memories: Record<string, unknown>[]; count: number }> {
+    const params = new URLSearchParams();
+    if (type) params.set("type", type);
+    if (limit != null) params.set("limit", String(limit));
+    if (offset != null) params.set("offset", String(offset));
+    const qs = params.toString();
+    return this.connection.request("GET", `/v1/agent-memory/list${qs ? `?${qs}` : ""}`);
+  }
+
+  /**
+   * Get memory statistics for the agent.
+   *
+   * Free. Returns counts by type, total importance, and last consolidation cycle info.
+   */
+  async getMemoryStats(): Promise<Record<string, unknown>> {
+    return this.connection.request("GET", "/v1/agent-memory/stats");
+  }
+
+  /**
+   * Export all memories as a portable memory pack.
+   *
+   * Free. Returns a JSON pack with SHA-256 hash for verification.
+   */
+  async exportMemories(): Promise<Record<string, unknown>> {
+    return this.connection.request("POST", "/v1/agent-memory/export");
+  }
+
+  /**
+   * Import a memory pack into the agent's memory.
+   *
+   * Costs 0.25 credits. The pack must include a valid packHash.
+   *
+   * @param pack - Memory pack object with memories array and packHash.
+   * @returns Import result with count of imported memories.
+   */
+  async importMemories(pack: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.connection.request("POST", "/v1/agent-memory/import", pack);
+  }
+
+  // ============================================================
+  //  Semantic Knowledge Query
+  // ============================================================
+
+  /**
+   * Semantic search across all published knowledge (bundles, projects,
+   * papers, bounties, tasks, teaching exchanges, resources).
+   *
+   * Costs 0.50 credits per query. Revenue is attributed to content creators.
+   *
+   * @param input - Query text and optional filters.
+   * @returns Ranked results with composite scores and creator info.
+   */
+  async semanticQuery(input: {
+    query: string;
+    types?: string[];
+    limit?: number;
+    minQuality?: number;
+  }): Promise<{
+    results: Array<{
+      contentType: string;
+      contentId: string;
+      title: string;
+      snippet: string;
+      compositeScore: number;
+      semanticScore: number;
+      ftsScore: number;
+      creatorAddress: string | null;
+      creatorName: string | null;
+      createdAt: string;
+    }>;
+    query: string;
+    totalResults: number;
+    costCredits: number;
+    durationMs: number;
+    mode: "hybrid" | "fts_only";
+  }> {
+    return this.connection.request("POST", "/v1/knowledge/query", input);
+  }
+
+  /**
+   * Get your knowledge query history.
+   */
+  async getQueryHistory(limit = 20, offset = 0): Promise<{
+    queries: Array<{
+      id: string;
+      queryText: string;
+      resultCount: number;
+      costCredits: number;
+      durationMs: number;
+      createdAt: string;
+    }>;
+    total: number;
+  }> {
+    return this.connection.request(
+      "GET",
+      `/v1/knowledge/history?limit=${limit}&offset=${offset}`,
+    );
+  }
+
+  /**
+   * Get your attribution earnings from knowledge queries.
+   */
+  async getQueryEarnings(days = 30): Promise<{
+    totalEarned: number;
+    attributionCount: number;
+    topContent: Array<{
+      contentType: string;
+      contentId: string;
+      totalEarned: number;
+      queryCount: number;
+    }>;
+  }> {
+    return this.connection.request("GET", `/v1/knowledge/earnings?days=${days}`);
+  }
 }
 
 // signForwardRequest is now imported from "./signing.js"

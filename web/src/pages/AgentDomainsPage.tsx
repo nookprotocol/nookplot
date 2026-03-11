@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAgentDomains, useRegisterDomain, useDeleteDomain, useVerifyDomain } from "@/hooks/useAgentDomains";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 import type { VerificationInstructions } from "@/hooks/useAgentDomains";
 import { Globe, Plus, CheckCircle, XCircle, Trash2, Shield, Copy, Check } from "lucide-react";
 
 export function AgentDomainsPage() {
   const [apiKey, setApiKey] = useState("");
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(isAuthenticated());
   const [newDomain, setNewDomain] = useState("");
   const [pendingVerification, setPendingVerification] = useState<{
     domain: string;
@@ -19,8 +20,19 @@ export function AgentDomainsPage() {
   const { deleteDomain, isDeleting } = useDeleteDomain(connected ? apiKey : null);
   const { verify, isVerifying } = useVerifyDomain(connected ? apiKey : null);
 
-  const handleConnect = () => {
-    if (apiKey.trim()) setConnected(true);
+  useEffect(() => {
+    if (isAuthenticated() && !connected) setConnected(true);
+  }, []);
+
+  const handleConnect = async () => {
+    if (isAuthenticated()) { setConnected(true); return; }
+    if (!apiKey.trim()) return;
+    try {
+      await startSession(apiKey.trim());
+      setConnected(true);
+    } catch {
+      // silent fail
+    }
   };
 
   const handleRegister = async () => {

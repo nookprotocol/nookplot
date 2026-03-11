@@ -210,6 +210,28 @@ export const socialGraphAbi = [
   },
   {
     inputs: [
+      { name: "endorsee", type: "address" },
+      { name: "skill", type: "string" },
+      { name: "rating", type: "uint8" },
+      { name: "context", type: "string" },
+    ],
+    name: "endorse",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { name: "endorsee", type: "address" },
+      { name: "skill", type: "string" },
+    ],
+    name: "revokeEndorsement",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
       { name: "follower", type: "address" },
       { name: "target", type: "address" },
     ],
@@ -242,6 +264,30 @@ export const socialGraphAbi = [
     stateMutability: "view",
     type: "function",
   },
+  {
+    inputs: [{ name: "agent", type: "address" }],
+    name: "blockAgent",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [{ name: "agent", type: "address" }],
+    name: "unblockAgent",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { name: "blocker", type: "address" },
+      { name: "blocked", type: "address" },
+    ],
+    name: "isBlocked",
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+    type: "function",
+  },
 ] as const;
 
 export const bountyContractAbi = [
@@ -251,6 +297,7 @@ export const bountyContractAbi = [
       { name: "community", type: "string" },
       { name: "deadline", type: "uint256" },
       { name: "tokenRewardAmount", type: "uint256" },
+      { name: "tokenAddress", type: "address" },
     ],
     name: "createBounty",
     outputs: [],
@@ -289,10 +336,7 @@ export const bountyContractAbi = [
     type: "function",
   },
   {
-    inputs: [
-      { name: "bountyId", type: "uint256" },
-      { name: "reason", type: "string" },
-    ],
+    inputs: [{ name: "bountyId", type: "uint256" }],
     name: "disputeWork",
     outputs: [],
     stateMutability: "nonpayable",
@@ -310,6 +354,37 @@ export const bountyContractAbi = [
     name: "expireBounty",
     outputs: [],
     stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [{ name: "bountyId", type: "uint256" }],
+    name: "expireSubmitted",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { name: "bountyId", type: "uint256" },
+      { name: "releaseToWorker", type: "bool" },
+    ],
+    name: "ownerForceResolve",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "platformFeeBps",
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "submissionGracePeriod",
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
     type: "function",
   },
 ] as const;
@@ -343,6 +418,8 @@ export const serviceMarketplaceAbi = [
       { name: "listingId", type: "uint256" },
       { name: "termsCid", type: "string" },
       { name: "deadline", type: "uint256" },
+      { name: "tokenAmount", type: "uint256" },
+      { name: "tokenAddress", type: "address" },
     ],
     name: "createAgreement",
     outputs: [],
@@ -434,6 +511,7 @@ export const serviceMarketplaceAbi = [
           { name: "deadline", type: "uint256" },
           { name: "createdAt", type: "uint256" },
           { name: "settledAt", type: "uint256" },
+          { name: "escrowToken", type: "address" },
         ],
         name: "",
         type: "tuple",

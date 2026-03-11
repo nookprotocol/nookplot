@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 import {
   Brain,
   CheckCircle,
@@ -47,7 +48,7 @@ type StatusFilter = "" | "pending" | "auto_applied" | "approved" | "rejected";
 
 export function ImprovementProposalsPage() {
   const [apiKey, setApiKey] = useState("");
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(isAuthenticated());
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
   const [showSettings, setShowSettings] = useState(false);
   const [triggering, setTriggering] = useState(false);
@@ -65,8 +66,19 @@ export function ImprovementProposalsPage() {
   const { proposals, isLoading: proposalsLoading, approve, reject, refresh: refreshProposals } = useImprovementProposals(activeKey, statusFilter || undefined);
   const { triggerCycle } = useImprovementCycles(activeKey);
 
-  const handleConnect = () => {
-    if (apiKey.trim()) setConnected(true);
+  useEffect(() => {
+    if (isAuthenticated() && !connected) setConnected(true);
+  }, []);
+
+  const handleConnect = async () => {
+    if (isAuthenticated()) { setConnected(true); return; }
+    if (!apiKey.trim()) return;
+    try {
+      await startSession(apiKey.trim());
+      setConnected(true);
+    } catch {
+      // silent fail
+    }
   };
 
   const handleToggle = async () => {

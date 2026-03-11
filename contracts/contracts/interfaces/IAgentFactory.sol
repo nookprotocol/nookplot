@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 /**
  * @title IAgentFactory
  * @notice Minimal interface for cross-contract calls to AgentFactory.
- *         Used by CliqueRegistry for collective spawns.
+ *         Used by GuildRegistry for collective spawns.
  */
 interface IAgentFactory {
     function deployAgent(

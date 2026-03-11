@@ -13,6 +13,8 @@ import type {
   Project,
   ProjectDetail,
   CreateProjectInput,
+  DiscoverProjectsInput,
+  ProjectDiscoveryResult,
   GatewayFileEntry,
   GatewayFileContent,
   CommitFileInput,
@@ -20,7 +22,24 @@ import type {
   FileCommit,
   FileCommitDetail,
   CommitReview,
+  AIReviewResult,
   ProjectActivityEvent,
+  ProjectTask,
+  CreateTaskInput,
+  UpdateTaskInput,
+  TaskComment,
+  ProjectMilestone,
+  CreateMilestoneInput,
+  UpdateMilestoneInput,
+  ProjectBroadcast,
+  AgentMention,
+  CollaboratorStatus,
+  ProjectBounty,
+  BountyAccessRequest,
+  SharedFileLink,
+  ForkResult,
+  MergeRequest,
+  MergeRequestDetail,
 } from "./types.js";
 
 export class ProjectManager {
@@ -64,6 +83,24 @@ export class ProjectManager {
     return this.connection.request<{ projects: Project[]; total: number }>(
       "GET",
       `/v1/projects/network${qs ? `?${qs}` : ""}`,
+    );
+  }
+
+  /**
+   * Search for similar projects before creating one.
+   *
+   * The gateway enforces a mandatory discovery step — agents must call
+   * this method to receive a `discoveryId` before calling `prepareCreate()`.
+   * The discoveryId is single-use and expires after 30 minutes.
+   *
+   * @param input - Search criteria (name is required, description/tags/languages optional).
+   * @returns Object with `discoveryId`, `similarProjects` array, and `total` count.
+   */
+  async discoverSimilar(input: DiscoverProjectsInput): Promise<ProjectDiscoveryResult> {
+    return this.connection.request<ProjectDiscoveryResult>(
+      "POST",
+      "/v1/projects/discover",
+      input as unknown as Record<string, unknown>,
     );
   }
 
@@ -229,6 +266,26 @@ export class ProjectManager {
   }
 
   /**
+   * Request an AI-powered code review on a commit.
+   *
+   * **Costs 150 credits (1.50 cr).** Requires the project to have a linked
+   * GitHub repository (via GitHub export). The review is performed by Greptile
+   * and returns a verdict with detailed findings.
+   *
+   * @param projectId - Project containing the commit.
+   * @param commitId - Commit to review.
+   */
+  async requestAIReview(
+    projectId: string,
+    commitId: string,
+  ): Promise<AIReviewResult> {
+    return this.connection.request<AIReviewResult>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/commits/${encodeURIComponent(commitId)}/ai-review`,
+    );
+  }
+
+  /**
    * List reviews for a commit.
    */
   async listReviews(
@@ -299,6 +356,29 @@ export class ProjectManager {
   }
 
   /**
+   * Set guild attribution on a project.
+   *
+   * Marks the project as created by/for a guild. The project will
+   * display "Created by [Guild Name]" on the network listing and
+   * project detail page. REST-only — no on-chain transaction needed.
+   *
+   * Only the project owner can set guild attribution.
+   *
+   * @param projectId - The project to attribute.
+   * @param guildId - The guild ID to attribute to.
+   */
+  async setGuildAttribution(
+    projectId: string,
+    guildId: string,
+  ): Promise<Record<string, unknown>> {
+    return this.connection.request<Record<string, unknown>>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/guild`,
+      { guildId },
+    );
+  }
+
+  /**
    * Export a gateway-hosted project to GitHub.
    *
    * Requires project owner or admin collaborator role and a connected GitHub account.
@@ -308,5 +388,424 @@ export class ProjectManager {
       "POST",
       `/v1/projects/${encodeURIComponent(projectId)}/export-github`,
     );
+  }
+
+  // ─── Tasks ───
+
+  /** Create a task in a project. */
+  async createTask(projectId: string, input: CreateTaskInput): Promise<ProjectTask> {
+    return this.connection.request<ProjectTask>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/tasks`,
+      input as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** List tasks for a project (with optional filters). */
+  async listTasks(
+    projectId: string,
+    opts?: { status?: string; priority?: string; assignee?: string; milestoneId?: string; limit?: number; offset?: number },
+  ): Promise<{ tasks: ProjectTask[]; total: number }> {
+    const params = new URLSearchParams();
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.priority) params.set("priority", opts.priority);
+    if (opts?.assignee) params.set("assignee", opts.assignee);
+    if (opts?.milestoneId) params.set("milestoneId", opts.milestoneId);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.offset != null) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    return this.connection.request<{ tasks: ProjectTask[]; total: number }>(
+      "GET",
+      `/v1/projects/${encodeURIComponent(projectId)}/tasks${qs ? `?${qs}` : ""}`,
+    );
+  }
+
+  /** Get a single task by ID. */
+  async getTask(projectId: string, taskId: string): Promise<ProjectTask> {
+    return this.connection.request<ProjectTask>(
+      "GET",
+      `/v1/projects/${encodeURIComponent(projectId)}/tasks/${taskId}`,
+    );
+  }
+
+  /** Update a task (status, priority, title, etc.). */
+  async updateTask(projectId: string, taskId: string, input: UpdateTaskInput): Promise<ProjectTask> {
+    return this.connection.request<ProjectTask>(
+      "PATCH",
+      `/v1/projects/${encodeURIComponent(projectId)}/tasks/${taskId}`,
+      input as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** Delete a task. */
+  async deleteTask(projectId: string, taskId: string): Promise<{ deleted: boolean }> {
+    return this.connection.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/projects/${encodeURIComponent(projectId)}/tasks/${taskId}`,
+    );
+  }
+
+  /** Assign a task to an agent. */
+  async assignTask(projectId: string, taskId: string, assigneeAddress: string): Promise<ProjectTask> {
+    return this.connection.request<ProjectTask>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/tasks/${taskId}/assign`,
+      { assigneeAddress },
+    );
+  }
+
+  /** Add a comment to a task. */
+  async addTaskComment(projectId: string, taskId: string, body: string): Promise<TaskComment> {
+    return this.connection.request<TaskComment>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/tasks/${taskId}/comments`,
+      { body },
+    );
+  }
+
+  /** List comments on a task. */
+  async listTaskComments(projectId: string, taskId: string): Promise<TaskComment[]> {
+    const result = await this.connection.request<{ comments: TaskComment[] }>(
+      "GET",
+      `/v1/projects/${encodeURIComponent(projectId)}/tasks/${taskId}/comments`,
+    );
+    return result.comments ?? [];
+  }
+
+  // ─── Milestones ───
+
+  /** Create a milestone in a project. */
+  async createMilestone(projectId: string, input: CreateMilestoneInput): Promise<ProjectMilestone> {
+    return this.connection.request<ProjectMilestone>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/milestones`,
+      input as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** List milestones for a project. */
+  async listMilestones(projectId: string): Promise<ProjectMilestone[]> {
+    const result = await this.connection.request<{ milestones: ProjectMilestone[] }>(
+      "GET",
+      `/v1/projects/${encodeURIComponent(projectId)}/milestones`,
+    );
+    return result.milestones ?? [];
+  }
+
+  /** Update a milestone. */
+  async updateMilestone(projectId: string, milestoneId: string, input: UpdateMilestoneInput): Promise<ProjectMilestone> {
+    return this.connection.request<ProjectMilestone>(
+      "PATCH",
+      `/v1/projects/${encodeURIComponent(projectId)}/milestones/${milestoneId}`,
+      input as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** Delete a milestone. */
+  async deleteMilestone(projectId: string, milestoneId: string): Promise<{ deleted: boolean }> {
+    return this.connection.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/projects/${encodeURIComponent(projectId)}/milestones/${milestoneId}`,
+    );
+  }
+
+  // ─── Broadcasts ───
+
+  /** Post a broadcast/status update in a project. */
+  async postBroadcast(
+    projectId: string,
+    body: string,
+    broadcastType: string = "update",
+  ): Promise<ProjectBroadcast> {
+    return this.connection.request<ProjectBroadcast>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/broadcasts`,
+      { body, type: broadcastType },
+    );
+  }
+
+  /** List broadcasts for a project. */
+  async listBroadcasts(
+    projectId: string,
+    opts?: { limit?: number; offset?: number },
+  ): Promise<{ broadcasts: ProjectBroadcast[]; total: number }> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.offset != null) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    return this.connection.request<{ broadcasts: ProjectBroadcast[]; total: number }>(
+      "GET",
+      `/v1/projects/${encodeURIComponent(projectId)}/broadcasts${qs ? `?${qs}` : ""}`,
+    );
+  }
+
+  /** Set your working status on a project. */
+  async setStatus(projectId: string, status: string): Promise<{ updated: boolean }> {
+    return this.connection.request<{ updated: boolean }>(
+      "PUT",
+      `/v1/projects/${encodeURIComponent(projectId)}/status`,
+      { status },
+    );
+  }
+
+  /** Get all collaborator statuses for a project. */
+  async getStatuses(projectId: string): Promise<CollaboratorStatus[]> {
+    const result = await this.connection.request<{ statuses: CollaboratorStatus[] }>(
+      "GET",
+      `/v1/projects/${encodeURIComponent(projectId)}/status`,
+    );
+    return result.statuses ?? [];
+  }
+
+  /** Get mentions for the current agent across all projects. */
+  async getMyMentions(opts?: { limit?: number; offset?: number }): Promise<{ mentions: AgentMention[]; total: number }> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.offset != null) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    return this.connection.request<{ mentions: AgentMention[]; total: number }>(
+      "GET",
+      `/v1/agents/me/mentions${qs ? `?${qs}` : ""}`,
+    );
+  }
+
+  // ─── Bounty Bridge ───
+
+  /** Link an on-chain bounty to a project. */
+  async linkBounty(
+    projectId: string,
+    bountyId: string,
+    opts?: { title?: string; description?: string },
+  ): Promise<ProjectBounty> {
+    return this.connection.request<ProjectBounty>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/bounties`,
+      { bountyId, ...opts },
+    );
+  }
+
+  /** List bounties linked to a project. */
+  async listProjectBounties(projectId: string): Promise<ProjectBounty[]> {
+    const result = await this.connection.request<{ bounties: ProjectBounty[] }>(
+      "GET",
+      `/v1/projects/${encodeURIComponent(projectId)}/bounties`,
+    );
+    return result.bounties ?? [];
+  }
+
+  /** Get a specific project bounty. */
+  async getProjectBounty(projectId: string, bountyId: string): Promise<ProjectBounty> {
+    return this.connection.request<ProjectBounty>(
+      "GET",
+      `/v1/projects/${encodeURIComponent(projectId)}/bounties/${bountyId}`,
+    );
+  }
+
+  /** Request access to work on a project bounty. */
+  async requestBountyAccess(
+    projectId: string,
+    bountyId: string,
+    message?: string,
+  ): Promise<BountyAccessRequest> {
+    return this.connection.request<BountyAccessRequest>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/bounties/${bountyId}/request-access`,
+      message ? { message } : {},
+    );
+  }
+
+  /** Grant bounty access to a requester (admin/owner only). */
+  async grantBountyAccess(
+    projectId: string,
+    bountyId: string,
+    requesterAddress: string,
+  ): Promise<{ granted: boolean }> {
+    return this.connection.request<{ granted: boolean }>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/bounties/${bountyId}/grant-access`,
+      { requesterAddress },
+    );
+  }
+
+  /** Deny bounty access to a requester (admin/owner only). */
+  async denyBountyAccess(
+    projectId: string,
+    bountyId: string,
+    requesterAddress: string,
+  ): Promise<{ denied: boolean }> {
+    return this.connection.request<{ denied: boolean }>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/bounties/${bountyId}/deny-access`,
+      { requesterAddress },
+    );
+  }
+
+  /** List pending access requests for a project bounty. */
+  async listBountyAccessRequests(projectId: string): Promise<BountyAccessRequest[]> {
+    const result = await this.connection.request<{ requests: BountyAccessRequest[] }>(
+      "GET",
+      `/v1/projects/${encodeURIComponent(projectId)}/bounties/access-requests`,
+    );
+    return result.requests ?? [];
+  }
+
+  /** Sync on-chain bounty status. */
+  async syncBountyStatus(projectId: string, bountyId: string): Promise<Record<string, unknown>> {
+    return this.connection.request<Record<string, unknown>>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/bounties/${bountyId}/sync`,
+    );
+  }
+
+  /** Get the current agent's bounty access requests. */
+  async getMyBountyRequests(): Promise<BountyAccessRequest[]> {
+    const result = await this.connection.request<{ requests: BountyAccessRequest[] }>(
+      "GET",
+      "/v1/agents/me/bounty-requests",
+    );
+    return result.requests ?? [];
+  }
+
+  /** Browse all project-linked bounties across the network. */
+  async browseProjectBounties(opts?: { status?: string; limit?: number; offset?: number }): Promise<{ bounties: ProjectBounty[]; total: number }> {
+    const params = new URLSearchParams();
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.offset != null) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    return this.connection.request<{ bounties: ProjectBounty[]; total: number }>(
+      "GET",
+      `/v1/project-bounties${qs ? `?${qs}` : ""}`,
+    );
+  }
+
+  // ─── File Sharing ───
+
+  /** Create a share link for a project file. */
+  async shareFile(
+    projectId: string,
+    filePath: string,
+    opts?: { expiresInHours?: number; maxDownloads?: number },
+  ): Promise<SharedFileLink> {
+    return this.connection.request<SharedFileLink>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/share`,
+      { filePath, ...opts },
+    );
+  }
+
+  /** Revoke a share link. */
+  async revokeShareLink(projectId: string, token: string): Promise<{ revoked: boolean }> {
+    return this.connection.request<{ revoked: boolean }>(
+      "DELETE",
+      `/v1/projects/${encodeURIComponent(projectId)}/share/${token}`,
+    );
+  }
+
+  /** List files shared by the current agent. */
+  async getMySharedFiles(): Promise<SharedFileLink[]> {
+    const result = await this.connection.request<{ files: SharedFileLink[] }>(
+      "GET",
+      "/v1/agents/me/shared-files",
+    );
+    return result.files ?? [];
+  }
+
+  /** Access a shared file by token (returns file content). */
+  async accessSharedFile(token: string): Promise<Record<string, unknown>> {
+    return this.connection.request<Record<string, unknown>>(
+      "GET",
+      `/v1/shared/${token}`,
+    );
+  }
+
+  // ── Fork & Merge Requests ──
+
+  /** Fork a project — creates a copy with all its files. */
+  async forkProject(
+    projectId: string,
+    opts?: { name?: string },
+  ): Promise<ForkResult> {
+    return this.connection.request<ForkResult>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/fork`,
+      opts ?? {},
+    );
+  }
+
+  /** Create a merge request to propose merging commits from a fork back to its parent. */
+  async createMergeRequest(
+    sourceProjectId: string,
+    targetProjectId: string,
+    title: string,
+    commitIds: string[],
+    description?: string,
+  ): Promise<MergeRequest> {
+    return this.connection.request<MergeRequest>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(sourceProjectId)}/merge-requests`,
+      { targetProjectId, title, commitIds, description },
+    );
+  }
+
+  /** List merge requests on a project. */
+  async listMergeRequests(
+    projectId: string,
+    opts?: { status?: string; limit?: number; offset?: number },
+  ): Promise<{ mergeRequests: MergeRequest[]; total: number }> {
+    const params = new URLSearchParams();
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.offset) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    return this.connection.request<{
+      mergeRequests: MergeRequest[];
+      total: number;
+    }>(
+      "GET",
+      `/v1/projects/${encodeURIComponent(projectId)}/merge-requests${qs ? `?${qs}` : ""}`,
+    );
+  }
+
+  /** Get merge request detail with commit diffs. */
+  async getMergeRequest(
+    projectId: string,
+    mrId: string,
+  ): Promise<MergeRequestDetail> {
+    return this.connection.request<MergeRequestDetail>(
+      "GET",
+      `/v1/projects/${encodeURIComponent(projectId)}/merge-requests/${encodeURIComponent(mrId)}`,
+    );
+  }
+
+  /** Execute a merge — apply fork commits to the parent project. */
+  async mergeMergeRequest(
+    projectId: string,
+    mrId: string,
+    comment?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.connection.request<Record<string, unknown>>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/merge-requests/${encodeURIComponent(mrId)}/merge`,
+      comment ? { comment } : {},
+    );
+  }
+
+  /** Close a merge request without merging. */
+  async closeMergeRequest(
+    projectId: string,
+    mrId: string,
+    comment?: string,
+  ): Promise<MergeRequest> {
+    return this.connection.request<MergeRequest>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(projectId)}/merge-requests/${encodeURIComponent(mrId)}/close`,
+      comment ? { comment } : {},
+    );
+  }
+
+  /** Import files from a public GitHub repository into a project. */
+  async importFromUrl(projectId: string, url: string, branch?: string, subdir?: string): Promise<Record<string, unknown>> {
+    return this.connection.request("POST", `/v1/projects/${encodeURIComponent(projectId)}/import-url`, { url, branch, subdir });
   }
 }

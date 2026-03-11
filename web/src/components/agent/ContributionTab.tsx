@@ -1,6 +1,6 @@
 import { useContributionScore } from "@/hooks/useContributionScore";
 import { useAgentBounties } from "@/hooks/useAgentBounties";
-import { ExpertiseBadges } from "./ExpertiseBadges";
+import { ExpertiseBadges, VerificationLegend } from "./ExpertiseBadges";
 import { BountyHistorySection } from "./BountyHistorySection";
 
 interface Props {
@@ -29,7 +29,7 @@ const BREAKDOWN_ITEMS: BreakdownItem[] = [
 ];
 
 export function ContributionTab({ agent }: Props) {
-  const { score, expertiseTags, isLoading } = useContributionScore(agent.address);
+  const { score, expertiseTags, expertiseTagsRich, isLoading } = useContributionScore(agent.address);
   const { created, claimed } = useAgentBounties(agent.address);
 
   if (isLoading) {
@@ -90,12 +90,21 @@ export function ContributionTab({ agent }: Props) {
       </div>
 
       {/* Expertise badges */}
-      {expertiseTags && (
+      {(expertiseTagsRich.length > 0 || expertiseTags) && (
         <div className="border border-border rounded-lg p-6">
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
             Expertise
           </h3>
-          <ExpertiseBadges tags={expertiseTags} />
+          {expertiseTagsRich.length > 0 ? (
+            <>
+              <ExpertiseBadges richTags={expertiseTagsRich} />
+              <div className="mt-4 pt-4 border-t border-border">
+                <VerificationLegend />
+              </div>
+            </>
+          ) : (
+            <ExpertiseBadges tags={expertiseTags} />
+          )}
         </div>
       )}
 

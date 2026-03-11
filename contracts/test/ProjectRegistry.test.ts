@@ -69,7 +69,7 @@ describe("ProjectRegistry", function () {
   // ============================================================
 
   describe("Initialization", function () {
-    it("should set the owner correctly", async function () {
+    it("should have correct owner", async function () {
       expect(await projectRegistry.owner()).to.equal(owner.address);
     });
 
@@ -560,6 +560,174 @@ describe("ProjectRegistry", function () {
   });
 
   // ============================================================
+  //                     DEPLOYMENTS
+  // ============================================================
+
+  describe("Deployments", function () {
+    const DEPLOY_CID = "QmDeploymentMetadataCidForTesting123456789012345";
+    const DEPLOY_CID_2 = "QmDeploymentMetadataCid2ForTesting12345678901234";
+
+    beforeEach(async function () {
+      await projectRegistry.connect(agentA).createProject(PROJECT_ID, META_CID);
+    });
+
+    it("should register a deployment by creator", async function () {
+      await expect(
+        projectRegistry.connect(agentA).registerDeployment(PROJECT_ID, "preview", DEPLOY_CID)
+      ).to.emit(projectRegistry, "DeploymentRegistered")
+        .withArgs(
+          ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["string"], [PROJECT_ID])),
+          PROJECT_ID,
+          1,
+          "preview",
+          DEPLOY_CID,
+          agentA.address,
+          (v: bigint) => v > 0n
+        );
+    });
+
+    it("should increment deployment count", async function () {
+      expect(await projectRegistry.deploymentCount(PROJECT_ID)).to.equal(0);
+
+      await projectRegistry.connect(agentA).registerDeployment(PROJECT_ID, "preview", DEPLOY_CID);
+      expect(await projectRegistry.deploymentCount(PROJECT_ID)).to.equal(1);
+
+      await projectRegistry.connect(agentA).registerDeployment(PROJECT_ID, "staging", DEPLOY_CID_2);
+      expect(await projectRegistry.deploymentCount(PROJECT_ID)).to.equal(2);
+    });
+
+    it("should update project updatedAt timestamp", async function () {
+      const infoBefore = await projectRegistry.getProject(PROJECT_ID);
+      // Mine a block to advance time
+      await ethers.provider.send("evm_increaseTime", [60]);
+      await ethers.provider.send("evm_mine", []);
+
+      await projectRegistry.connect(agentA).registerDeployment(PROJECT_ID, "preview", DEPLOY_CID);
+      const infoAfter = await projectRegistry.getProject(PROJECT_ID);
+      expect(infoAfter.updatedAt).to.be.greaterThan(infoBefore.updatedAt);
+    });
+
+    it("should allow Contributor to register deployment", async function () {
+      await projectRegistry.connect(agentA).addCollaborator(PROJECT_ID, agentB.address, 2); // Contributor
+      await expect(
+        projectRegistry.connect(agentB).registerDeployment(PROJECT_ID, "preview", DEPLOY_CID)
+      ).to.emit(projectRegistry, "DeploymentRegistered");
+    });
+
+    it("should allow Admin to register deployment", async function () {
+      await projectRegistry.connect(agentA).addCollaborator(PROJECT_ID, agentB.address, 3); // Admin
+      await expect(
+        projectRegistry.connect(agentB).registerDeployment(PROJECT_ID, "preview", DEPLOY_CID)
+      ).to.emit(projectRegistry, "DeploymentRegistered");
+    });
+
+    it("should deny Viewer from registering deployment", async function () {
+      await projectRegistry.connect(agentA).addCollaborator(PROJECT_ID, agentB.address, 1); // Viewer
+      await expect(
+        projectRegistry.connect(agentB).registerDeployment(PROJECT_ID, "preview", DEPLOY_CID)
+      ).to.be.revertedWithCustomError(projectRegistry, "InsufficientRole");
+    });
+
+    it("should deny non-collaborator from registering deployment", async function () {
+      await expect(
+        projectRegistry.connect(agentB).registerDeployment(PROJECT_ID, "preview", DEPLOY_CID)
+      ).to.be.revertedWithCustomError(projectRegistry, "InsufficientRole");
+    });
+
+    it("should revert on non-existent project", async function () {
+      await expect(
+        projectRegistry.connect(agentA).registerDeployment("nonexistent", "preview", DEPLOY_CID)
+      ).to.be.revertedWithCustomError(projectRegistry, "ProjectNotFound");
+    });
+
+    it("should revert on deactivated project", async function () {
+      await projectRegistry.connect(agentA).deactivateProject(PROJECT_ID);
+      await expect(
+        projectRegistry.connect(agentA).registerDeployment(PROJECT_ID, "preview", DEPLOY_CID)
+      ).to.be.revertedWithCustomError(projectRegistry, "ProjectNotActive");
+    });
+
+    it("should revert with empty environment", async function () {
+      await expect(
+        projectRegistry.connect(agentA).registerDeployment(PROJECT_ID, "", DEPLOY_CID)
+      ).to.be.revertedWithCustomError(projectRegistry, "EmptyString");
+    });
+
+    it("should revert with empty deploymentCid", async function () {
+      await expect(
+        projectRegistry.connect(agentA).registerDeployment(PROJECT_ID, "preview", "")
+      ).to.be.revertedWithCustomError(projectRegistry, "EmptyString");
+    });
+
+    it("should revert when paused", async function () {
+      await projectRegistry.connect(owner).pause();
+      await expect(
+        projectRegistry.connect(agentA).registerDeployment(PROJECT_ID, "preview", DEPLOY_CID)
+      ).to.be.revertedWithCustomError(projectRegistry, "EnforcedPause");
+    });
+
+    it("should charge fee when payment token is set", async function () {
+      const TokenFactory = await ethers.getContractFactory("MockERC20");
+      const tk = (await TokenFactory.deploy("NookplotToken", "NOOK")) as unknown as MockERC20;
+      await tk.waitForDeployment();
+
+      const fee = ethers.parseEther("5");
+      await projectRegistry.connect(owner).setPaymentToken(await tk.getAddress());
+      await projectRegistry.connect(owner).setCreationFee(fee);
+
+      await tk.mint(agentA.address, ethers.parseEther("100"));
+      await tk.connect(agentA).approve(await projectRegistry.getAddress(), fee);
+
+      await projectRegistry.connect(agentA).registerDeployment(PROJECT_ID, "preview", DEPLOY_CID);
+      expect(await tk.balanceOf(treasury.address)).to.equal(fee);
+    });
+
+    it("should allow deployment via meta-transaction", async function () {
+      const signers = await ethers.getSigners();
+      const relayer = signers[6];
+
+      const nonce = await forwarder.nonces(agentA.address);
+      const block = await ethers.provider.getBlock("latest");
+      const deadline = block!.timestamp + 3600;
+      const data = projectRegistry.interface.encodeFunctionData("registerDeployment", [
+        PROJECT_ID, "preview", DEPLOY_CID,
+      ]);
+
+      const domain = {
+        name: "NookplotForwarder",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await forwarder.getAddress(),
+      };
+      const types = {
+        ForwardRequest: [
+          { name: "from", type: "address" },
+          { name: "to", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "gas", type: "uint256" },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint48" },
+          { name: "data", type: "bytes" },
+        ],
+      };
+      const value = {
+        from: agentA.address,
+        to: await projectRegistry.getAddress(),
+        value: 0n,
+        gas: 500000n,
+        nonce,
+        deadline,
+        data,
+      };
+      const signature = await agentA.signTypedData(domain, types, value);
+
+      await forwarder.connect(relayer).execute({ ...value, signature });
+
+      expect(await projectRegistry.deploymentCount(PROJECT_ID)).to.equal(1);
+    });
+  });
+
+  // ============================================================
   //                    DEACTIVATION
   // ============================================================
 
@@ -588,14 +756,14 @@ describe("ProjectRegistry", function () {
       ).to.be.revertedWithCustomError(projectRegistry, "NotCreator");
     });
 
-    it("should force-deactivate by admin (owner)", async function () {
+    it("should force-deactivate by owner", async function () {
       await expect(projectRegistry.connect(owner).forceDeactivate(PROJECT_ID))
         .to.emit(projectRegistry, "ProjectDeactivated");
 
       expect(await projectRegistry.isProjectActive(PROJECT_ID)).to.be.false;
     });
 
-    it("should force-reactivate by admin (owner)", async function () {
+    it("should force-reactivate by owner", async function () {
       await projectRegistry.connect(agentA).deactivateProject(PROJECT_ID);
       await expect(projectRegistry.connect(owner).forceReactivate(PROJECT_ID))
         .to.emit(projectRegistry, "ProjectReactivated");
@@ -603,16 +771,18 @@ describe("ProjectRegistry", function () {
       expect(await projectRegistry.isProjectActive(PROJECT_ID)).to.be.true;
     });
 
-    it("should revert force-deactivate by non-admin", async function () {
+    it("should revert force-deactivate by non-owner", async function () {
       await expect(
         projectRegistry.connect(agentA).forceDeactivate(PROJECT_ID)
-      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount")
+        .withArgs(agentA.address);
     });
 
-    it("should revert force-reactivate by non-admin", async function () {
+    it("should revert force-reactivate by non-owner", async function () {
       await expect(
         projectRegistry.connect(agentA).forceReactivate(PROJECT_ID)
-      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount")
+        .withArgs(agentA.address);
     });
 
     it("should revert deactivating non-existent project", async function () {
@@ -767,19 +937,30 @@ describe("ProjectRegistry", function () {
     it("should revert admin calls from non-owner", async function () {
       await expect(
         projectRegistry.connect(agentA).setPaymentToken(ethers.ZeroAddress)
-      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount")
+        .withArgs(agentA.address);
 
       await expect(
         projectRegistry.connect(agentA).setCreationFee(0)
-      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount")
+        .withArgs(agentA.address);
 
       await expect(
         projectRegistry.connect(agentA).setTreasury(agentA.address)
-      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount")
+        .withArgs(agentA.address);
 
       await expect(
+        projectRegistry.connect(agentA).unpause()
+      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount")
+        .withArgs(agentA.address);
+    });
+
+    it("should revert pause from non-owner", async function () {
+      await expect(
         projectRegistry.connect(agentA).pause()
-      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount")
+        .withArgs(agentA.address);
     });
 
     it("should emit PaymentTokenUpdated", async function () {
@@ -889,7 +1070,7 @@ describe("ProjectRegistry", function () {
   // ============================================================
 
   describe("UUPS Upgrade", function () {
-    it("should revert upgrade by non-owner", async function () {
+    it("should revert upgrade by non-admin", async function () {
       const Factory = await ethers.getContractFactory("ProjectRegistry", agentA);
       await expect(
         upgrades.upgradeProxy(await projectRegistry.getAddress(), Factory, {
@@ -897,6 +1078,107 @@ describe("ProjectRegistry", function () {
           unsafeAllow: ["constructor", "state-variable-immutable"],
         })
       ).to.be.revertedWithCustomError(projectRegistry, "OwnableUnauthorizedAccount");
+    });
+  });
+
+  // ============================================================
+  //                   V2 REINITIALIZER
+  // ============================================================
+
+  describe("V2 Reinitializer", function () {
+    it("should allow calling initializeV2 (empty reinitializer)", async function () {
+      // initializeV2 is an empty reinitializer(2) — calling it should succeed
+      await projectRegistry.initializeV2();
+    });
+
+    it("should revert on second initializeV2 call", async function () {
+      await projectRegistry.initializeV2();
+      await expect(projectRegistry.initializeV2()).to.be.revertedWithCustomError(
+        projectRegistry,
+        "InvalidInitialization"
+      );
+    });
+  });
+
+  // ============================================================
+  //                   EMERGENCY WITHDRAW
+  // ============================================================
+  describe("Emergency Withdraw", function () {
+    it("emergencyWithdraw works for admin", async function () {
+      // Deploy a mock token and send some to the contract
+      const MockTokenFactory = await ethers.getContractFactory("MockERC20");
+      const mockToken = (await MockTokenFactory.deploy("Mock", "MCK")) as unknown as MockERC20;
+      await mockToken.waitForDeployment();
+
+      const amount = ethers.parseEther("50");
+      await mockToken.mint(await projectRegistry.getAddress(), amount);
+
+      const balanceBefore = await mockToken.balanceOf(owner.address);
+
+      await expect(
+        projectRegistry.connect(owner).emergencyWithdraw(
+          await mockToken.getAddress(),
+          owner.address,
+          amount
+        )
+      ).to.emit(projectRegistry, "EmergencyWithdraw")
+        .withArgs(await mockToken.getAddress(), owner.address, amount);
+
+      const balanceAfter = await mockToken.balanceOf(owner.address);
+      expect(balanceAfter - balanceBefore).to.equal(amount);
+    });
+
+    it("emergencyWithdraw reverts for non-owner", async function () {
+      await expect(
+        projectRegistry.connect(agentA).emergencyWithdraw(
+          ethers.ZeroAddress,
+          agentA.address,
+          100
+        )
+      ).to.be.revertedWithCustomError(
+        projectRegistry,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+    });
+
+    it("emergencyWithdraw reverts with ZeroAmount", async function () {
+      await expect(
+        projectRegistry.connect(owner).emergencyWithdraw(
+          ethers.ZeroAddress,
+          owner.address,
+          0
+        )
+      ).to.be.revertedWithCustomError(projectRegistry, "ZeroAmount");
+    });
+
+    it("rescueETH reverts for non-owner", async function () {
+      await expect(
+        projectRegistry.connect(agentA).rescueETH(agentA.address, 100)
+      ).to.be.revertedWithCustomError(
+        projectRegistry,
+        "OwnableUnauthorizedAccount"
+      ).withArgs(agentA.address);
+    });
+
+    it("rescueETH reverts with ZeroAmount", async function () {
+      await expect(
+        projectRegistry.connect(owner).rescueETH(owner.address, 0)
+      ).to.be.revertedWithCustomError(projectRegistry, "ZeroAmount");
+    });
+  });
+
+  // ============================================================
+  //                FAIL-OPEN _requireActiveAgent
+  // ============================================================
+  describe("Fail-open _requireActiveAgent", function () {
+    it("allows project creation when AgentRegistry is unreachable", async function () {
+      // Point to a non-existent registry (no code at this address)
+      await projectRegistry.connect(owner).setAgentRegistry(agentC.address);
+
+      // Should still allow project creation (fail-open)
+      await projectRegistry.connect(agentA).createProject("test-failopen", META_CID);
+      const project = await projectRegistry.getProject("test-failopen");
+      expect(project.creator).to.equal(agentA.address);
     });
   });
 });

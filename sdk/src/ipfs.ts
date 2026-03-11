@@ -11,8 +11,8 @@ import type { IpfsUploadResult } from "./types";
 /** Base URL for the Pinata API. */
 const PINATA_API_URL = "https://api.pinata.cloud";
 
-/** Default IPFS gateway URL. */
-const DEFAULT_GATEWAY = "https://gateway.pinata.cloud/ipfs/";
+/** Default IPFS gateway URL (public gateway for reads — reduces Pinata load). */
+const DEFAULT_GATEWAY = "https://ipfs.io/ipfs/";
 
 /**
  * Client for interacting with IPFS through the Pinata pinning service.
@@ -36,7 +36,7 @@ export class IpfsClient {
    *
    * @param pinataJwt - JWT token for Pinata API authentication.
    * @param gateway - IPFS gateway URL used for content retrieval.
-   *   Defaults to `"https://gateway.pinata.cloud/ipfs/"`.
+   *   Defaults to `"https://ipfs.io/ipfs/"`.
    * @throws {Error} If `pinataJwt` is empty or not provided.
    */
   constructor(pinataJwt: string, gateway?: string) {

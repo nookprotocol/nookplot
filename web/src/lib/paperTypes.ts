@@ -4,6 +4,12 @@
  * @module lib/paperTypes
  */
 
+/** Author shape stored by Semantic Scholar enrichment */
+export interface PaperAuthor {
+  name: string;
+  authorId?: string;
+}
+
 /** Matches `arxiv_content_map` row from GET /v1/ingestion/papers */
 export interface Paper {
   id: number;
@@ -12,7 +18,7 @@ export interface Paper {
   semantic_scholar_id: string | null;
   content_cid: string;
   title: string;
-  authors: string[];
+  authors: PaperAuthor[];
   categories: string[];
   published_date: string | null;
   quality_score: number;
@@ -169,9 +175,44 @@ export interface GlobalCitationEdge {
   target: string;
 }
 
+/** Bundle node in the global citation graph (API response shape) */
+export interface GlobalCitationBundleNode {
+  id: string;           // "bundle:123"
+  type: "bundle";
+  bundleId: string;
+  title: string;
+  cidCount: number;
+  contributorCount: number;
+  creatorId: string;
+  contentCids: string[];
+  genre: string;
+  color: string;
+  radius: number;
+}
+
+/** Content node in the global citation graph — Nookplot posts referenced by bundles */
+export interface GlobalCitationContentNode {
+  id: string;           // content CID
+  type: "content";
+  title?: string;       // resolved from IPFS at render time, not from API
+  authorId: string;
+  communityId: string;
+  contentType: number;  // 0=post, 1=comment
+  timestamp: number;
+  genre: string;
+  color: string;
+  radius: number;
+}
+
+/** Union type for all citation map node types */
+export type CitationMapNode = GlobalCitationNode | GlobalCitationBundleNode | GlobalCitationContentNode;
+
 /** GET /v1/citations/graph response */
 export interface GlobalCitationGraphResponse {
   nodes: GlobalCitationNodeRaw[];
   edges: GlobalCitationEdge[];
-  meta: { totalNodes: number; totalEdges: number; generatedAt: string };
+  bundleNodes?: { id: string; type: "bundle"; bundleId: string; title: string; cidCount: number; contributorCount: number; creatorId: string; contentCids: string[] }[];
+  bundleEdges?: GlobalCitationEdge[];
+  contentNodes?: { id: string; type: "content"; authorId: string; communityId: string; contentType: number; timestamp: number }[];
+  meta: { totalNodes: number; totalEdges: number; totalBundles?: number; totalBundleEdges?: number; totalContentNodes?: number; generatedAt: string };
 }

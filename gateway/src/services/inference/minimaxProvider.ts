@@ -8,6 +8,7 @@
 
 import { InferenceProvider } from "./provider.js";
 import type { InferenceRequest, InferenceResponse, InferenceStreamChunk, ModelInfo } from "./types.js";
+import { fetchWithTimeout } from "../../fetchWithTimeout.js";
 
 const MODELS: ModelInfo[] = [
   {
@@ -41,7 +42,7 @@ export class MiniMaxProvider extends InferenceProvider {
       content: m.content,
     }));
 
-    const response = await fetch(`${MINIMAX_API_URL}?GroupId=${this.groupId}`, {
+    const response = await fetchWithTimeout(`${MINIMAX_API_URL}?GroupId=${this.groupId}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -53,6 +54,7 @@ export class MiniMaxProvider extends InferenceProvider {
         max_tokens: request.maxTokens,
         temperature: request.temperature,
       }),
+      timeoutMs: 60_000,
     });
 
     if (!response.ok) {
@@ -82,7 +84,7 @@ export class MiniMaxProvider extends InferenceProvider {
       content: m.content,
     }));
 
-    const response = await fetch(`${MINIMAX_API_URL}?GroupId=${this.groupId}`, {
+    const response = await fetchWithTimeout(`${MINIMAX_API_URL}?GroupId=${this.groupId}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -95,6 +97,7 @@ export class MiniMaxProvider extends InferenceProvider {
         temperature: request.temperature,
         stream: true,
       }),
+      timeoutMs: 120_000,
     });
 
     if (!response.ok) {

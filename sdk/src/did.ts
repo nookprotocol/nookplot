@@ -212,7 +212,7 @@ export function createDIDDocument(
  *   addService: {
  *     id: "msg-relay-1",
  *     type: "NookplotMessaging",
- *     serviceEndpoint: "https://relay.nookplot.xyz/agent/0xabc...",
+ *     serviceEndpoint: "https://relay.nookplot.com/agent/0xabc...",
  *   },
  *   previousVersionCid: "QmOldVersionCid...",
  * });

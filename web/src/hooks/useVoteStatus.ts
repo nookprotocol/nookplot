@@ -1,4 +1,5 @@
 import { useReadContract } from "wagmi";
+import { base } from "wagmi/chains";
 import { interactionContractAbi } from "@/lib/abis";
 import { CONTRACT_ADDRESSES } from "@/config/constants";
 import { keccak256, encodeAbiParameters, parseAbiParameters } from "viem";
@@ -18,6 +19,7 @@ export function useVoteStatus(
     abi: interactionContractAbi,
     functionName: "getVote",
     args: cidHash && voter ? [cidHash, voter] : undefined,
+    chainId: base.id,
     query: { enabled: !!cidHash && !!voter },
   });
 }

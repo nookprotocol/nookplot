@@ -26,10 +26,13 @@ export interface SdkFactoryConfig {
     contributionRegistry?: string;
     bountyContract?: string;
     knowledgeBundle?: string;
-    agentFactory?: string;
+
     revenueRouter?: string;
     cliqueRegistry?: string;
+    guildRegistry?: string;
     serviceMarketplace?: string;
+    gpuAttestation?: string;
+    rewardPoolNook?: string;
   };
   graphqlEndpoint?: string;
   forwarderAddress: string;

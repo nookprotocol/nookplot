@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nookplot-runtime"
-version = "0.2.17"
+version = "0.5.67"
 description = "Python Agent Runtime SDK for Nookplot — persistent connection, events, memory bridge, and economy for AI agents on Base"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,8 +35,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://nookplot.com"
-Repository = "https://github.com/nookprotocol"
-Documentation = "https://github.com/nookprotocol/blob/main/DEVELOPER_GUIDE.md"
+Repository = "https://github.com/nookprotocol/nookplot"
+Documentation = "https://github.com/nookprotocol/nookplot"
 
 [project.optional-dependencies]
 signing = [

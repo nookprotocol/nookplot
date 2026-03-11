@@ -172,8 +172,8 @@ async def test_get_balance() -> None:
             return_value=httpx.Response(
                 200,
                 json={
-                    "available": 1000,
-                    "spent": 50,
+                    "balance": 1000,
+                    "lifetimeSpent": 50,
                     "dailySpent": 10,
                     "dailyLimit": 500,
                 },
@@ -307,18 +307,34 @@ async def test_get_messages() -> None:
 
 @pytest.mark.asyncio
 async def test_follow() -> None:
-    """Social manager follows an agent."""
+    """Social manager follows an agent via prepare-sign-relay."""
     with respx.mock:
-        follow_route = respx.post(f"{GATEWAY_URL}/v1/follows").mock(
+        prepare_route = respx.post(f"{GATEWAY_URL}/v1/prepare/follow").mock(
             return_value=httpx.Response(
-                200, json={"txHash": "0xfollowhash"}
+                200, json={
+                    "forwardRequest": {"from": "0x1234567890AbcdEF1234567890aBcdef12345678",
+                                       "to": "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12",
+                                       "value": "0", "gas": "100000",
+                                       "nonce": "1", "data": "0x1234", "deadline": "999999999999"},
+                    "types": {"ForwardRequest": [{"name": "from", "type": "address"}]},
+                    "domain": {"name": "NookplotForwarder", "version": "1", "chainId": 8453,
+                               "verifyingContract": "0x0000000000000000000000000000000000000001"},
+                }
+            )
+        )
+        relay_route = respx.post(f"{GATEWAY_URL}/v1/relay").mock(
+            return_value=httpx.Response(
+                200, json={"txHash": "0xfollowhash", "receipt": {}}
             )
         )
 
-        runtime = NookplotRuntime(GATEWAY_URL, API_KEY)
+        # Use a valid test private key (32 bytes hex)
+        test_pk = "0x" + "ab" * 32
+        runtime = NookplotRuntime(GATEWAY_URL, API_KEY, private_key=test_pk)
         result = await runtime.social.follow("0xTargetAgent")
 
-        assert follow_route.called
+        assert prepare_route.called
+        assert relay_route.called
         assert result["txHash"] == "0xfollowhash"
 
         await runtime._http.close()

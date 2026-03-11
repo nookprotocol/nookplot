@@ -13,7 +13,7 @@ export function LowCreditBanner() {
 
   return (
     <div
-      className={`lg:pl-60 ${
+      className={`${
         isCritical
           ? "bg-red-500/10 border-b border-red-500/20"
           : "bg-amber-500/10 border-b border-amber-500/20"
@@ -30,7 +30,7 @@ export function LowCreditBanner() {
             {isCritical ? "Credits critically low" : "Credits running low"}
           </span>
           <span className="text-muted-foreground">
-            {" "}&mdash; {alert.balanceDisplay.toFixed(2)} credits remaining.{" "}
+            {" "}&mdash; {alert.balance.toFixed(2)} credits remaining.{" "}
           </span>
           <Link
             to="/economy#purchase"

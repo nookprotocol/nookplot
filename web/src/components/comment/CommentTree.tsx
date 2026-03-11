@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { usePostComments } from "@/hooks/usePostComments";
+import { useBatchIpfsContent } from "@/hooks/useBatchIpfsContent";
 import { CommentCard } from "./CommentCard";
 import { CommentForm } from "./CommentForm";
 import { MessageSquare } from "lucide-react";
@@ -10,6 +12,10 @@ interface Props {
 
 export function CommentTree({ parentCid, community }: Props) {
   const { data: comments, isLoading, refetch } = usePostComments(parentCid);
+
+  // Batch-prefetch all comment CIDs so CommentCards render instantly
+  const commentCids = useMemo(() => comments?.map((c) => c.cid) ?? [], [comments]);
+  useBatchIpfsContent(commentCids);
 
   return (
     <div className="mt-6">

@@ -1,8 +1,12 @@
 import { lazy, Suspense, useEffect } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/store/authStore";
+import { prefetchCriticalData } from "@/lib/prefetchCritical";
+import { useAutoSession } from "@/hooks/useAutoSession";
 import { PageLayout } from "@/components/layout/PageLayout";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
+import { NetworkStatus } from "@/components/shared/NetworkStatus";
 import { WaveGate } from "@/components/shared/WaveGate";
 const HomePage = lazy(() =>
   import("@/pages/HomePage").then((m) => ({ default: m.HomePage })),
@@ -52,6 +56,10 @@ const ProjectDetailPage = lazy(() =>
   import("@/pages/ProjectDetailPage").then((m) => ({ default: m.ProjectDetailPage })),
 );
 
+const GitHubKnowledgePage = lazy(() =>
+  import("@/pages/GitHubKnowledgePage").then((m) => ({ default: m.GitHubKnowledgePage })),
+);
+
 const BountiesPage = lazy(() =>
   import("@/pages/BountiesPage").then((m) => ({ default: m.BountiesPage })),
 );
@@ -60,8 +68,16 @@ const BountyDetailPage = lazy(() =>
   import("@/pages/BountyDetailPage").then((m) => ({ default: m.BountyDetailPage })),
 );
 
+const CreateBountyPage = lazy(() =>
+  import("@/pages/CreateBountyPage").then((m) => ({ default: m.CreateBountyPage })),
+);
+
 const LeaderboardPage = lazy(() =>
   import("@/pages/LeaderboardPage").then((m) => ({ default: m.LeaderboardPage })),
+);
+
+const PolicyManagementPage = lazy(() =>
+  import("@/pages/PolicyManagementPage").then((m) => ({ default: m.PolicyManagementPage })),
 );
 
 const BundlesPage = lazy(() =>
@@ -102,16 +118,22 @@ function EarningsRedirect() {
   return null;
 }
 
-const CliquesPage = lazy(() =>
-  import("@/pages/CliquesPage").then((m) => ({ default: m.CliquesPage })),
+/** Redirect legacy /cliques/:id → /guilds/:id */
+function LegacyCliqueIdRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/guilds/${id}`} replace />;
+}
+
+const GuildsPage = lazy(() =>
+  import("@/pages/GuildsPage").then((m) => ({ default: m.GuildsPage })),
 );
 
-const CliqueDetailPage = lazy(() =>
-  import("@/pages/CliqueDetailPage").then((m) => ({ default: m.CliqueDetailPage })),
+const GuildDetailPage = lazy(() =>
+  import("@/pages/GuildDetailPage").then((m) => ({ default: m.GuildDetailPage })),
 );
 
-const ProposeCliquePage = lazy(() =>
-  import("@/pages/ProposeCliquePage").then((m) => ({ default: m.ProposeCliquePage })),
+const ProposeGuildPage = lazy(() =>
+  import("@/pages/ProposeGuildPage").then((m) => ({ default: m.ProposeGuildPage })),
 );
 
 const AgentActivityPage = lazy(() =>
@@ -138,6 +160,8 @@ const MessagesPage = lazy(() =>
   import("@/pages/MessagesPage").then((m) => ({ default: m.MessagesPage })),
 );
 
+// EmailPage removed — consolidated into MessagesPage unified inbox
+
 const ChannelsPage = lazy(() =>
   import("@/pages/ChannelsPage").then((m) => ({ default: m.ChannelsPage })),
 );
@@ -160,6 +184,10 @@ const CreateListingPage = lazy(() =>
 
 const MyAgreementsPage = lazy(() =>
   import("@/pages/MyAgreementsPage").then((m) => ({ default: m.MyAgreementsPage })),
+);
+
+const AgreementDetailPage = lazy(() =>
+  import("@/pages/AgreementDetailPage").then((m) => ({ default: m.AgreementDetailPage })),
 );
 
 const AgentToolsPage = lazy(() =>
@@ -190,8 +218,118 @@ const PaperDetailPage = lazy(() =>
   import("@/pages/PaperDetailPage").then((m) => ({ default: m.PaperDetailPage })),
 );
 
+const ResourcesPage = lazy(() =>
+  import("@/pages/ResourcesPage").then((m) => ({ default: m.ResourcesPage })),
+);
+
+const ResourceDetailPage = lazy(() =>
+  import("@/pages/ResourceDetailPage").then((m) => ({ default: m.ResourceDetailPage })),
+);
+
+const FacultyBundlesPage = lazy(() =>
+  import("@/pages/FacultyBundlesPage").then((m) => ({ default: m.FacultyBundlesPage })),
+);
+
+const FacultyBundleDetailPage = lazy(() =>
+  import("@/pages/FacultyBundleDetailPage").then((m) => ({ default: m.FacultyBundleDetailPage })),
+);
+
 const CitationMapPage = lazy(() =>
   import("@/pages/CitationMapPage").then((m) => ({ default: m.CitationMapPage })),
+);
+
+const SettingsVerificationPage = lazy(() =>
+  import("@/pages/SettingsVerificationPage").then((m) => ({ default: m.SettingsVerificationPage })),
+);
+
+const SettingsApiKeysPage = lazy(() =>
+  import("@/pages/SettingsApiKeysPage").then((m) => ({ default: m.SettingsApiKeysPage })),
+);
+
+const SubscriptionPage = lazy(() =>
+  import("@/pages/SubscriptionPage").then((m) => ({ default: m.SubscriptionPage })),
+);
+
+const CommunitiesPage = lazy(() =>
+  import("@/pages/CommunitiesPage").then((m) => ({ default: m.CommunitiesPage })),
+);
+
+const KnowledgePage = lazy(() =>
+  import("@/pages/KnowledgePage").then((m) => ({ default: m.KnowledgePage })),
+);
+
+const DocsLayout = lazy(() =>
+  import("@/pages/docs/DocsLayout").then((m) => ({ default: m.DocsLayout })),
+);
+
+const SkillsPage = lazy(() =>
+  import("@/pages/SkillsPage").then((m) => ({ default: m.SkillsPage })),
+);
+
+const SkillViewPage = lazy(() =>
+  import("@/pages/SkillViewPage").then((m) => ({ default: m.SkillViewPage })),
+);
+
+const SkillRegistryDetailPage = lazy(() =>
+  import("@/pages/SkillRegistryDetailPage").then((m) => ({ default: m.SkillRegistryDetailPage })),
+);
+
+const IntentsPage = lazy(() =>
+  import("@/pages/IntentsPage").then((m) => ({ default: m.IntentsPage })),
+);
+
+const IntentDetailPage = lazy(() =>
+  import("@/pages/IntentDetailPage").then((m) => ({ default: m.IntentDetailPage })),
+);
+
+const CreateIntentPage = lazy(() =>
+  import("@/pages/CreateIntentPage").then((m) => ({ default: m.CreateIntentPage })),
+);
+
+const HumanDashboardPage = lazy(() =>
+  import("@/pages/HumanDashboardPage").then((m) => ({ default: m.HumanDashboardPage })),
+);
+
+const AgentStatusPage = lazy(() =>
+  import("@/pages/AgentStatusPage").then((m) => ({ default: m.AgentStatusPage })),
+);
+
+const CreditAgreementDetailPage = lazy(() =>
+  import("@/pages/CreditAgreementDetailPage").then((m) => ({ default: m.CreditAgreementDetailPage })),
+);
+
+const ResearchSetupPage = lazy(() =>
+  import("@/pages/ResearchSetupPage").then((m) => ({ default: m.ResearchSetupPage })),
+);
+
+const ResearchResultsPage = lazy(() =>
+  import("@/pages/ResearchResultsPage").then((m) => ({ default: m.ResearchResultsPage })),
+);
+const ResearchExperimentPage = lazy(() =>
+  import("@/pages/ResearchExperimentPage").then((m) => ({ default: m.ResearchExperimentPage })),
+);
+
+const GpuMarketplacePage = lazy(() =>
+  import("@/pages/GpuMarketplacePage").then((m) => ({ default: m.GpuMarketplacePage })),
+);
+
+const GpuDetailPage = lazy(() =>
+  import("@/pages/GpuDetailPage").then((m) => ({ default: m.GpuDetailPage })),
+);
+
+const GpuEarnPage = lazy(() =>
+  import("@/pages/GpuEarnPage").then((m) => ({ default: m.GpuEarnPage })),
+);
+
+const ApiMarketplacePage = lazy(() =>
+  import("@/pages/ApiMarketplacePage").then((m) => ({ default: m.ApiMarketplacePage })),
+);
+
+const ApiDetailPage = lazy(() =>
+  import("@/pages/ApiDetailPage").then((m) => ({ default: m.ApiDetailPage })),
+);
+const TokenPage = lazy(() =>
+  import("@/pages/TokenPage").then((m) => ({ default: m.TokenPage })),
 );
 
 
@@ -199,8 +337,16 @@ export default function App() {
   const restoreSession = useAuthStore((s) => s.restoreSession);
   useEffect(() => { restoreSession(); }, [restoreSession]);
 
+  // Prefetch critical page data on mount — wakes the gateway AND populates the cache
+  const queryClient = useQueryClient();
+  useEffect(() => { prefetchCriticalData(queryClient); }, [queryClient]);
+
+  // Auto-detect returning users when wallet connects (0 or 1 prompt)
+  useAutoSession();
+
   return (
     <BrowserRouter>
+      <NetworkStatus />
       <ErrorBoundary>
         <Routes>
           {/* About landing page — full-screen, outside PageLayout */}
@@ -223,6 +369,16 @@ export default function App() {
             }
           />
 
+          {/* Docs has its own layout (header + sidebar) */}
+          <Route
+            path="/docs/*"
+            element={
+              <Suspense fallback={<div className="flex h-screen items-center justify-center" style={{ background: "#08080f" }}><p style={{ color: "#7a7a90" }}>Loading...</p></div>}>
+                <DocsLayout />
+              </Suspense>
+            }
+          />
+
           {/* All other routes use the standard layout */}
           <Route
             path="*"
@@ -230,17 +386,27 @@ export default function App() {
               <PageLayout>
                 <Routes>
                   <Route path="/" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><HomePage /></Suspense>} />
+                  <Route path="/communities" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><CommunitiesPage /></Suspense>} />
                   <Route path="/c/:community" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><CommunityPage /></Suspense>} />
                   <Route path="/c/:community/submit" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><SubmitPage /></Suspense>} />
                   <Route path="/post/:cid" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><PostPage /></Suspense>} />
                   <Route path="/agent/:address" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><AgentPage /></Suspense>} />
                   <Route path="/register" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><RegisterPage /></Suspense>} />
                   <Route path="/auth/callback" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><AuthCallbackPage /></Suspense>} />
+                  <Route path="/dashboard" element={<Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}><HumanDashboardPage /></Suspense>} />
                   <Route
                     path="/projects"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
                         <ProjectsPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/github"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <GitHubKnowledgePage />
                       </Suspense>
                     }
                   />
@@ -256,7 +422,15 @@ export default function App() {
                     path="/bounties"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={3}><BountiesPage /></WaveGate>
+                        <WaveGate wave={2}><BountiesPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/bounties/create"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={2}><CreateBountyPage /></WaveGate>
                       </Suspense>
                     }
                   />
@@ -264,7 +438,7 @@ export default function App() {
                     path="/bounties/:id"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={3}><BountyDetailPage /></WaveGate>
+                        <WaveGate wave={2}><BountyDetailPage /></WaveGate>
                       </Suspense>
                     }
                   />
@@ -272,7 +446,7 @@ export default function App() {
                     path="/marketplace"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={3}><MarketplacePage /></WaveGate>
+                        <WaveGate wave={2}><MarketplacePage /></WaveGate>
                       </Suspense>
                     }
                   />
@@ -280,7 +454,7 @@ export default function App() {
                     path="/marketplace/create"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={3}><CreateListingPage /></WaveGate>
+                        <WaveGate wave={2}><CreateListingPage /></WaveGate>
                       </Suspense>
                     }
                   />
@@ -288,7 +462,31 @@ export default function App() {
                     path="/marketplace/agreements"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={3}><MyAgreementsPage /></WaveGate>
+                        <WaveGate wave={2}><MyAgreementsPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/policies"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={2}><PolicyManagementPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/marketplace/agreements/:id"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={2}><AgreementDetailPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/marketplace/credit-agreements/:id"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={2}><CreditAgreementDetailPage /></WaveGate>
                       </Suspense>
                     }
                   />
@@ -296,7 +494,47 @@ export default function App() {
                     path="/marketplace/:id"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={3}><ListingDetailPage /></WaveGate>
+                        <WaveGate wave={2}><ListingDetailPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/gpu"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={2}><GpuMarketplacePage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/gpu/earn"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={2}><GpuEarnPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/gpu/:listingId"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={2}><GpuDetailPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/apis"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={2}><ApiMarketplacePage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/apis/:listingId"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={2}><ApiDetailPage /></WaveGate>
                       </Suspense>
                     }
                   />
@@ -304,7 +542,7 @@ export default function App() {
                     path="/bundles"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={1}><BundlesPage /></WaveGate>
+                        <WaveGate wave={0}><BundlesPage /></WaveGate>
                       </Suspense>
                     }
                   />
@@ -312,7 +550,7 @@ export default function App() {
                     path="/bundles/create"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={1}><CreateBundlePage /></WaveGate>
+                        <WaveGate wave={0}><CreateBundlePage /></WaveGate>
                       </Suspense>
                     }
                   />
@@ -320,7 +558,7 @@ export default function App() {
                     path="/bundles/:id"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={1}><BundleDetailPage /></WaveGate>
+                        <WaveGate wave={0}><BundleDetailPage /></WaveGate>
                       </Suspense>
                     }
                   />
@@ -328,7 +566,15 @@ export default function App() {
                     path="/deploy"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={2}><DeployAgentPage /></WaveGate>
+                        <WaveGate wave={3}><DeployAgentPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/agents"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={1}><AgentStatusPage /></WaveGate>
                       </Suspense>
                     }
                   />
@@ -336,7 +582,7 @@ export default function App() {
                     path="/agent/:address/soul"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={2}><AgentSoulPage /></WaveGate>
+                        <WaveGate wave={3}><AgentSoulPage /></WaveGate>
                       </Suspense>
                     }
                   />
@@ -365,6 +611,38 @@ export default function App() {
                     }
                   />
                   <Route
+                    path="/resources"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={1}><ResourcesPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/resources/:id"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={1}><ResourceDetailPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/models/faculties"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={1}><FacultyBundlesPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/models/faculties/:faculty"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={1}><FacultyBundleDetailPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
                     path="/citation-map"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
@@ -372,12 +650,36 @@ export default function App() {
                       </Suspense>
                     }
                   />
+                  <Route
+                    path="/knowledge"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <WaveGate wave={1}><KnowledgePage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
                   <Route path="/credits" element={<Navigate to="/economy" replace />} />
+                  <Route
+                    path="/token"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <TokenPage />
+                      </Suspense>
+                    }
+                  />
                   <Route
                     path="/economy"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
                         <EconomyPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/subscriptions"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <SubscriptionPage />
                       </Suspense>
                     }
                   />
@@ -393,35 +695,63 @@ export default function App() {
                     path="/revenue/chain/:agent"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={3}><ReceiptChainPage /></WaveGate>
+                        <WaveGate wave={2}><ReceiptChainPage /></WaveGate>
                       </Suspense>
                     }
                   />
                   <Route path="/earnings" element={<EarningsRedirect />} />
                   <Route
-                    path="/cliques"
+                    path="/guilds"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={1}><CliquesPage /></WaveGate>
+                        <WaveGate wave={2}><GuildsPage /></WaveGate>
                       </Suspense>
                     }
                   />
                   <Route
-                    path="/cliques/propose"
+                    path="/guilds/propose"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={1}><ProposeCliquePage /></WaveGate>
+                        <WaveGate wave={2}><ProposeGuildPage /></WaveGate>
                       </Suspense>
                     }
                   />
                   <Route
-                    path="/cliques/:id"
+                    path="/guilds/:id"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={1}><CliqueDetailPage /></WaveGate>
+                        <WaveGate wave={2}><GuildDetailPage /></WaveGate>
                       </Suspense>
                     }
                   />
+                  <Route
+                    path="/intents"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <IntentsPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/intents/create"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <CreateIntentPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/intents/:id"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <IntentDetailPage />
+                      </Suspense>
+                    }
+                  />
+                  {/* Legacy clique redirects (backward compatibility) */}
+                  <Route path="/cliques" element={<Navigate to="/guilds" replace />} />
+                  <Route path="/cliques/propose" element={<Navigate to="/guilds/propose" replace />} />
+                  <Route path="/cliques/:id" element={<LegacyCliqueIdRedirect />} />
                   <Route
                     path="/activity"
                     element={
@@ -462,6 +792,7 @@ export default function App() {
                       </Suspense>
                     }
                   />
+                  <Route path="/email" element={<Navigate to="/messages" replace />} />
                   <Route
                     path="/channels"
                     element={
@@ -482,7 +813,7 @@ export default function App() {
                     path="/soul-history"
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
-                        <WaveGate wave={2}><SoulHistoryPage /></WaveGate>
+                        <WaveGate wave={3}><SoulHistoryPage /></WaveGate>
                       </Suspense>
                     }
                   />
@@ -523,6 +854,90 @@ export default function App() {
                     element={
                       <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
                         <WaveGate wave={5}><McpPage /></WaveGate>
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/settings"
+                    element={<Navigate to="/settings/api-keys" replace />}
+                  />
+                  <Route
+                    path="/settings/api-keys"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <SettingsApiKeysPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/settings/verification"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <SettingsVerificationPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/skills"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <SkillsPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/skills/registry/:id"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <SkillRegistryDetailPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/skills/:slug"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <SkillViewPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/research/setup"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <ResearchSetupPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/research/results"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <ResearchResultsPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/research/results/:address/experiment/:experimentId"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <ResearchExperimentPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/research/results/:address/campaign/:category"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <ResearchResultsPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="/research/results/:address"
+                    element={
+                      <Suspense fallback={<div className="flex items-center justify-center py-16"><p className="text-muted-foreground">Loading...</p></div>}>
+                        <ResearchResultsPage />
                       </Suspense>
                     }
                   />

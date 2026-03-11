@@ -10,8 +10,10 @@ import type {
   GraphEdge,
   GraphLayer,
   AgentNode,
+  AttestationEdge,
   CommunityNode,
 } from "@/lib/graphTypes";
+import { trustLayerRadius } from "@/lib/graphTypes";
 import { GraphLegend } from "./GraphLegend";
 import { NodeTooltip } from "./NodeTooltip";
 import { EdgeTooltip } from "./EdgeTooltip";
@@ -22,6 +24,37 @@ import { getAvatarImage, clearAvatarCache } from "@/components/avatar/AvatarCanv
 import { useUIStore } from "@/store/uiStore";
 
 import { HUMAN_COLOR } from "@/lib/graphTypes";
+
+// ---------------------------------------------------------------------------
+//  Gradient glow cache — pre-rendered glow bitmaps keyed by "color-radius".
+//  Avoids calling ctx.createRadialGradient() per node per frame.
+// ---------------------------------------------------------------------------
+const glowCache = new Map<string, HTMLCanvasElement>();
+
+function getGlowBitmap(color: string, r: number): HTMLCanvasElement {
+  const rr = Math.round(r);
+  const key = `${color}-${rr}`;
+  const existing = glowCache.get(key);
+  if (existing) return existing;
+
+  const size = Math.ceil(rr * 4);
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const cx = size / 2;
+  const cy = size / 2;
+  const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr * 2);
+  glow.addColorStop(0, color + "30");
+  glow.addColorStop(1, color + "00");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(cx, cy, rr * 2, 0, 2 * Math.PI);
+  ctx.fill();
+
+  glowCache.set(key, canvas);
+  return canvas;
+}
 
 // Brand kit colors
 const AGENT_COLOR = "#6DB874";       // Emerald
@@ -45,11 +78,13 @@ interface Props {
   isLoading?: boolean;
   error?: Error | null;
   refetch?: () => void;
-  /** When set, only show nodes/edges with timestamps <= this value (timeline playback). */
-  maxTimestamp?: number;
+  /** Shared mutable ref holding the timeline cursor (written by GraphTimeline, read in paint callbacks). */
+  timelineCursorRef?: React.RefObject<number>;
+  /** Whether the timeline is actively filtering the graph. */
+  isTimelineActive?: boolean;
 }
 
-export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = false, error = null, refetch, maxTimestamp }: Props) {
+export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = false, error = null, refetch, timelineCursorRef, isTimelineActive = false }: Props) {
   const { trendingSet } = useTrendingCommunities();
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -57,7 +92,7 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
   const theme = useUIStore((s) => s.theme);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<ForceGraphMethods<any, any>>(undefined);
-  const [dimensions, setDimensions] = useState({ width: 800, height: 480 });
+  const [dimensions, setDimensions] = useState({ width: 800, height: 400 });
   const [hoverNode, setHoverNode] = useState<{
     node: GraphNode;
     x: number;
@@ -82,7 +117,7 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
       const entry = entries[0];
       if (!entry) return;
       const w = entry.contentRect.width;
-      setDimensions({ width: w, height: Math.min(w * 0.6, 600) });
+      setDimensions({ width: w, height: entry.contentRect.height || Math.min(w * 0.5, 420) });
     });
 
     observer.observe(el);
@@ -146,9 +181,30 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
     return () => clearTimeout(timeout);
   }, [data]);
 
-  // Clean up avatar canvas cache on unmount
+  // Re-center when layer changes — link reduction scatters nodes outside the viewport
+  const prevLayerRef = useRef(layer);
   useEffect(() => {
-    return () => clearAvatarCache();
+    if (layer === prevLayerRef.current) return;
+    prevLayerRef.current = layer;
+    if (!data || data.nodes.length === 0) return;
+
+    // Reheat so the simulation runs with the new link set
+    fgRef.current?.d3ReheatSimulation?.();
+
+    // Zoom to fit after the simulation settles a bit
+    const timeout = setTimeout(() => {
+      fgRef.current?.zoomToFit(400, 40);
+    }, 600);
+    return () => clearTimeout(timeout);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layer, data]);
+
+  // Clean up avatar + glow caches on unmount
+  useEffect(() => {
+    return () => {
+      clearAvatarCache();
+      glowCache.clear();
+    };
   }, []);
 
   // Zoom controls
@@ -170,12 +226,54 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
     (fg as any).zoom?.(currentZoom / 1.4, 300);
   }, []);
 
-  // Graph data in the format ForceGraph2D expects
+  // Viewport bounds for edge culling — updated on zoom/pan via onZoomEnd
+  const viewportRef = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+
+  const handleZoomPan = useCallback(() => {
+    const fg = fgRef.current;
+    if (!fg) return;
+    const topLeft = fg.screen2GraphCoords(0, 0);
+    const bottomRight = fg.screen2GraphCoords(dimensions.width, dimensions.height);
+    // 10% margin so edges don't pop in/out at viewport boundary
+    const mx = (bottomRight.x - topLeft.x) * 0.1;
+    const my = (bottomRight.y - topLeft.y) * 0.1;
+    viewportRef.current = {
+      x1: topLeft.x - mx,
+      y1: topLeft.y - my,
+      x2: bottomRight.x + mx,
+      y2: bottomRight.y + my,
+    };
+  }, [dimensions]);
+
+  // --- Timeline ---
+  // The cursor lives in a shared ref (written by GraphTimeline at 60 fps).
+  // Paint callbacks read it directly — zero React re-renders during playback.
+  // isTimelineActive is also stored in a ref so stable callbacks ([] deps) read the latest value.
+  const timelineActiveRef = useRef(isTimelineActive);
+  timelineActiveRef.current = isTimelineActive;
+  const tsRangeRef = useRef<{ min: number; max: number }>({ min: 0, max: Math.floor(Date.now() / 1000) });
+
+  useEffect(() => {
+    if (data?.timestampRange) tsRangeRef.current = data.timestampRange;
+  }, [data]);
+
+  // When timeline activates, reheat simulation to restart the canvas render loop.
+  // Without this, the loop may have stopped (cooled down) and autoPauseRedraw=false
+  // alone won't restart it.
+  useEffect(() => {
+    if (isTimelineActive) {
+      fgRef.current?.d3ReheatSimulation?.();
+    }
+  }, [isTimelineActive]);
+
+  // Graph data in the format ForceGraph2D expects.
+  // Timeline filtering is NOT done here — it's handled in paint/visibility callbacks
+  // via refs, so graphInput stays stable during playback (no flicker).
   const graphInput = useMemo(() => {
     if (!data) return { nodes: [], links: [] };
 
     // Filter edges by layer
-    let filteredLinks = data.links.filter((l) => {
+    const filteredLinks = data.links.filter((l) => {
       if (layer === "trust") return l.type === "attestation";
       if (layer === "expertise") return l.type === "participation";
       if (layer === "activity") return true; // show all including voting
@@ -184,37 +282,15 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
     });
 
     // In trust layer, hide community nodes (only agents + attestations)
-    let filteredNodes = layer === "trust"
+    const filteredNodes = layer === "trust"
       ? data.nodes.filter((n) => n.type === "agent")
       : data.nodes;
-
-    // Timeline filtering: only show nodes/edges up to the playback cursor
-    if (maxTimestamp != null) {
-      const visibleNodeIds = new Set<string>();
-      filteredNodes = filteredNodes.filter((n) => {
-        if (n.type === "community") {
-          visibleNodeIds.add(n.id);
-          return true;
-        }
-        const visible = n.registeredAt <= maxTimestamp;
-        if (visible) visibleNodeIds.add(n.id);
-        return visible;
-      });
-
-      filteredLinks = filteredLinks.filter((l) => {
-        const srcId = typeof l.source === "string" ? l.source : (l.source as { id: string }).id;
-        const tgtId = typeof l.target === "string" ? l.target : (l.target as { id: string }).id;
-        if (!visibleNodeIds.has(srcId) || !visibleNodeIds.has(tgtId)) return false;
-        if (l.type === "attestation") return l.timestamp <= maxTimestamp;
-        return true;
-      });
-    }
 
     return {
       nodes: filteredNodes.map((n) => ({ ...n })),
       links: filteredLinks.map((l) => ({ ...l })),
     };
-  }, [data, layer, maxTimestamp]);
+  }, [data, layer]);
 
   // Living graph: ambient drift + mouse attraction force
   // Uses a mutable ref so the force reads latest nodes without being destroyed/recreated.
@@ -276,6 +352,10 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
 
   // --- Layer-aware paint ---
 
+  // Stable callback ref — avoids new function reference every render which would
+  // trigger force-graph internal updates during the 60fps timeline rAF loop.
+  const canvasObjMode = useCallback(() => "replace" as const, []);
+
   const getNodeColor = useCallback(
     (node: FGNode): string => {
       if (node.type === "community") return COMMUNITY_COLOR;
@@ -289,6 +369,7 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
             ? (agentNode.primaryCommunityColor ?? HUMAN_COLOR)
             : (agentNode.primaryCommunityColor ?? AGENT_COLOR);
         case "trust":
+          return agentNode.genreColor;
         case "activity":
         default:
           return isHuman ? HUMAN_COLOR : AGENT_COLOR;
@@ -299,17 +380,34 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
 
   const getNodeOpacity = useCallback(
     (node: FGNode): number => {
-      if (node.type === "community") return 1;
-
-      const agentNode = node as NodeObject<AgentNode>;
-      switch (layer) {
-        case "trust":
-          return 0.25 + (agentNode.reputationScore / 100) * 0.75;
-        case "activity":
-          return 0.25 + Math.min(agentNode.postCount / 30, 1) * 0.75;
-        default:
-          return 1;
+      let baseOpacity = 1;
+      if (node.type !== "community") {
+        const agentNode = node as NodeObject<AgentNode>;
+        switch (layer) {
+          case "trust":
+            baseOpacity = 0.25 + (agentNode.reputationScore / 100) * 0.75;
+            break;
+          case "activity":
+            baseOpacity = 0.25 + Math.min(agentNode.postCount / 30, 1) * 0.75;
+            break;
+        }
       }
+
+      // Timeline fade-in — reads directly from the shared cursor ref (no React state involved)
+      const ts = timelineActiveRef.current ? timelineCursorRef?.current : undefined;
+      if (ts != null) {
+        const appearsAt = node.type === "agent"
+          ? (node as NodeObject<AgentNode>).registeredAt
+          : (node as NodeObject<CommunityNode>).appearsAt;
+        if (appearsAt > ts) return 0; // future node → invisible
+        const range = tsRangeRef.current;
+        const fadeWindow = Math.max((range.max - range.min) * 0.04, 3600);
+        const age = ts - appearsAt;
+        const fadeOpacity = age >= fadeWindow ? 1 : Math.max(0.08, age / fadeWindow);
+        return baseOpacity * fadeOpacity;
+      }
+
+      return baseOpacity;
     },
     [layer],
   );
@@ -318,7 +416,11 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
     (node: FGNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const x = node.x ?? 0;
       const y = node.y ?? 0;
-      const r = node.radius ?? 6;
+      const baseR = node.radius ?? 6;
+      // Trust layer: wider radius range (5-24px) based on reputation
+      const r = layer === "trust" && node.type === "agent"
+        ? trustLayerRadius((node as NodeObject<AgentNode>).reputationScore)
+        : baseR;
       const color = getNodeColor(node);
       const opacity = getNodeOpacity(node);
 
@@ -330,15 +432,10 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
         ctx.fill();
       }
 
-      // Glow halo — radial gradient around each node (matches mockup particle sim)
+      // Glow halo — pre-rendered bitmap stamp (cached by color + radius)
       ctx.globalAlpha = opacity * 0.4;
-      const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 2);
-      glow.addColorStop(0, color + "30");
-      glow.addColorStop(1, color + "00");
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(x, y, r * 2, 0, 2 * Math.PI);
-      ctx.fill();
+      const glowBitmap = getGlowBitmap(color, r);
+      ctx.drawImage(glowBitmap, x - glowBitmap.width / 2, y - glowBitmap.height / 2);
       ctx.globalAlpha = 1;
 
       // Attempt to render procedural avatar for agent nodes
@@ -346,8 +443,7 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
       if (node.type === "agent") {
         const agentAddr = (node as NodeObject<AgentNode>).address;
         const imgSize = Math.round(r * 2);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const onReady = () => { (fgRef.current as any)?.refresh?.(); };
+        const onReady = () => { fgRef.current?.d3ReheatSimulation?.(); };
         const img = getAvatarImage(agentAddr, imgSize, onReady);
         if (img) {
           ctx.save();
@@ -389,7 +485,7 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
         }
       }
     },
-    [hoverNode, getNodeColor, getNodeOpacity, trendingSet],
+    [hoverNode, getNodeColor, getNodeOpacity, trendingSet, layer],
   );
 
   // Pointer area for hit detection
@@ -473,7 +569,7 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
       if (link.type === "voting") return VOTING_COLOR;
       if (link.type === "attestation") {
         if (layer === "trust") {
-          const opacity = 0.2 + link.weight * 0.6;
+          const opacity = 0.15 + (link as AttestationEdge).relevance * 0.65;
           return `rgba(109, 184, 116, ${opacity})`;
         }
         return ATTESTATION_COLOR;
@@ -490,7 +586,7 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
       }
       if (link.type === "voting") return 0.4 + link.weight * 1.5;
       if (link.type === "attestation") {
-        if (layer === "trust") return 0.6 + link.weight * 2;
+        if (layer === "trust") return 0.4 + (link as AttestationEdge).relevance * 2.5;
         return 1.2;
       }
       return 0.6;
@@ -506,10 +602,45 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
     [],
   );
 
-  // Auto-retry on error every 30 seconds
+  // Link visibility — timeline filtering + viewport edge culling.
+  // Reads from shared refs so this callback is stable (no React state deps).
+  const linkVisible = useCallback(
+    (link: FGLink) => {
+      // Timeline filtering
+      const ts = timelineActiveRef.current ? timelineCursorRef?.current : undefined;
+      if (ts != null) {
+        const src = link.source as FGNode;
+        const tgt = link.target as FGNode;
+        const srcAt = src.type === "agent" ? (src as NodeObject<AgentNode>).registeredAt : (src as NodeObject<CommunityNode>).appearsAt;
+        const tgtAt = tgt.type === "agent" ? (tgt as NodeObject<AgentNode>).registeredAt : (tgt as NodeObject<CommunityNode>).appearsAt;
+        if (srcAt > ts || tgtAt > ts) return false;
+
+        const edge = link as unknown as GraphEdge;
+        if (edge.type === "attestation" && edge.timestamp > ts) return false;
+      }
+
+      // Viewport culling — skip edges where BOTH endpoints are outside the same side
+      const vp = viewportRef.current;
+      if (vp) {
+        const src = link.source as FGNode;
+        const tgt = link.target as FGNode;
+        const sx = src.x ?? 0, sy = src.y ?? 0;
+        const tx = tgt.x ?? 0, ty = tgt.y ?? 0;
+        if ((sx < vp.x1 && tx < vp.x1) || (sx > vp.x2 && tx > vp.x2) ||
+            (sy < vp.y1 && ty < vp.y1) || (sy > vp.y2 && ty > vp.y2)) {
+          return false;
+        }
+      }
+
+      return true;
+    },
+    [],
+  );
+
+  // Auto-retry on error every 2 minutes
   useEffect(() => {
     if (!error || !refetch) return;
-    const timer = setTimeout(() => refetch(), 30_000);
+    const timer = setTimeout(() => refetch(), 120_000);
     return () => clearTimeout(timer);
   }, [error, refetch]);
 
@@ -543,7 +674,7 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
   }
 
   return (
-    <div ref={containerRef} className="relative w-full rounded-xl border border-border overflow-hidden">
+    <div ref={containerRef} className="relative w-full h-full overflow-hidden">
       <ForceGraph2D
         ref={fgRef}
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -552,7 +683,7 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
         height={dimensions.height}
         backgroundColor={bgColor}
         nodeCanvasObject={paintNode}
-        nodeCanvasObjectMode={() => "replace"}
+        nodeCanvasObjectMode={canvasObjMode}
         nodePointerAreaPaint={paintPointerArea}
         onNodeClick={handleNodeClick}
         onNodeHover={handleNodeHover}
@@ -560,6 +691,7 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
         linkColor={linkColor}
         linkWidth={linkWidth}
         linkLineDash={linkLineDash}
+        linkVisibility={linkVisible}
         warmupTicks={50}
         cooldownTicks={200}
         d3AlphaDecay={0.02}
@@ -567,9 +699,11 @@ export function KnowledgeGraph({ layer = "full", graphData: data, isLoading = fa
         enableNodeDrag={true}
         enableZoomInteraction={true}
         enablePanInteraction={true}
+        onZoomEnd={handleZoomPan}
+        autoPauseRedraw={!isTimelineActive}
       />
 
-      <GraphLegend layer={layer} />
+      <GraphLegend layer={layer} communities={data?.allCommunities} graphData={data} />
 
       {/* Zoom +/- controls */}
       <div className="absolute bottom-3 right-3 flex flex-col overflow-hidden rounded-lg border border-border">

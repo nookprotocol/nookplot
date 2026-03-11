@@ -1,33 +1,15 @@
 import { useMemo } from "react";
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useGatewayQuery } from "./useGatewayQuery";
 
-interface DaySnapshot {
-  community: { id: string };
-  dayTimestamp: string;
-  postsInPeriod: number;
-  votesInPeriod: number;
+/** Shape returned by GET /v1/index/communities/trending?days=14 */
+interface IndexTrendingResponse {
+  snapshots: Array<{
+    community_id: string;
+    day_timestamp: string;
+    posts_in_period: number;
+    votes_in_period: number;
+  }>;
 }
-
-interface QueryResult {
-  communityDaySnapshots: DaySnapshot[];
-}
-
-/** Query last 14 days of community snapshots. */
-const QUERY = `
-  query TrendingCommunities($since: BigInt!) {
-    communityDaySnapshots(
-      where: { dayTimestamp_gte: $since }
-      first: 1000
-      orderBy: dayTimestamp
-      orderDirection: desc
-    ) {
-      community { id }
-      dayTimestamp
-      postsInPeriod
-      votesInPeriod
-    }
-  }
-`;
 
 export interface TrendingCommunityResult {
   community: string;
@@ -42,30 +24,28 @@ export interface TrendingCommunityResult {
  */
 export function useTrendingCommunities() {
   const now = Math.floor(Date.now() / 1000);
-  const fourteenDaysAgo = now - 14 * 86400;
   const sevenDaysAgo = now - 7 * 86400;
 
-  const { data, isLoading, error } = useSubgraphQuery<QueryResult>(
-    ["trending", String(Math.floor(fourteenDaysAgo / 86400))],
-    QUERY,
-    { since: String(fourteenDaysAgo) },
+  const { data, isLoading, error } = useGatewayQuery<IndexTrendingResponse>(
+    ["trending", String(Math.floor((now - 14 * 86400) / 86400))],
+    "/v1/index/communities/trending?days=14",
     { staleTime: 300_000 },  // 5 min — trending is a slow-moving metric
   );
 
   const trending = useMemo(() => {
-    if (!data?.communityDaySnapshots) return [];
+    if (!data?.snapshots) return [];
 
     const currentMap = new Map<string, number>();
     const previousMap = new Map<string, number>();
 
-    for (const snap of data.communityDaySnapshots) {
-      const ts = parseInt(snap.dayTimestamp);
-      const id = snap.community.id;
+    for (const snap of data.snapshots) {
+      const ts = parseInt(snap.day_timestamp);
+      const id = snap.community_id;
 
       if (ts >= sevenDaysAgo) {
-        currentMap.set(id, (currentMap.get(id) ?? 0) + snap.postsInPeriod);
+        currentMap.set(id, (currentMap.get(id) ?? 0) + snap.posts_in_period);
       } else {
-        previousMap.set(id, (previousMap.get(id) ?? 0) + snap.postsInPeriod);
+        previousMap.set(id, (previousMap.get(id) ?? 0) + snap.posts_in_period);
       }
     }
 

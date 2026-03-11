@@ -15,6 +15,8 @@ export const GENRE_COLORS: Record<string, string> = {
   "q-fin": "#E8A87C", // Peach
   eess: "#95B8D1",   // Pale blue
   econ: "#D4A373",   // Sand
+  bundle: "#E8B84B", // Gold — knowledge bundles
+  content: "#7C9CBF", // Slate blue — bundle content items
 };
 
 export const GENRE_FALLBACK = "#9A9890"; // fg-dim

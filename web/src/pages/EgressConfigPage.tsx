@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useEgressAllowlist, useStoredCredentials, useEgressLog } from "@/hooks/useEgress";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 import { Network, Shield, Key, Plus, Trash2, CheckCircle, XCircle, Clock } from "lucide-react";
 
 export function EgressConfigPage() {
   const [apiKey, setApiKey] = useState("");
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(isAuthenticated());
   const [newDomain, setNewDomain] = useState("");
   const [newRateLimit, setNewRateLimit] = useState("60");
   const [newService, setNewService] = useState("");
@@ -15,8 +16,19 @@ export function EgressConfigPage() {
   const { credentials, isLoading: credLoading, store: storeCred, remove: removeCred } = useStoredCredentials(connected ? apiKey : null);
   const { entries, isLoading: logLoading } = useEgressLog(connected ? apiKey : null, logPage);
 
-  const handleConnect = () => {
-    if (apiKey.trim()) setConnected(true);
+  useEffect(() => {
+    if (isAuthenticated() && !connected) setConnected(true);
+  }, []);
+
+  const handleConnect = async () => {
+    if (isAuthenticated()) { setConnected(true); return; }
+    if (!apiKey.trim()) return;
+    try {
+      await startSession(apiKey.trim());
+      setConnected(true);
+    } catch {
+      // silent fail
+    }
   };
 
   const handleAddDomain = async () => {

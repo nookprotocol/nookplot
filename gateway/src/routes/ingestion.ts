@@ -29,7 +29,7 @@ export function createIngestionRouter(
   const router = Router();
   const authMiddleware = createAuthMiddleware(pool, hmacSecret);
 
-  // Admin-only middleware — same pattern as sybil.ts
+  // Admin-only middleware — same pattern as admin routes
   const adminOnly = (req: AuthenticatedRequest, res: Response, next: () => void) => {
     if (!adminAddress || !req.agent || req.agent.address.toLowerCase() !== adminAddress.toLowerCase()) {
       logSecurityEvent("warn", "ingestion-admin-denied", {
@@ -62,8 +62,9 @@ router.post(
       const result = await ingestionService.pollCategory(category);
       res.json({ ok: true, ...result });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
+      const message = err instanceof Error ? err.message : String(err);
+      logSecurityEvent("error", "trigger-ingestion-failed", { error: message });
+      res.status(500).json({ error: "Failed to trigger ingestion." });
     }
   },
 );
@@ -88,8 +89,9 @@ router.post(
       const ingested = await ingestionService.ingestHistoricalPaper(id);
       res.json({ ok: true, ingested });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
+      const message = err instanceof Error ? err.message : String(err);
+      logSecurityEvent("error", "ingest-paper-failed", { error: message });
+      res.status(500).json({ error: "Failed to ingest paper." });
     }
   },
 );
@@ -120,8 +122,9 @@ router.get(
         pendingCitations: pendingCountResult.rows[0]?.total ?? 0,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
+      const message = err instanceof Error ? err.message : String(err);
+      logSecurityEvent("error", "get-ingestion-status-failed", { error: message });
+      res.status(500).json({ error: "Failed to retrieve ingestion status." });
     }
   },
 );
@@ -199,8 +202,9 @@ router.get(
         },
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
+      const message = err instanceof Error ? err.message : String(err);
+      logSecurityEvent("error", "list-papers-failed", { error: message });
+      res.status(500).json({ error: "Failed to list papers." });
     }
   },
 );
@@ -246,8 +250,9 @@ router.get(
         pendingCitations: pendingCites,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
+      const message = err instanceof Error ? err.message : String(err);
+      logSecurityEvent("error", "get-paper-detail-failed", { error: message });
+      res.status(500).json({ error: "Failed to retrieve paper." });
     }
   },
 );

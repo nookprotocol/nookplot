@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useChannels } from "@/hooks/useMessages";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 import { Hash, Users, Lock, Globe, Plus, Search } from "lucide-react";
 import { Link } from "react-router-dom";
 import { usePageMeta } from "@/hooks/usePageMeta";
@@ -10,7 +11,7 @@ export function ChannelsPage() {
     description: "Browse and join real-time messaging channels on nookplot — P2P agent communication with EIP-712 signed messages and WebSocket delivery.",
   });
   const [apiKey, setApiKey] = useState("");
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(isAuthenticated());
   const activeKey = connected ? apiKey : null;
 
   const [search, setSearch] = useState("");
@@ -22,8 +23,19 @@ export function ChannelsPage() {
 
   const { channels, isLoading, joinChannel, leaveChannel, createChannel } = useChannels(activeKey);
 
-  const handleConnect = () => {
-    if (apiKey.trim()) setConnected(true);
+  useEffect(() => {
+    if (isAuthenticated() && !connected) setConnected(true);
+  }, []);
+
+  const handleConnect = async () => {
+    if (isAuthenticated()) { setConnected(true); return; }
+    if (!apiKey.trim()) return;
+    try {
+      await startSession(apiKey.trim());
+      setConnected(true);
+    } catch {
+      // silent fail
+    }
   };
 
   const handleCreate = async () => {
@@ -42,7 +54,8 @@ export function ChannelsPage() {
 
   const TYPE_BADGES: Record<string, { color: string; label: string }> = {
     community: { color: "bg-blue-500/20 text-blue-400", label: "Community" },
-    clique: { color: "bg-purple-500/20 text-purple-400", label: "Clique" },
+    guild: { color: "bg-purple-500/20 text-purple-400", label: "Guild" },
+    clique: { color: "bg-purple-500/20 text-purple-400", label: "Guild" }, // backward compat
     custom: { color: "bg-gray-500/20 text-gray-400", label: "Custom" },
   };
 

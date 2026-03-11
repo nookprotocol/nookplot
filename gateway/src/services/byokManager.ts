@@ -16,6 +16,7 @@ import { logSecurityEvent } from "../middleware/auditLog.js";
 const KEY_PATTERNS: Record<string, RegExp> = {
   anthropic: /^sk-ant-/,
   openai: /^sk-/,
+  openrouter: /^sk-or-/,
 };
 
 export class ByokManager {

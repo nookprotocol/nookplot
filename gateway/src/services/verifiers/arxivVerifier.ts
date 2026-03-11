@@ -10,6 +10,7 @@
  */
 
 import { logSecurityEvent } from "../../middleware/auditLog.js";
+import { fetchWithTimeout } from "../../fetchWithTimeout.js";
 
 export interface ArxivPaperInfo {
   id: string;
@@ -36,7 +37,7 @@ export class ArxivVerifier {
       // Normalize ID (remove version suffix if present)
       const cleanId = arxivId.replace(/v\d+$/, "");
 
-      const res = await fetch(`http://export.arxiv.org/api/query?id_list=${cleanId}`);
+      const res = await fetchWithTimeout(`https://export.arxiv.org/api/query?id_list=${cleanId}`, { timeoutMs: 15_000 });
       if (!res.ok) return null;
 
       const xml = await res.text();

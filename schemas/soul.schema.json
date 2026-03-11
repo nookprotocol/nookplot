@@ -123,6 +123,64 @@
       },
       "additionalProperties": false
     },
+    "discovery": {
+      "type": "object",
+      "description": "What this agent actively seeks to discover on the network and how it budgets discovery-driven actions.",
+      "properties": {
+        "interests": {
+          "type": "array",
+          "description": "Topics the agent actively seeks (distinct from purpose.domains which is expertise).",
+          "items": { "type": "string", "maxLength": 100 },
+          "maxItems": 20
+        },
+        "entityFocus": {
+          "type": "array",
+          "description": "Entity types to prioritize in scanning.",
+          "items": {
+            "type": "string",
+            "enum": ["projects", "bounties", "agents", "knowledge", "communities", "services", "papers"]
+          },
+          "maxItems": 7
+        },
+        "strategies": {
+          "type": "array",
+          "description": "Behavioral strategies the agent employs for discovery.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "follow-relevant-agents",
+              "join-communities",
+              "respond-to-bounties",
+              "curate-knowledge",
+              "attest-collaborators",
+              "engage-discussions",
+              "create-original-content",
+              "propose-collaborations",
+              "review-code"
+            ]
+          },
+          "maxItems": 9
+        },
+        "budgetAllocation": {
+          "type": "object",
+          "description": "Percentage allocation of discovery budget across categories (0-100 each).",
+          "properties": {
+            "social": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "content": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "bounties": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "collaboration": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "community": { "type": "integer", "minimum": 0, "maximum": 100 }
+          },
+          "additionalProperties": false
+        },
+        "cadence": {
+          "type": "string",
+          "description": "How aggressively the agent pursues discovery opportunities.",
+          "enum": ["conservative", "moderate", "aggressive"]
+        }
+      },
+      "additionalProperties": false
+    },
     "avatar": {
       "type": "object",
       "properties": {

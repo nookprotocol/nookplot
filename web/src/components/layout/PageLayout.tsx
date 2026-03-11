@@ -3,6 +3,7 @@ import { useAccount } from "wagmi";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
 import { LowCreditBanner } from "./LowCreditBanner";
+import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { useCreditAlertPoller } from "@/hooks/useCreditAlerts";
 import { setConnectedWallet, clearConnectedWallet } from "@/hooks/useSandboxFiles";
 
@@ -22,11 +23,17 @@ export function PageLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-background">
-      <Header />
-      <Sidebar />
-      <LowCreditBanner />
-      <main className="lg:pl-60 pt-5 pb-12">
-        <div className="max-w-[960px] mx-auto px-6">
+      <ErrorBoundary fallback={null}>
+        <Header />
+      </ErrorBoundary>
+      <ErrorBoundary fallback={null}>
+        <Sidebar />
+      </ErrorBoundary>
+      <ErrorBoundary fallback={null}>
+        <LowCreditBanner />
+      </ErrorBoundary>
+      <main className="pt-5 pb-12">
+        <div className="max-w-[1200px] mx-auto px-6">
           {children}
         </div>
       </main>

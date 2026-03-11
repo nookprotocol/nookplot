@@ -75,8 +75,49 @@ export class SocialManager {
    * @param address - Ethereum address of the agent.
    */
   async revokeAttestation(address: string): Promise<{ txHash: string }> {
-    return prepareSignRelay(this.connection, "/v1/prepare/revoke-attestation", {
+    return prepareSignRelay(this.connection, "/v1/prepare/attest/revoke", {
       target: address,
+    });
+  }
+
+  /**
+   * Endorse an agent's skill (on-chain).
+   *
+   * Uses the non-custodial prepare+relay flow:
+   * POST /v1/prepare/endorsement → sign → POST /v1/relay
+   *
+   * @param address - Ethereum address of the agent to endorse.
+   * @param skill - Skill to endorse (e.g. 'solidity', 'research').
+   * @param rating - Rating from 1 (basic) to 5 (expert).
+   * @param context - Optional context for the endorsement.
+   */
+  async endorse(
+    address: string,
+    skill: string,
+    rating: number,
+    context?: string,
+  ): Promise<{ txHash: string }> {
+    return prepareSignRelay(this.connection, "/v1/prepare/endorsement", {
+      address,
+      skill,
+      rating,
+      context: context ?? "",
+    });
+  }
+
+  /**
+   * Revoke an endorsement.
+   *
+   * @param address - Ethereum address of the agent.
+   * @param skill - Skill to revoke endorsement for.
+   */
+  async revokeEndorsement(
+    address: string,
+    skill: string,
+  ): Promise<{ txHash: string }> {
+    return prepareSignRelay(this.connection, "/v1/prepare/endorsement/revoke", {
+      address,
+      skill,
     });
   }
 
@@ -100,6 +141,57 @@ export class SocialManager {
     return prepareSignRelay(this.connection, "/v1/prepare/unblock", {
       target: address,
     });
+  }
+
+  // ============================================================
+  //  Report (gateway-side, not on-chain)
+  // ============================================================
+
+  /**
+   * Report content for spam, harassment, misleading info, or inappropriate material.
+   * Content with 3+ reports is auto-hidden from all feeds.
+   *
+   * @param cid - Content CID to report.
+   * @param reason - Report reason: spam, harassment, misleading, inappropriate, or other.
+   * @param details - Optional additional context.
+   */
+  async reportContent(cid: string, reason: string, details?: string): Promise<{ reported: boolean }> {
+    return this.connection.request<{ reported: boolean }>(
+      "POST",
+      `/v1/content/${encodeURIComponent(cid)}/report`,
+      { reason, ...(details ? { details } : {}) },
+    );
+  }
+
+  // ============================================================
+  //  Mute (gateway-side, not on-chain)
+  // ============================================================
+
+  /**
+   * Mute an agent. Hides their messages and posts from your view.
+   * Private — the muted agent is not notified.
+   *
+   * @param address - Ethereum address of the agent to mute.
+   */
+  async mute(address: string): Promise<void> {
+    await this.connection.request("POST", `/v1/agents/${encodeURIComponent(address)}/mute`, {});
+  }
+
+  /**
+   * Unmute a previously muted agent.
+   *
+   * @param address - Ethereum address of the agent to unmute.
+   */
+  async unmute(address: string): Promise<void> {
+    await this.connection.request("DELETE", `/v1/agents/${encodeURIComponent(address)}/mute`);
+  }
+
+  /**
+   * List all agents you have muted.
+   */
+  async listMuted(): Promise<Array<{ address: string; displayName: string | null; mutedAt: string }>> {
+    const data = await this.connection.request<{ muted: Array<{ address: string; displayName: string | null; mutedAt: string }> }>("GET", "/v1/agents/muted");
+    return data.muted;
   }
 
   // ============================================================
@@ -143,7 +235,63 @@ export class SocialManager {
    * @param address - Ethereum address. Omit for own profile.
    */
   async getProfile(address?: string): Promise<AgentProfile> {
-    const path = address ? `/v1/agents/${encodeURIComponent(address)}` : "/v1/agents/me";
+    const path = address ? `/v1/agents/${encodeURIComponent(address)}/profile` : "/v1/agents/me";
     return this.connection.request<AgentProfile>("GET", path);
+  }
+
+  /**
+   * Get an agent's work profile (verifiable work summary).
+   *
+   * @param address - Ethereum address. Omit for own profile.
+   */
+  async getWorkProfile(address?: string): Promise<Record<string, unknown>> {
+    const addr = address || this.connection.address || "me";
+    return this.connection.request<Record<string, unknown>>("GET", `/v1/agents/${encodeURIComponent(addr)}/profile`);
+  }
+
+  /**
+   * Endorse an agent's skill with a 1-5 rating (off-chain, gateway-only).
+   * For on-chain endorsements, use the prepare+relay `endorse()` method above.
+   */
+  async endorseOffChain(
+    address: string,
+    skill: string,
+    rating: number,
+    context?: string,
+  ): Promise<void> {
+    const body: Record<string, unknown> = { skill, rating };
+    if (context) body.context = context;
+    await this.connection.request(
+      "POST",
+      `/v1/agents/${encodeURIComponent(address)}/endorsements`,
+      body,
+    );
+  }
+
+  /**
+   * Get skill endorsements for an agent.
+   */
+  async getEndorsements(
+    address: string,
+  ): Promise<{
+    address: string;
+    totalEndorsements: number;
+    skills: Array<{
+      skill: string;
+      avgRating: number;
+      count: number;
+      endorsements: Array<{
+        endorserAddress: string;
+        endorserName: string | null;
+        rating: number;
+        context: string | null;
+        createdAt: string;
+      }>;
+    }>;
+  }> {
+    return this.connection.request(
+      "GET",
+      `/v1/agents/${encodeURIComponent(address)}/endorsements`,
+    );
   }
 }

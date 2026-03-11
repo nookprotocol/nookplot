@@ -1,14 +1,17 @@
 /**
  * Proactive agent loop routes.
  *
- * GET    /v1/proactive/settings          — Get proactive loop settings
- * PUT    /v1/proactive/settings          — Update settings (enable/disable, interval, limits)
- * GET    /v1/proactive/activity          — Paginated activity feed
- * GET    /v1/proactive/approvals         — Pending actions needing owner sign-off
+ * GET    /v1/proactive/settings              — Get proactive loop settings
+ * PUT    /v1/proactive/settings              — Update settings (enable/disable, interval, limits, callbackFormat)
+ * GET    /v1/proactive/activity              — Paginated activity feed
+ * GET    /v1/proactive/approvals             — Pending actions needing owner sign-off
  * POST   /v1/proactive/approvals/:id/approve — Approve a pending action
  * POST   /v1/proactive/approvals/:id/reject  — Reject a pending action
- * GET    /v1/proactive/scans             — Recent scan history (diagnostics)
- * GET    /v1/proactive/stats             — Summary stats
+ * GET    /v1/proactive/pending-signals       — Queued signals (poll endpoint for offline agents)
+ * POST   /v1/proactive/signals/:id/ack       — Acknowledge a single signal
+ * POST   /v1/proactive/signals/ack-batch     — Batch acknowledge signals
+ * GET    /v1/proactive/scans                 — Recent scan history (diagnostics)
+ * GET    /v1/proactive/stats                 — Summary stats
  *
  * @module routes/proactive
  */
@@ -67,6 +70,8 @@ export function createProactiveRouter(
             maxCreditsPerCycle: 5000,
             maxActionsPerDay: 10,
             pausedUntil: null,
+            callbackUrl: null,
+            callbackSecretSet: false,
             createdAt: null,
             updatedAt: null,
             schedulerActive: proactiveScheduler.isActive(),
@@ -99,6 +104,11 @@ export function createProactiveRouter(
         creativityLevel, socialLevel,
         maxFollowsPerDay, maxAttestationsPerDay, maxCommunitiesPerWeek,
         autoFollowBack,
+        // Callback URL for webhook delivery
+        callbackUrl, callbackSecret, callbackFormat,
+        // Discovery affordances
+        scannerPriorities, budgetSocial, budgetContent, budgetBounties,
+        budgetCollaboration, budgetCommunity, discoveryCadence,
       } = req.body;
 
       // Validate core inputs
@@ -171,13 +181,81 @@ export function createProactiveRouter(
         return;
       }
 
+      // Validate discovery affordance fields
+      if (scannerPriorities !== undefined && scannerPriorities !== null) {
+        if (typeof scannerPriorities !== "object" || Array.isArray(scannerPriorities)) {
+          res.status(400).json({ error: "scannerPriorities must be an object mapping scan type names to integer weights (0-10)." });
+          return;
+        }
+        const entries = Object.entries(scannerPriorities as Record<string, unknown>);
+        if (entries.length > 20) {
+          res.status(400).json({ error: "scannerPriorities must have at most 20 entries." });
+          return;
+        }
+        for (const [key, val] of entries) {
+          if (typeof key !== "string" || typeof val !== "number" || !Number.isInteger(val) || val < 0 || val > 10) {
+            res.status(400).json({ error: `scannerPriorities: each value must be an integer 0-10 (got "${key}": ${String(val)}).` });
+            return;
+          }
+        }
+      }
+
+      const budgetFields = { budgetSocial, budgetContent, budgetBounties, budgetCollaboration, budgetCommunity } as Record<string, unknown>;
+      for (const [name, val] of Object.entries(budgetFields)) {
+        if (val !== undefined && val !== null) {
+          if (typeof val !== "number" || !Number.isInteger(val) || val < 0 || val > 1_000_000) {
+            res.status(400).json({ error: `${name} must be an integer between 0 and 1,000,000 or null.` });
+            return;
+          }
+        }
+      }
+
+      const validCadences = ["conservative", "moderate", "aggressive"];
+      if (discoveryCadence !== undefined && discoveryCadence !== null && !validCadences.includes(discoveryCadence)) {
+        res.status(400).json({ error: `discoveryCadence must be one of: ${validCadences.join(", ")}` });
+        return;
+      }
+
+      // Validate callback URL — must be HTTPS or localhost
+      if (callbackUrl !== undefined && callbackUrl !== null && callbackUrl !== "") {
+        if (typeof callbackUrl !== "string") {
+          res.status(400).json({ error: "callbackUrl must be a string." });
+          return;
+        }
+        try {
+          const parsed = new URL(callbackUrl);
+          const isLocalhost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+          if (parsed.protocol !== "https:" && !isLocalhost) {
+            res.status(400).json({ error: "callbackUrl must use HTTPS (or http://localhost for development)." });
+            return;
+          }
+        } catch {
+          res.status(400).json({ error: "callbackUrl must be a valid URL." });
+          return;
+        }
+      }
+      if (callbackSecret !== undefined && callbackSecret !== null && typeof callbackSecret !== "string") {
+        res.status(400).json({ error: "callbackSecret must be a string." });
+        return;
+      }
+
+      // Validate callbackFormat
+      const validCallbackFormats = ["raw", "agent-hook", "openai", "generic"];
+      if (callbackFormat !== undefined && !validCallbackFormats.includes(callbackFormat)) {
+        res.status(400).json({ error: `callbackFormat must be one of: ${validCallbackFormats.join(", ")}` });
+        return;
+      }
+
       try {
-        // Update core settings
+        // Update core settings (including callback URL/secret)
         const settings = await proactiveScheduler.updateSettings(agent.id, {
           enabled,
           scanIntervalMinutes,
           maxCreditsPerCycle,
           maxActionsPerDay,
+          callbackUrl: callbackUrl !== undefined ? callbackUrl : undefined,
+          callbackSecret: callbackSecret !== undefined ? callbackSecret : undefined,
+          callbackFormat: callbackFormat !== undefined ? callbackFormat : undefined,
         });
 
         // Update enhanced settings if any provided
@@ -216,6 +294,34 @@ export function createProactiveRouter(
         if (autoFollowBack !== undefined) {
           enhancedFields.push(`auto_follow_back = $${paramIdx++}`);
           enhancedValues.push(autoFollowBack);
+        }
+        if (scannerPriorities !== undefined) {
+          enhancedFields.push(`scanner_priorities = $${paramIdx++}`);
+          enhancedValues.push(scannerPriorities === null ? null : JSON.stringify(scannerPriorities));
+        }
+        if (budgetSocial !== undefined) {
+          enhancedFields.push(`budget_social = $${paramIdx++}`);
+          enhancedValues.push(budgetSocial);
+        }
+        if (budgetContent !== undefined) {
+          enhancedFields.push(`budget_content = $${paramIdx++}`);
+          enhancedValues.push(budgetContent);
+        }
+        if (budgetBounties !== undefined) {
+          enhancedFields.push(`budget_bounties = $${paramIdx++}`);
+          enhancedValues.push(budgetBounties);
+        }
+        if (budgetCollaboration !== undefined) {
+          enhancedFields.push(`budget_collaboration = $${paramIdx++}`);
+          enhancedValues.push(budgetCollaboration);
+        }
+        if (budgetCommunity !== undefined) {
+          enhancedFields.push(`budget_community = $${paramIdx++}`);
+          enhancedValues.push(budgetCommunity);
+        }
+        if (discoveryCadence !== undefined) {
+          enhancedFields.push(`discovery_cadence = $${paramIdx++}`);
+          enhancedValues.push(discoveryCadence);
         }
 
         if (enhancedFields.length > 0) {
@@ -385,6 +491,93 @@ export function createProactiveRouter(
         }
         logSecurityEvent("error", "proactive-reject-failed", { agentId: agent.id, actionId, error: message });
         res.status(500).json({ error: "Failed to reject action." });
+      }
+    },
+  );
+
+  // -------------------------------------------------------
+  //  GET /v1/proactive/pending-signals
+  //  Poll for queued signals that were emitted while agent was offline.
+  // -------------------------------------------------------
+  router.get(
+    "/proactive/pending-signals",
+    authMiddleware,
+    registeredMiddleware,
+    async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+      const agent = req.agent!;
+      const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? "50"), 10) || 50, 1), 200);
+
+      try {
+        const signals = await proactiveScheduler.getPendingSignals(agent.id, limit);
+        res.json({ signals, count: signals.length });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logSecurityEvent("error", "proactive-pending-signals-failed", { agentId: agent.id, error: message });
+        res.status(500).json({ error: "Failed to get pending signals." });
+      }
+    },
+  );
+
+  // -------------------------------------------------------
+  //  POST /v1/proactive/signals/:id/ack
+  //  Acknowledge a single signal (mark as delivered).
+  // -------------------------------------------------------
+  router.post(
+    "/proactive/signals/:id/ack",
+    authMiddleware,
+    registeredMiddleware,
+    async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+      const agent = req.agent!;
+      const signalId = String(req.params.id);
+
+      if (!signalId) {
+        res.status(400).json({ error: "Signal ID is required." });
+        return;
+      }
+
+      try {
+        const acked = await proactiveScheduler.ackSignal(signalId, agent.id);
+        if (!acked) {
+          res.status(404).json({ error: "Signal not found, already delivered, or does not belong to this agent." });
+          return;
+        }
+        res.json({ success: true, signalId });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logSecurityEvent("error", "proactive-signal-ack-failed", { agentId: agent.id, signalId, error: message });
+        res.status(500).json({ error: "Failed to acknowledge signal." });
+      }
+    },
+  );
+
+  // -------------------------------------------------------
+  //  POST /v1/proactive/signals/ack-batch
+  //  Batch acknowledge signals.
+  // -------------------------------------------------------
+  router.post(
+    "/proactive/signals/ack-batch",
+    authMiddleware,
+    registeredMiddleware,
+    async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+      const agent = req.agent!;
+      const { signalIds } = req.body ?? {};
+
+      if (!Array.isArray(signalIds) || signalIds.length === 0) {
+        res.status(400).json({ error: "signalIds must be a non-empty array." });
+        return;
+      }
+      if (signalIds.length > 200) {
+        res.status(400).json({ error: "Maximum 200 signals per batch." });
+        return;
+      }
+
+      try {
+        const count = await proactiveScheduler.ackSignals(signalIds as string[], agent.id);
+        res.json({ success: true, acknowledged: count });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logSecurityEvent("error", "proactive-signal-ack-batch-failed", { agentId: agent.id, error: message });
+        res.status(500).json({ error: "Failed to batch acknowledge signals." });
       }
     },
   );

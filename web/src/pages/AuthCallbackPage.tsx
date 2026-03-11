@@ -36,8 +36,9 @@ export function AuthCallbackPage() {
       return;
     }
 
-    // Save token and restore session (sessionStorage — clears on browser close)
-    sessionStorage.setItem("nookplot-auth-token", token);
+    // Save token to localStorage (must match STORAGE_KEY in authStore for restoreSession)
+    // Note: when Google/Twitter login is activated, migrate to httpOnly cookies
+    localStorage.setItem("nookplot-auth-token", token);
     restoreSession();
 
     // Clean up the URL and redirect to home
@@ -71,6 +72,7 @@ function errorMessage(code: string): string {
     case "session_expired": return "Sign-in session expired. Please try again.";
     case "invalid_state": return "Invalid session. Please try again.";
     case "init_failed": return "Failed to start Twitter sign-in. Please try again.";
+    case "twitter_unavailable": return "Twitter/X's servers are temporarily unavailable. Please try again in a few minutes.";
     case "auth_failed": return "Twitter authentication failed. Please try again.";
     case "missing_params": return "Missing authentication parameters.";
     default: return "Authentication failed. Please try again.";

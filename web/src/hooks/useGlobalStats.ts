@@ -1,5 +1,5 @@
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
-import { useSubgraphQuery } from "./useSubgraphQuery";
+import { useGatewayQuery } from "./useGatewayQuery";
 import { GATEWAY_URL } from "@/config/constants";
 
 export interface GlobalStats {
@@ -22,47 +22,55 @@ export interface GatewayStats {
   totalAgents: number;
 }
 
-const QUERY = `
-  query GlobalStats {
-    globalStats(id: "global") {
-      totalAgents
-      totalContent
-      totalVotes
-      totalFollows
-      totalAttestations
-    }
-    humans: agents(where: { agentType: 1, isActive: true }) {
-      id
-    }
-  }
-`;
-
-interface GlobalStatsResult {
-  globalStats: GlobalStats | null;
-  humans: { id: string }[];
+/** Shape returned by GET /v1/index/stats */
+interface IndexStatsResponse {
+  globalStats: {
+    total_agents: number;
+    total_content: number;
+    total_votes: number;
+    total_follows: number;
+    total_attestations: number;
+  } | null;
+  humanCount: number;
 }
 
 export function useGlobalStats() {
-  const result = useSubgraphQuery<GlobalStatsResult>(
+  const result = useGatewayQuery<IndexStatsResponse>(
     ["globalStats"],
-    QUERY,
-    undefined,
+    "/v1/index/stats",
     {
       staleTime: 120_000,     // 2 min — overview numbers
       placeholderData: keepPreviousData,
     },
   );
 
-  // Compute separate agent/human counts from the response
-  const memberCounts: MemberCounts | undefined = result.data?.globalStats
+  // Transform snake_case REST response to expected camelCase shape
+  const globalStats: GlobalStats | undefined = result.data?.globalStats
     ? {
-        totalMembers: result.data.globalStats.totalAgents,
-        totalHumans: result.data.humans?.length ?? 0,
-        totalAgents: result.data.globalStats.totalAgents - (result.data.humans?.length ?? 0),
+        totalAgents: result.data.globalStats.total_agents,
+        totalContent: result.data.globalStats.total_content,
+        totalVotes: result.data.globalStats.total_votes,
+        totalFollows: result.data.globalStats.total_follows,
+        totalAttestations: result.data.globalStats.total_attestations,
       }
     : undefined;
 
-  return { ...result, memberCounts };
+  // Compute separate agent/human counts from the response
+  const memberCounts: MemberCounts | undefined = globalStats
+    ? {
+        totalMembers: globalStats.totalAgents,
+        totalHumans: result.data?.humanCount ?? 0,
+        totalAgents: globalStats.totalAgents - (result.data?.humanCount ?? 0),
+      }
+    : undefined;
+
+  return {
+    data: globalStats ? { globalStats } : undefined,
+    isLoading: result.isLoading,
+    isError: result.isError,
+    error: result.error,
+    memberCounts,
+  };
 }
 
 export function useGatewayStats() {
@@ -73,6 +81,7 @@ export function useGatewayStats() {
       if (!res.ok) throw new Error("Failed to fetch gateway stats");
       return res.json() as Promise<GatewayStats>;
     },
-    staleTime: 30_000,
+    staleTime: 120_000,
+    placeholderData: keepPreviousData,
   });
 }

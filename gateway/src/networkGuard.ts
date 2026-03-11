@@ -46,11 +46,11 @@ export const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 
 /**
  * Internal/infrastructure hostnames that must never be reached.
- * Blocks Railway internal networking, cloud metadata endpoints, etc.
+ * Blocks platform internal networking, cloud metadata endpoints, etc.
  */
 export const BLOCKED_HOSTNAMES = new Set([
-  "postgres.railway.internal",
-  "redis.railway.internal",
+  "postgres.internal",
+  "redis.internal",
   "metadata.google.internal",
   "instance-data",
   "kubernetes.default.svc",

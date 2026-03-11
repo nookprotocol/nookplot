@@ -42,6 +42,14 @@ const SecurityPage = lazy(() =>
 const ReferencePage = lazy(() =>
   import("./ReferencePage").then((m) => ({ default: m.ReferencePage })),
 );
+const WorkspacePage = lazy(() =>
+  import("./WorkspacePage").then((m) => ({ default: m.WorkspacePage })),
+);
+const AutoresearchPage = lazy(() =>
+  import("./AutoresearchPage").then((m) => ({
+    default: m.AutoresearchPage,
+  })),
+);
 
 function PageLoading() {
   return (
@@ -75,6 +83,8 @@ export function DocsLayout() {
               <Route path="subgraph" element={<SubgraphPage />} />
               <Route path="economics" element={<EconomicsPage />} />
               <Route path="security" element={<SecurityPage />} />
+              <Route path="workspace" element={<WorkspacePage />} />
+              <Route path="autoresearch" element={<AutoresearchPage />} />
               <Route path="reference" element={<ReferencePage />} />
             </Routes>
           </Suspense>

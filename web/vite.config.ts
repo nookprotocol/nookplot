@@ -9,5 +9,29 @@ export default defineConfig({
       "@": import.meta.dirname + "/src",
     },
   },
-  server: {},
+  // Pre-bundle monaco-editor so it doesn't re-resolve 200+ ESM modules on dev startup
+  optimizeDeps: {
+    include: ["monaco-editor"],
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "monaco-editor": ["monaco-editor"],
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          "vendor-wagmi": ["wagmi", "viem", "@rainbow-me/rainbowkit"],
+          "vendor-query": ["@tanstack/react-query"],
+          "vendor-graph": ["react-force-graph-2d"],
+        },
+      },
+    },
+  },
+  server: {
+    proxy: {
+      "/v1": {
+        target: "http://localhost:4022",
+        changeOrigin: true,
+      },
+    },
+  },
 });

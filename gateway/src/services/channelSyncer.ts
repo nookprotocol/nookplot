@@ -1,12 +1,12 @@
 /**
- * Channel syncer — auto-creates channels from on-chain communities and cliques.
+ * Channel syncer — auto-creates channels from on-chain communities and guilds.
  *
- * Periodically polls the subgraph for communities and cliques, and creates
+ * Periodically polls idx_* tables for communities and guilds, and creates
  * corresponding channels in the database. Idempotent — skips if a channel
  * with the same source_id already exists.
  *
  * Runs on a configurable interval (default 60s). Only active when
- * SUBGRAPH_URL is set and CHANNEL_SYNC_ENABLED is true.
+ * CHANNEL_SYNC_ENABLED is true.
  *
  * @module services/channelSyncer
  */
@@ -14,38 +14,20 @@
 import type pg from "pg";
 import type { ChannelService } from "./channelService.js";
 import { logSecurityEvent } from "../middleware/auditLog.js";
-import type { SubgraphGateway } from "./subgraphGateway.js";
-
-interface SubgraphCommunity {
-  id: string;
-  slug: string;
-  totalPosts: string;
-}
-
-interface SubgraphClique {
-  id: string;
-  name: string;
-  description: string | null;
-  status: string;
-  members: Array<{ agent: { id: string } }>;
-}
 
 export class ChannelSyncer {
   private readonly pool: pg.Pool;
   private readonly channelService: ChannelService;
-  private readonly subgraphGateway: SubgraphGateway;
   private readonly intervalMs: number;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     pool: pg.Pool,
     channelService: ChannelService,
-    subgraphGateway: SubgraphGateway,
     intervalMs = 60_000,
   ) {
     this.pool = pool;
     this.channelService = channelService;
-    this.subgraphGateway = subgraphGateway;
     this.intervalMs = intervalMs;
   }
 
@@ -69,7 +51,6 @@ export class ChannelSyncer {
 
     logSecurityEvent("info", "channel-syncer-started", {
       intervalMs: this.intervalMs,
-      subgraphGateway: "configured",
     });
   }
 
@@ -90,7 +71,7 @@ export class ChannelSyncer {
     try {
       await Promise.all([
         this.syncCommunities(),
-        this.syncCliques(),
+        this.syncGuilds(),
       ]);
     } catch (err) {
       logSecurityEvent("warn", "channel-sync-failed", {
@@ -104,36 +85,35 @@ export class ChannelSyncer {
   // ============================================================
 
   private async syncCommunities(): Promise<void> {
-    const query = `{
-      communities(first: 100, orderBy: totalPosts, orderDirection: desc) {
-        id
-        slug
-        totalPosts
-      }
-    }`;
-
-    const sgResult = await this.subgraphGateway.query<{ communities?: SubgraphCommunity[] }>(query);
-
-    const communities = sgResult.data?.communities ?? [];
+    const { rows: communities } = await this.pool.query<{
+      id: string;
+      total_posts: number;
+    }>(
+      `SELECT id, total_posts
+       FROM idx_communities
+       ORDER BY total_posts DESC
+       LIMIT 100`,
+    );
 
     for (const community of communities) {
-      // Check if channel already exists for this community
-      const existing = await this.channelService.getChannelBySourceId(community.slug);
+      // The community id is the slug in the idx_communities table
+      const slug = community.id;
+      const existing = await this.channelService.getChannelBySourceId(slug);
       if (existing) continue;
 
       // Create channel
       try {
         await this.channelService.createChannel({
-          slug: `community-${community.slug}`,
-          name: community.slug,
-          description: `Channel for the ${community.slug} community`,
+          slug: `community-${slug}`,
+          name: slug,
+          description: `Channel for the ${slug} community`,
           channelType: "community",
-          sourceId: community.slug,
+          sourceId: slug,
           isPublic: true,
         });
 
         logSecurityEvent("info", "channel-synced-community", {
-          communitySlug: community.slug,
+          communitySlug: slug,
         });
       } catch {
         // Slug conflict or other error — skip silently
@@ -142,51 +122,55 @@ export class ChannelSyncer {
   }
 
   // ============================================================
-  //  Clique Sync
+  //  Guild Sync
   // ============================================================
 
-  private async syncCliques(): Promise<void> {
-    const query = `{
-      cliques(first: 100, where: { status: "approved" }) {
-        id
-        name
-        description
-        status
-        members {
-          agent { id }
-        }
-      }
-    }`;
+  private async syncGuilds(): Promise<void> {
+    const { rows: guilds } = await this.pool.query<{
+      id: string;
+      guild_id: string;
+      name: string;
+      description_cid: string | null;
+      status: string;
+    }>(
+      `SELECT id, guild_id, name, description_cid, status
+       FROM idx_guilds
+       WHERE status = 1
+       LIMIT 100`,
+    );
 
-    const sgResult = await this.subgraphGateway.query<{ cliques?: SubgraphClique[] }>(query);
+    for (const guild of guilds) {
+      const guildId = guild.id;
+      const existing = await this.channelService.getChannelBySourceId(guildId);
 
-    const cliques = sgResult.data?.cliques ?? [];
-
-    for (const clique of cliques) {
-      const cliqueId = clique.id;
-      const existing = await this.channelService.getChannelBySourceId(cliqueId);
+      // Fetch members for this guild
+      const { rows: memberRows } = await this.pool.query<{ member_id: string }>(
+        `SELECT member_id FROM idx_guild_members WHERE guild_id = $1`,
+        [guild.guild_id],
+      );
+      const members = memberRows.map((m) => ({ agent: { id: m.member_id } }));
 
       if (existing) {
         // Sync membership: add missing members
-        await this.syncCliqueMembers(existing.id, clique.members);
+        await this.syncGuildMembers(existing.id, members);
         continue;
       }
 
       // Create channel
       try {
         const channel = await this.channelService.createChannel({
-          slug: `clique-${cliqueId.slice(0, 12)}`,
-          name: clique.name ?? `Clique ${cliqueId.slice(0, 8)}`,
-          description: clique.description ?? undefined,
-          channelType: "clique",
-          sourceId: cliqueId,
+          slug: `guild-${guildId.slice(0, 12)}`,
+          name: guild.name ?? `Guild ${guildId.slice(0, 8)}`,
+          description: guild.description_cid ?? undefined,
+          channelType: "guild",
+          sourceId: guildId,
           isPublic: false,
         });
 
         // Sync initial members
-        await this.syncCliqueMembers(channel.id, clique.members);
+        await this.syncGuildMembers(channel.id, members);
 
-        logSecurityEvent("info", "channel-synced-clique", { cliqueId });
+        logSecurityEvent("info", "channel-synced-guild", { guildId });
       } catch {
         // Slug conflict or other error — skip silently
       }
@@ -194,14 +178,14 @@ export class ChannelSyncer {
   }
 
   /**
-   * Sync clique members from subgraph to channel_members table.
+   * Sync guild members from idx_guild_members to channel_members table.
    */
-  private async syncCliqueMembers(
+  private async syncGuildMembers(
     channelId: string,
     members: Array<{ agent: { id: string } }>,
   ): Promise<void> {
     for (const member of members) {
-      // The subgraph agent.id is the Ethereum address (lowercase)
+      // The idx agent id is the Ethereum address (lowercase)
       const address = member.agent.id.toLowerCase();
 
       // Look up agent in gateway by address (case-insensitive — checksum vs lowercase)

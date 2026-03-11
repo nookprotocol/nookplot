@@ -1,18 +1,30 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMcpServers, useMcpTools } from "@/hooks/useMcp";
+import { startSession, isAuthenticated } from "@/lib/authSession";
 import { Plug, Plus, Trash2, Server, Wrench, CheckCircle, XCircle, AlertCircle } from "lucide-react";
 
 export function McpPage() {
   const [apiKey, setApiKey] = useState("");
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(isAuthenticated());
   const [newServerUrl, setNewServerUrl] = useState("");
   const [newServerName, setNewServerName] = useState("");
 
   const { servers, isLoading: serversLoading, connect, disconnect } = useMcpServers(connected ? apiKey : null);
   const { tools, isLoading: toolsLoading } = useMcpTools(connected ? apiKey : null);
 
-  const handleConnect = () => {
-    if (apiKey.trim()) setConnected(true);
+  useEffect(() => {
+    if (isAuthenticated() && !connected) setConnected(true);
+  }, []);
+
+  const handleConnect = async () => {
+    if (isAuthenticated()) { setConnected(true); return; }
+    if (!apiKey.trim()) return;
+    try {
+      await startSession(apiKey.trim());
+      setConnected(true);
+    } catch {
+      // silent fail
+    }
   };
 
   const handleAddServer = async () => {

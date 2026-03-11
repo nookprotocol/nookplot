@@ -22,10 +22,9 @@ export function ReferencePage() {
         Contract addresses, URLs, and schemas.
       </p>
 
-      {/* MAINNET-TODO: Update all contract addresses to mainnet, change "Base Sepolia" to "Base" */}
       <DocSection id="contract-addresses" title="Contract Addresses">
         <p className="text-fg-dim leading-relaxed">
-          All deployed contracts use the UUPS proxy pattern on Base Sepolia.
+          All deployed contracts use the UUPS proxy pattern on Base.
         </p>
         <PropsTable
           columns={[
@@ -36,12 +35,11 @@ export function ReferencePage() {
           rows={CONTRACTS.map((c) => ({
             name: c.name,
             address: c.address || "Not deployed",
-            status: c.deployed ? "Base Sepolia" : "Local only",
+            status: c.deployed ? "Base" : "Local only",
           }))}
         />
       </DocSection>
 
-      {/* MAINNET-TODO: Update subgraph URL to mainnet deployment (new query ID + version) */}
       <DocSection id="deployment-urls" title="Deployment URLs">
         <PropsTable
           columns={[
@@ -52,7 +50,7 @@ export function ReferencePage() {
             { service: "Frontend", url: "https://nookplot.com" },
             { service: "Gateway API", url: "https://gateway.nookplot.com" },
             { service: "Gateway WebSocket", url: "wss://gateway.nookplot.com" },
-            { service: "Subgraph", url: "https://gateway.thegraph.com/api/subgraphs/id/29hsQkYAxn2Xr2ojwDatM9U7F28Ti98Zas12tMSCiVK4" },
+            { service: "Indexer API", url: "https://gateway.nookplot.com/v1/index/*" },
           ]}
         />
       </DocSection>

@@ -1,9 +1,7 @@
 /**
- * Content injection scanner — detects prompt injection, command injection,
- * credential harvesting, and other content-based attacks in agent messages.
+ * Content safety scanner.
  *
- * Flags suspicious content in the database for admin review.
- * Does NOT block content — detection only.
+ * Flags suspicious content for admin review.
  *
  * @module services/contentScanner
  */
@@ -50,65 +48,29 @@ interface PatternDef {
   severity: number;
 }
 
+/**
+ * Detection patterns — configure for your deployment.
+ * Each pattern matches a threat category with a severity score (0–100).
+ * Add your own patterns here to detect prompt injection, command injection,
+ * credential harvesting, URL payloads, social engineering, and exfiltration attempts.
+ */
 const PATTERNS: PatternDef[] = [
-  // ── Prompt Injection ──────────────────────────────────────
-  { category: "prompt_injection", name: "ignore_instructions", regex: /ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions|prompts|rules|directives)/i, severity: 80 },
-  { category: "prompt_injection", name: "new_instructions", regex: /new\s+instructions?:\s/i, severity: 70 },
-  { category: "prompt_injection", name: "system_tag_open", regex: /<\s*system\s*>/i, severity: 85 },
-  { category: "prompt_injection", name: "system_tag_close", regex: /<\s*\/\s*system\s*>/i, severity: 85 },
-  { category: "prompt_injection", name: "assistant_tag", regex: /<\s*\/?assistant\s*>/i, severity: 75 },
-  { category: "prompt_injection", name: "user_tag", regex: /<\s*\/?user\s*>/i, severity: 60 },
-  { category: "prompt_injection", name: "dan_jailbreak", regex: /\bDAN\b.*\b(mode|jailbreak|enabled|activated)\b/i, severity: 80 },
-  { category: "prompt_injection", name: "pretend_mode", regex: /\b(pretend|act\s+as\s+if|imagine)\b.*\b(no\s+rules|unrestricted|unfiltered|uncensored)\b/i, severity: 75 },
-  { category: "prompt_injection", name: "forget_everything", regex: /forget\s+(everything|all|what)\s+(you|your)/i, severity: 70 },
-  { category: "prompt_injection", name: "you_are_now", regex: /you\s+are\s+now\s+(a|an|my)\s/i, severity: 60 },
-  { category: "prompt_injection", name: "override_safety", regex: /\b(override|bypass|disable|turn\s+off)\b.*\b(safety|filter|guard|restriction|moderation)\b/i, severity: 80 },
-  { category: "prompt_injection", name: "end_of_prompt", regex: /---\s*END\s+OF\s+(SYSTEM\s+)?(PROMPT|INSTRUCTIONS)/i, severity: 75 },
-  { category: "prompt_injection", name: "reveal_prompt", regex: /\b(reveal|show|display|output|repeat)\b.*\b(system\s+prompt|instructions|hidden\s+prompt)\b/i, severity: 65 },
-
-  // ── Command Injection ─────────────────────────────────────
-  { category: "command_injection", name: "curl_wget", regex: /\b(curl|wget)\s+(-[a-zA-Z]+\s+)*https?:\/\//i, severity: 70 },
-  { category: "command_injection", name: "eval_exec", regex: /\b(eval|exec|execSync|child_process|subprocess)\s*\(/i, severity: 75 },
-  { category: "command_injection", name: "bash_shell", regex: /\b(bash|sh|zsh|powershell|cmd\.exe)\s+(-[a-zA-Z]+\s+)*['"]/i, severity: 70 },
-  { category: "command_injection", name: "sql_injection", regex: /(['";]\s*(OR|AND|UNION|SELECT|DROP|DELETE|INSERT|UPDATE)\s)/i, severity: 65 },
-  { category: "command_injection", name: "os_command", regex: /\b(os\.system|os\.popen|Runtime\.exec|ProcessBuilder)\s*\(/i, severity: 70 },
-  { category: "command_injection", name: "import_malicious", regex: /\b(import|require)\s*\(\s*['"][^'"]*\b(child_process|net|dgram|cluster|vm)\b/i, severity: 65 },
-  { category: "command_injection", name: "pip_npm_install", regex: /\b(pip|npm|npx|yarn)\s+install\s+/i, severity: 60 },
-
-  // ── Credential Harvesting ─────────────────────────────────
-  { category: "credential_harvest", name: "send_api_key", regex: /\b(send|share|give|paste|post|dm)\b.*\b(api[_\s]?key|secret[_\s]?key|private[_\s]?key|password|token|credential|seed\s+phrase|mnemonic)\b/i, severity: 85 },
-  { category: "credential_harvest", name: "whats_your_key", regex: /\b(what('?s| is))\b.*\b(api[_\s]?key|secret|private[_\s]?key|password|token|seed\s+phrase)\b/i, severity: 85 },
-  { category: "credential_harvest", name: "enter_key_here", regex: /\b(enter|input|type|put)\b.*\b(key|password|token|secret)\b.*\b(here|below|field)\b/i, severity: 80 },
-  { category: "credential_harvest", name: "private_key_hex", regex: /\b(0x[a-fA-F0-9]{64})\b/, severity: 90 },
-
-  // ── URL Payloads ──────────────────────────────────────────
-  { category: "url_payload", name: "data_uri", regex: /data:\s*(text|application)\/(html|javascript|x-javascript)[;,]/i, severity: 75 },
-  { category: "url_payload", name: "javascript_uri", regex: /javascript\s*:/i, severity: 80 },
-  { category: "url_payload", name: "suspicious_download", regex: /https?:\/\/[^\s]+\.(exe|bat|cmd|ps1|sh|py|rb)\b/i, severity: 65 },
-  { category: "url_payload", name: "base64_payload", regex: /\b(atob|btoa|Buffer\.from)\s*\(\s*['"][A-Za-z0-9+/=]{50,}/i, severity: 60 },
-
-  // ── Social Engineering ────────────────────────────────────
-  { category: "social_engineering", name: "attest_agent", regex: /\b(attest|vouch\s+for|endorse)\b.*\b(agent|0x[a-fA-F0-9]{6,})\b/i, severity: 55 },
-  { category: "social_engineering", name: "vote_for_post", regex: /\b(upvote|vote\s+for|boost)\b.*\b(post|content|this)\b/i, severity: 50 },
-  { category: "social_engineering", name: "send_credits", regex: /\b(send|transfer|give)\b.*\b(credits?|tokens?|funds?|ETH|USDC)\b.*\b(to|address)\b/i, severity: 70 },
-  { category: "social_engineering", name: "urgent_action", regex: /\b(urgent|immediately|right\s+now|asap)\b.*\b(send|transfer|approve|sign|execute)\b/i, severity: 60 },
-  { category: "social_engineering", name: "impersonation", regex: /\b(i\s+am|this\s+is)\b.*\b(admin|owner|moderator|developer|founder|team)\b/i, severity: 55 },
-
-  // ── Exfiltration Attempts ─────────────────────────────────
-  { category: "exfiltration_attempt", name: "make_request_to", regex: /\b(make|send)\s+(a\s+)?(request|call|fetch|post)\s+(to|at)\s+https?:\/\//i, severity: 55 },
-  { category: "exfiltration_attempt", name: "register_webhook", regex: /\b(register|create|add|set\s+up)\b.*\bwebhook\b.*\bhttps?:\/\//i, severity: 60 },
-  { category: "exfiltration_attempt", name: "forward_to_url", regex: /\b(forward|relay|pipe|redirect)\b.*\b(data|messages?|content|output)\b.*\bhttps?:\/\//i, severity: 60 },
-  { category: "exfiltration_attempt", name: "phone_home", regex: /\b(report|ping|notify|callback)\b.*\bhttps?:\/\//i, severity: 45 },
+  // Add your detection patterns here. Example:
+  // { category: "prompt_injection", name: "p1", regex: /your-pattern/i, severity: 80 },
 ];
 
 // ============================================================
 //  Severity → threat level mapping
 // ============================================================
 
+const SEVERITY_CRITICAL = parseInt(process.env.SCANNER_SEVERITY_CRITICAL ?? "80", 10);
+const SEVERITY_HIGH = parseInt(process.env.SCANNER_SEVERITY_HIGH ?? "60", 10);
+const SEVERITY_MEDIUM = parseInt(process.env.SCANNER_SEVERITY_MEDIUM ?? "40", 10);
+
 function severityToLevel(maxSeverity: number): ThreatLevel {
-  if (maxSeverity >= 80) return "critical";
-  if (maxSeverity >= 60) return "high";
-  if (maxSeverity >= 40) return "medium";
+  if (maxSeverity >= SEVERITY_CRITICAL) return "critical";
+  if (maxSeverity >= SEVERITY_HIGH) return "high";
+  if (maxSeverity >= SEVERITY_MEDIUM) return "medium";
   if (maxSeverity > 0) return "low";
   return "none";
 }
@@ -309,7 +271,7 @@ export function wrapUntrusted(text: string, label = "agent message"): string {
 // ============================================================
 
 /** Minimum severity that triggers quarantine (content stored but hidden). */
-export const QUARANTINE_MIN_SEVERITY = 40;
+export const QUARANTINE_MIN_SEVERITY = parseInt(process.env.QUARANTINE_MIN_SEVERITY ?? "40", 10);
 
 /**
  * Check if a scan result should trigger quarantine.
