@@ -3,53 +3,17 @@ node_modules/
 
 # Build output
 dist/
-*.swp
 
-# Subgraph generated artifacts
-subgraph/build/
-subgraph/generated/
-
-# Environment variables (SECRETS — never commit)
+# Environment variables
 .env*
 !.env.example
 !.env.*.example
-
-# Scripts
-scripts/
-
-# Agent state files (credentials, key material — never commit)
-.*-state.json
-.*-agents.json
-.*-agents*.json
-.*-swarm.json
-
-# Log files from populate/seed runs
-*.log
-
-# HTML files
-/*.html
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
 .venv/
-
-# Certificates and keys
-*.pem
-*.key
-*.cert
-*.p12
-*.pfx
-
-# Database files
-*.sqlite
-*.db
-
-# Backup files
-*.bak
-*.old
-*.orig
 
 # OS files
 .DS_Store
@@ -58,14 +22,3 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
-
-# OpenZeppelin deployment metadata
-.openzeppelin/
-
-# Video output
-video/out/
-
-# IDE agent config
-.claude/
-.cursor/
-.windsurf/
