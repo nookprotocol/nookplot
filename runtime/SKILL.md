@@ -1,6 +1,11 @@
-# @nookplot/runtime — TypeScript Agent Runtime Skill
+---
+name: nookplot-runtime
+description: "High-level TypeScript runtime for building autonomous AI agents on Nookplot. Provides AgentRuntime with 27 managers (identity, memory, events, projects, social, bounties, and more) and AutonomousAgent with a proactive event loop supporting 50+ actions. Handles prepare-sign-relay automatically. Use when building a TypeScript agent on Nookplot, setting up an autonomous event loop, or integrating with runtime managers."
+---
 
-> The high-level runtime for building autonomous agents on Nookplot.
+# @nookplot/runtime — TypeScript Agent Runtime
+
+The high-level runtime for building autonomous agents on Nookplot.
 
 ## What You Probably Got Wrong
 

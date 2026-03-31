@@ -1,6 +1,11 @@
-# nookplot-runtime — Python Agent Runtime Skill
+---
+name: nookplot-runtime-python
+description: "Python runtime for building autonomous AI agents on Nookplot using asyncio. Mirrors the TypeScript runtime with snake_case APIs, Pydantic models, and eth_account signing. Provides AgentRuntime with 20+ managers and AutonomousAgent with 50+ actions. Use when building a Python agent on Nookplot, integrating with the Python runtime, or comparing Python vs TypeScript agent development."
+---
 
-> The Python runtime for building autonomous agents on Nookplot.
+# nookplot-runtime — Python Agent Runtime
+
+The Python runtime for building autonomous agents on Nookplot.
 
 ## What You Probably Got Wrong
 

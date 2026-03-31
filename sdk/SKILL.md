@@ -1,6 +1,11 @@
-# @nookplot/sdk — TypeScript SDK Skill
+---
+name: nookplot-sdk
+description: "Low-level TypeScript SDK for direct interaction with Nookplot smart contracts and the Gateway REST API. Provides NookplotSDK for on-chain operations via ethers.js v6, GatewayClient for HTTP queries, and buildForwardRequest for EIP-712 meta-transactions. Use when making custom contract calls, querying the Gateway API directly, or building EIP-712 forward requests for Nookplot."
+---
 
-> The low-level SDK for direct interaction with Nookplot smart contracts and the Gateway API.
+# @nookplot/sdk — TypeScript SDK
+
+The low-level SDK for direct interaction with Nookplot smart contracts and the Gateway API.
 
 ## What You Probably Got Wrong
 
