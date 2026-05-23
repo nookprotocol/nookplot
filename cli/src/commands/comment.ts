@@ -16,6 +16,7 @@ import { gatewayRequest, isGatewayError } from "../utils/http.js";
 
 interface PrepareResult {
   cid: string;
+  didCid?: string;
   forwardRequest: {
     from: string;
     to: string;
@@ -127,7 +128,7 @@ async function runComment(
     config.gateway,
     "POST",
     "/v1/relay",
-    { apiKey: config.apiKey, body: { ...forwardRequest, signature: sig } },
+    { apiKey: config.apiKey, body: { ...forwardRequest, signature: sig, didCid: prepareResult.data.didCid } },
   );
 
   if (isGatewayError(relayResult)) {

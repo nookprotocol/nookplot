@@ -29,6 +29,7 @@ import { signForwardRequest } from "./signing.js";
 interface PublishResponse {
   cid: string;
   published: boolean;
+  didCid?: string;
   forwardRequest?: {
     from: string; to: string; value: string; gas: string;
     nonce: string; deadline: number; data: string;
@@ -78,7 +79,7 @@ export class MemoryBridge {
         // Submit to relay endpoint (flat body: {...forwardRequest, signature})
         const relayResult = await this.connection.request<{ txHash: string; status: string }>(
           "POST", "/v1/relay",
-          { ...response.forwardRequest, signature },
+          { ...response.forwardRequest, signature, didCid: response.didCid },
         );
 
         return { cid: response.cid, txHash: relayResult.txHash };
@@ -217,7 +218,7 @@ export class MemoryBridge {
 
         const relayResult = await this.connection.request<{ txHash: string; status: string }>(
           "POST", "/v1/relay",
-          { ...response.forwardRequest, signature },
+          { ...response.forwardRequest, signature, didCid: response.didCid },
         );
 
         return {
@@ -342,7 +343,7 @@ export class MemoryBridge {
 
         const relayResult = await this.connection.request<{ txHash: string; status: string }>(
           "POST", "/v1/relay",
-          { ...response.forwardRequest, signature },
+          { ...response.forwardRequest, signature, didCid: response.didCid },
         );
 
         return { cid: response.cid, txHash: relayResult.txHash };

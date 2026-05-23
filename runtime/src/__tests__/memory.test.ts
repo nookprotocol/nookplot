@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MemoryBridge } from "../memory.js";
+import * as signing from "../signing.js";
+
+vi.mock("../signing.js", async () => {
+  const actual = await vi.importActual<typeof import("../signing.js")>("../signing.js");
+  return {
+    ...actual,
+    signForwardRequest: vi.fn().mockResolvedValue("0xSIGNED"),
+  };
+});
 
 // ---------------------------------------------------------------------------
 //  Mock ConnectionManager
@@ -185,6 +194,67 @@ describe("MemoryBridge — existing methods", () => {
   beforeEach(() => {
     conn = createMockConnection();
     bridge = new MemoryBridge(conn);
+    vi.clearAllMocks();
+  });
+
+  it("publishKnowledge relays with didCid when prepare response includes it", async () => {
+    conn.privateKey = "0xabc";
+    conn.request
+      .mockResolvedValueOnce({
+        cid: "QmPost",
+        didCid: "QmDid",
+        published: false,
+        forwardRequest: { from: "0x1", to: "0x2", value: "0", gas: "1", nonce: "2", deadline: 3, data: "0x1234" },
+        domain: { name: "Nook", version: "1", chainId: 8453, verifyingContract: "0x3" },
+        types: { ForwardRequest: [] },
+      })
+      .mockResolvedValueOnce({ txHash: "0xTX", status: "ok" });
+
+    const result = await bridge.publishKnowledge({ title: "T", body: "B", community: "engineering" });
+
+    expect(signing.signForwardRequest).toHaveBeenCalled();
+    expect(conn.request).toHaveBeenNthCalledWith(2, "POST", "/v1/relay", {
+      from: "0x1",
+      to: "0x2",
+      value: "0",
+      gas: "1",
+      nonce: "2",
+      deadline: 3,
+      data: "0x1234",
+      signature: "0xSIGNED",
+      didCid: "QmDid",
+    });
+    expect(result).toEqual({ cid: "QmPost", txHash: "0xTX" });
+  });
+
+  it("publishComment relays with didCid when prepare response includes it", async () => {
+    conn.privateKey = "0xabc";
+    conn.request
+      .mockResolvedValueOnce({
+        cid: "QmComment",
+        didCid: "QmDid",
+        published: false,
+        forwardRequest: { from: "0x1", to: "0x2", value: "0", gas: "1", nonce: "2", deadline: 3, data: "0x5678" },
+        domain: { name: "Nook", version: "1", chainId: 8453, verifyingContract: "0x3" },
+        types: { ForwardRequest: [] },
+      })
+      .mockResolvedValueOnce({ txHash: "0xTX2", status: "ok" });
+
+    const result = await bridge.publishComment({ body: "B", community: "engineering", parentCid: "QmParent" });
+
+    expect(signing.signForwardRequest).toHaveBeenCalled();
+    expect(conn.request).toHaveBeenNthCalledWith(2, "POST", "/v1/relay", {
+      from: "0x1",
+      to: "0x2",
+      value: "0",
+      gas: "1",
+      nonce: "2",
+      deadline: 3,
+      data: "0x5678",
+      signature: "0xSIGNED",
+      didCid: "QmDid",
+    });
+    expect(result).toEqual({ cid: "QmComment", txHash: "0xTX2" });
   });
 
   it("queryKnowledge sends POST to /v1/memory/query", async () => {

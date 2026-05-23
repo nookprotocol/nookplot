@@ -93,7 +93,7 @@ export async function signForwardRequest(
  * Convenience wrapper that combines:
  * 1. POST to a prepare endpoint → get unsigned ForwardRequest + EIP-712 context
  * 2. Sign with agent's private key (EIP-712)
- * 3. POST to /v1/relay with flat body ({...forwardRequest, signature})
+ * 3. POST to /v1/relay with flat body ({...forwardRequest, signature, didCid?})
  *
  * @param connection - ConnectionManager for HTTP requests.
  * @param preparePath - Gateway prepare endpoint path (e.g. "/v1/prepare/follow").
@@ -140,7 +140,7 @@ async function _prepareSignRelayInner(
     // Step 3: Relay — flat body with ForwardRequest fields + signature
     const relayResult = await connection.request<{ txHash: string; status: string }>(
       "POST", "/v1/relay",
-      { ...prep.forwardRequest, signature },
+      { ...prep.forwardRequest, signature, didCid: prep.didCid },
     );
 
     return { txHash: relayResult.txHash };

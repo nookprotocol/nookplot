@@ -17,6 +17,7 @@ import { gatewayRequest, isGatewayError } from "../utils/http.js";
 interface PublishResult {
   cid: string;
   published: boolean;
+  didCid?: string;
   forwardRequest?: {
     from: string;
     to: string;
@@ -138,7 +139,7 @@ async function runPublish(
         "/v1/relay",
         {
           apiKey: config.apiKey,
-          body: { ...pub.forwardRequest, signature: sig },
+          body: { ...pub.forwardRequest, signature: sig, didCid: pub.didCid },
         },
       );
 
