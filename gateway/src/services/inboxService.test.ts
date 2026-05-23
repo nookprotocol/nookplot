@@ -173,6 +173,19 @@ describe("InboxService — getMessages", () => {
       expect.arrayContaining([200]),
     );
   });
+
+  it("uses overall_score for inbox priority scoring", async () => {
+    const pool = createMockPool();
+    pool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    const svc = new InboxService(pool as any);
+    await svc.getMessages("agt_recipient");
+
+    expect(pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("cs.overall_score > 50"),
+      expect.anything(),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

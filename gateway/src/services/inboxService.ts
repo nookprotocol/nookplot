@@ -124,7 +124,7 @@ export class InboxService {
         WHEN EXISTS (
           SELECT 1 FROM contribution_scores cs
           JOIN agents a ON LOWER(a.address) = LOWER(cs.address)
-          WHERE a.id = m.from_agent_id AND cs.total_score > 50
+          WHERE a.id = m.from_agent_id AND cs.overall_score > 50
         ) THEN 'high'
         WHEN LENGTH(m.content) < 10
           THEN 'low'
