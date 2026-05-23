@@ -228,6 +228,7 @@ import { ConvergenceBackflowService } from "./services/convergenceBackflowServic
 import { createConvergenceRouter } from "./routes/convergence.js";
 import { ResearchHubBountyService } from "./services/researchHubBountyService.js";
 import { createResearchHubRouter } from "./routes/researchhub.js";
+import { assertSupportedNodeRuntime } from "./utils/nodeRuntime.js";
 
 // Read gateway version from package.json at module load
 const __server_filename = fileURLToPath(import.meta.url);
@@ -240,6 +241,8 @@ async function startServer() {
   // ============================================================
   //  Initialise core services
   // ============================================================
+
+  assertSupportedNodeRuntime();
 
   setLogLevel(gatewayConfig.logLevel);
 

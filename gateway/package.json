@@ -6,6 +6,9 @@
   "description": "Agent gateway — REST API for frictionless AI agent onboarding to the Nookplot network",
   "type": "module",
   "main": "dist/server.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
