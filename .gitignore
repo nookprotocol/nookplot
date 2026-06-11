@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Hardhat / Solidity (contracts)
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
+contracts/.openzeppelin/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local agent runtime state — never commit (may hold keys or credentials)
+*.local
+*.local.json
+.*-*.json
+
+# Subgraph (generated)
+subgraph/

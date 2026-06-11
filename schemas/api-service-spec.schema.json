@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nookplot.com/schemas/api-service-spec/v1",
+  "title": "Nookplot API Service Specification",
+  "description": "Metadata schema for API access service listings on the Nookplot marketplace. Stored on IPFS as the listing metadata CID. Providers sell proxied access to external APIs — no API keys are ever shared with buyers.",
+  "version": "1.0",
+  "type": "object",
+  "required": ["version", "service", "pricing", "provider"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "service": {
+      "type": "object",
+      "required": ["name", "capabilities"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable name of the API service (e.g. 'GPT-4o Inference', 'Market Data Feed')",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description of what this API provides",
+          "maxLength": 5000
+        },
+        "capabilities": {
+          "type": "array",
+          "description": "Machine-readable capability tags for discoverability",
+          "items": {
+            "type": "string",
+            "maxLength": 50
+          },
+          "minItems": 1,
+          "maxItems": 20
+        },
+        "inputFormat": {
+          "type": "string",
+          "description": "Expected input format",
+          "enum": ["json", "text", "binary", "multipart", "graphql"],
+          "default": "json"
+        },
+        "outputFormat": {
+          "type": "string",
+          "description": "Response format",
+          "enum": ["json", "text", "binary", "stream", "sse"],
+          "default": "json"
+        },
+        "documentationUrl": {
+          "type": "string",
+          "description": "URL to API documentation",
+          "format": "uri",
+          "maxLength": 500
+        },
+        "exampleRequest": {
+          "type": "object",
+          "description": "Example request payload for buyer testing",
+          "additionalProperties": true
+        },
+        "exampleResponse": {
+          "type": "object",
+          "description": "Example response payload",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "pricing": {
+      "type": "object",
+      "required": ["model"],
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Pricing model for this API",
+          "enum": ["per-request", "per-month", "per-token", "per-mb", "flat-bundle"]
+        },
+        "pricePerRequestUsdc": {
+          "type": "number",
+          "description": "Price per individual request in USDC (for per-request model)",
+          "minimum": 0.0001,
+          "maximum": 100
+        },
+        "pricePerMonthUsdc": {
+          "type": "number",
+          "description": "Monthly subscription price in USDC (for per-month model)",
+          "minimum": 0.01,
+          "maximum": 10000
+        },
+        "pricePerTokenUsdc": {
+          "type": "number",
+          "description": "Price per 1K tokens in USDC (for per-token model, AI inference)",
+          "minimum": 0.00001,
+          "maximum": 10
+        },
+        "pricePerMbUsdc": {
+          "type": "number",
+          "description": "Price per megabyte of data in USDC (for per-mb model)",
+          "minimum": 0.0001,
+          "maximum": 100
+        },
+        "bundleSize": {
+          "type": "integer",
+          "description": "Number of requests in a flat bundle (for flat-bundle model)",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "bundlePriceUsdc": {
+          "type": "number",
+          "description": "Price for the entire bundle in USDC",
+          "minimum": 0.01,
+          "maximum": 10000
+        },
+        "freeTrialRequests": {
+          "type": "integer",
+          "description": "Number of free requests to try before payment",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "rateLimit": {
+      "type": "object",
+      "description": "Rate limits the provider guarantees per agreement",
+      "properties": {
+        "requestsPerMinute": {
+          "type": "integer",
+          "description": "Max requests per minute",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "requestsPerDay": {
+          "type": "integer",
+          "description": "Max requests per day",
+          "minimum": 1,
+          "maximum": 10000000
+        },
+        "maxPayloadBytes": {
+          "type": "integer",
+          "description": "Max request payload size in bytes",
+          "minimum": 1,
+          "maximum": 104857600
+        }
+      },
+      "additionalProperties": false
+    },
+    "sla": {
+      "type": "object",
+      "description": "Service level agreement — provider's uptime and latency commitments",
+      "properties": {
+        "uptimePercent": {
+          "type": "number",
+          "description": "Guaranteed uptime percentage (e.g. 99.5)",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "maxLatencyMs": {
+          "type": "integer",
+          "description": "Maximum expected response time in milliseconds (p95)",
+          "minimum": 1,
+          "maximum": 300000
+        },
+        "supportContact": {
+          "type": "string",
+          "description": "How to reach provider for support (channel address, email, etc.)",
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "provider": {
+      "type": "object",
+      "required": ["address"],
+      "properties": {
+        "address": {
+          "type": "string",
+          "description": "Ethereum address of the API provider",
+          "pattern": "^0x[a-fA-F0-9]{40}$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Provider description and trustworthiness details",
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "region": {
+          "type": "string",
+          "description": "Provider region (e.g. 'us-east-1', 'eu-west-1')",
+          "maxLength": 50
+        },
+        "allowedOrigins": {
+          "type": "array",
+          "description": "If applicable, allowed CORS origins for browser-based callers",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "maxItems": 20
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

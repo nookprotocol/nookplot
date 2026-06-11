@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nookplot.com/schemas/evaluator/v1",
+  "title": "Evaluator",
+  "description": "A composable evaluation function for assessing artifact quality",
+  "type": "object",
+  "required": ["criteria", "aggregation", "applicableTo"],
+  "properties": {
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "description", "weight", "scoringMethod"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string", "maxLength": 100 },
+          "description": { "type": "string", "maxLength": 500 },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "How much this criterion contributes to overall score"
+          },
+          "scoringMethod": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "enum": [
+                  "binary",
+                  "scale",
+                  "rubric",
+                  "threshold",
+                  "composite",
+                  "model-judged"
+                ]
+              },
+              "scale": {
+                "type": "object",
+                "properties": {
+                  "min": { "type": "number" },
+                  "max": { "type": "number" },
+                  "labels": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" }
+                  }
+                }
+              },
+              "rubric": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "score": { "type": "number" },
+                    "description": { "type": "string" },
+                    "examples": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              },
+              "threshold": {
+                "type": "object",
+                "properties": {
+                  "pass": { "type": "number" },
+                  "metric": { "type": "string" }
+                }
+              },
+              "prompt": {
+                "type": "string",
+                "description": "For model-judged scoring: the evaluation prompt to send to an LLM"
+              }
+            }
+          }
+        }
+      }
+    },
+    "aggregation": {
+      "type": "object",
+      "required": ["method"],
+      "properties": {
+        "method": { "enum": ["weighted-sum", "weighted-min", "geometric-mean", "custom"] },
+        "passThreshold": {
+          "type": "number",
+          "description": "Minimum aggregated score to pass evaluation"
+        },
+        "mustPass": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Criterion IDs that must individually pass regardless of aggregate"
+        }
+      }
+    },
+    "applicableTo": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Artifact types this evaluator can assess"
+    },
+    "calibration": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "artifactCid": { "type": "string" },
+          "expectedScore": { "type": "number" },
+          "reasoning": { "type": "string" }
+        }
+      },
+      "description": "Calibration examples with known scores for consistency checking"
+    }
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "_comment": "Cross-runtime parity fixture for HookRegistry payloads. Both the TS and Python test suites load this file and assert their emitted payloads contain at least the documented keys + types. Add a key here, the key must appear in BOTH SDKs' emit sites or one of the parity tests will fail. Snake_case event names match the literal HookEvent values used at runtime in both languages.",
+  "events": {
+    "action_start": {
+      "required_keys": ["actionType", "args"],
+      "optional_keys": ["actionId", "agentAddress"],
+      "key_types": {
+        "actionType": "string",
+        "args": "object",
+        "actionId": "string",
+        "agentAddress": "string"
+      }
+    },
+    "action_end": {
+      "required_keys": ["actionType", "args", "result", "durationMs"],
+      "optional_keys": ["actionId", "txHash"],
+      "key_types": {
+        "actionType": "string",
+        "args": "object",
+        "result": "any",
+        "durationMs": "number",
+        "actionId": "string",
+        "txHash": "string"
+      }
+    },
+    "action_error": {
+      "required_keys": ["actionType", "args", "error", "durationMs"],
+      "optional_keys": ["actionId"],
+      "key_types": {
+        "actionType": "string",
+        "args": "object",
+        "error": "any",
+        "durationMs": "number",
+        "actionId": "string"
+      }
+    },
+    "action_rejected": {
+      "required_keys": ["actionType", "args", "reason"],
+      "optional_keys": ["actionId"],
+      "key_types": {
+        "actionType": "string",
+        "args": "object",
+        "reason": "string",
+        "actionId": "string"
+      }
+    },
+    "signal_received": {
+      "required_keys": ["signalType"],
+      "optional_keys": ["channelId", "channelName", "senderId", "senderAddress", "messagePreview", "community", "postCid", "reactive", "fromScan"],
+      "key_types": {
+        "signalType": "string"
+      }
+    },
+    "tool_input": {
+      "required_keys": ["toolName", "args"],
+      "key_types": {
+        "toolName": "string",
+        "args": "object"
+      }
+    },
+    "tool_output": {
+      "required_keys": ["toolName", "args", "result"],
+      "key_types": {
+        "toolName": "string",
+        "args": "object",
+        "result": "any"
+      }
+    },
+    "chat_turn_complete": {
+      "required_keys": ["sender", "platform", "message", "response", "toolsUsed", "toolCallCount"],
+      "optional_keys": ["senderId", "channelId", "agentName", "enableMemory"],
+      "key_types": {
+        "sender": "string",
+        "platform": "string",
+        "message": "string",
+        "response": "string",
+        "toolsUsed": "boolean",
+        "toolCallCount": "number"
+      }
+    },
+    "memory_compacted": {
+      "required_keys": ["sessionId", "compactionNumber", "messagesCompacted", "summaryTokens"],
+      "key_types": {
+        "sessionId": "string",
+        "compactionNumber": "number",
+        "messagesCompacted": "number",
+        "summaryTokens": "number"
+      }
+    },
+    "compaction_failed": {
+      "required_keys": ["sessionId", "error"],
+      "optional_keys": ["attemptedMessages"],
+      "key_types": {
+        "sessionId": "string",
+        "error": "any",
+        "attemptedMessages": "number"
+      }
+    },
+    "doom_loop_detected": {
+      "required_keys": ["offender", "triggers", "actionType"],
+      "key_types": {
+        "offender": "string",
+        "triggers": "number",
+        "actionType": "string"
+      }
+    }
+  }
+}

@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nookplot.com/schemas/reasoning-object/v1",
+  "title": "Compressed Reasoning Object",
+  "description": "A structured reasoning graph for high-bandwidth agent-to-agent knowledge transfer",
+  "type": "object",
+  "required": ["context", "graph", "conclusions"],
+  "properties": {
+
+    "context": {
+      "type": "object",
+      "required": ["domain", "goal"],
+      "properties": {
+        "domain": { "type": "string", "maxLength": 200 },
+        "goal": {
+          "type": "object",
+          "required": ["statement"],
+          "properties": {
+            "statement": { "type": "string", "maxLength": 2000 },
+            "successCriteria": {
+              "type": "array",
+              "items": { "type": "string", "maxLength": 500 }
+            },
+            "scope": {
+              "type": "object",
+              "properties": {
+                "includes": { "type": "array", "items": { "type": "string" } },
+                "excludes": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "assumptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "statement", "confidence"],
+            "properties": {
+              "id": { "type": "string" },
+              "statement": { "type": "string", "maxLength": 1000 },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "basis": { "type": "string", "maxLength": 500 },
+              "falsifiable": { "type": "boolean" },
+              "testMethod": { "type": "string", "maxLength": 500 }
+            }
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "statement", "type"],
+            "properties": {
+              "id": { "type": "string" },
+              "statement": { "type": "string", "maxLength": 1000 },
+              "type": { "enum": ["hard", "soft", "preference"] },
+              "source": { "type": "string", "maxLength": 200 },
+              "weight": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    },
+
+    "graph": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "type", "content", "confidence"],
+            "properties": {
+              "id": { "type": "string" },
+              "type": {
+                "enum": [
+                  "observation",
+                  "hypothesis",
+                  "evidence",
+                  "inference",
+                  "conclusion",
+                  "counterargument",
+                  "experiment",
+                  "dead-end",
+                  "open-question",
+                  "external-input"
+                ]
+              },
+              "content": { "type": "string", "maxLength": 2000 },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": { "enum": ["content-cid", "bundle", "url", "agent", "on-chain"] },
+                    "ref": { "type": "string" },
+                    "description": { "type": "string", "maxLength": 200 }
+                  }
+                }
+              },
+              "metadata": {
+                "type": "object",
+                "properties": {
+                  "addedBy": { "type": "string", "description": "Agent address that added this node" },
+                  "addedAt": { "type": "string", "format": "date-time" },
+                  "revisedFrom": { "type": "string", "description": "Node ID this replaced" }
+                }
+              }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "type"],
+            "properties": {
+              "from": { "type": "string", "description": "Source node ID" },
+              "to": { "type": "string", "description": "Target node ID" },
+              "type": {
+                "enum": [
+                  "supports",
+                  "contradicts",
+                  "refines",
+                  "depends-on",
+                  "enables",
+                  "blocks",
+                  "subsumes",
+                  "analogous-to",
+                  "derived-from",
+                  "tested-by"
+                ]
+              },
+              "strength": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "How strongly this relationship holds"
+              },
+              "explanation": { "type": "string", "maxLength": 500 }
+            }
+          }
+        }
+      }
+    },
+
+    "conclusions": {
+      "type": "object",
+      "required": ["primary"],
+      "properties": {
+        "primary": {
+          "type": "object",
+          "required": ["statement", "confidence", "supportingNodes"],
+          "properties": {
+            "statement": { "type": "string", "maxLength": 2000 },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "supportingNodes": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Node IDs that support this conclusion"
+            }
+          }
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["statement", "confidence", "conditions"],
+            "properties": {
+              "statement": { "type": "string", "maxLength": 2000 },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "conditions": {
+                "type": "string",
+                "maxLength": 1000,
+                "description": "Under what conditions this alternative would be preferred"
+              },
+              "supportingNodes": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        },
+        "sensitivity": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "assumptionId": { "type": "string" },
+              "ifChanged": { "type": "string", "maxLength": 500 },
+              "conclusionImpact": {
+                "enum": ["unchanged", "weakened", "invalidated", "reversed", "strengthened"]
+              },
+              "newConfidence": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          },
+          "description": "Which assumptions, if changed, affect the conclusion and how"
+        }
+      }
+    },
+
+    "openItems": {
+      "type": "object",
+      "properties": {
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["question"],
+            "properties": {
+              "question": { "type": "string", "maxLength": 500 },
+              "valueOfResolution": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "How much resolving this question would improve the conclusions"
+              },
+              "suggestedApproach": { "type": "string", "maxLength": 500 },
+              "relatedNodes": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        },
+        "blockedOn": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "description": { "type": "string", "maxLength": 500 },
+              "type": { "enum": ["data", "computation", "expertise", "decision", "external"] },
+              "estimatedImpact": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        },
+        "suggestedExperiments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "description": { "type": "string", "maxLength": 1000 },
+              "expectedOutcome": { "type": "string", "maxLength": 500 },
+              "costEstimate": { "type": "string", "maxLength": 200 },
+              "informationGain": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

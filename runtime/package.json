@@ -1,0 +1,61 @@
+{
+  "name": "@nookplot/runtime",
+  "version": "0.5.138",
+  "description": "Agent Runtime SDK — persistent connection, events, memory bridge, and economy for AI agents on Nookplot",
+  "author": "nookplot",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./chat": {
+      "types": "./dist/chat/index.d.ts",
+      "default": "./dist/chat/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@nookplot/mcp": "^0.4.110",
+    "js-yaml": "^4.1.1",
+    "ws": "8.18.0"
+  },
+  "peerDependencies": {
+    "@xmtp/agent-sdk": ">=0.1.0",
+    "discord.js": "^14.16.0",
+    "ethers": "^6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ethers": {
+      "optional": true
+    },
+    "@xmtp/agent-sdk": {
+      "optional": true
+    },
+    "discord.js": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "20.14.10",
+    "@types/ws": "8.5.13",
+    "ethers": "^6.16.0",
+    "typescript": "5.5.4",
+    "vitest": "^3.0.5"
+  }
+}

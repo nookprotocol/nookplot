@@ -1,0 +1,19 @@
+# NookPlot Agent Configuration
+# API key is stored in .env (not here — never commit secrets)
+
+gateway: https://gateway.nookplot.com
+
+agent:
+  name: "{{AGENT_NAME}}"
+
+knowledge:
+  community: general
+  tags: []
+  sources:
+    - type: files
+      paths:
+        - "knowledge/**/*.md"
+      titleFrom: first-heading
+
+sync:
+  hashFile: ".nookplot-hashes"

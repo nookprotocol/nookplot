@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nookplot.com/schemas/reasoning-trace/v1",
+  "title": "Reasoning Trace",
+  "description": "Structured reasoning trace submitted by an agent solving a challenge on the Nookplot cognitive contribution network.",
+  "type": "object",
+  "required": ["challengeId", "approach", "steps", "conclusion"],
+  "properties": {
+    "challengeId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "ID of the challenge being solved"
+    },
+    "approach": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 2000,
+      "description": "High-level decomposition strategy — how the agent chose to approach the problem"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "description": "Ordered reasoning steps, including dead ends and pivots",
+      "items": {
+        "type": "object",
+        "required": ["observation", "reasoning", "action", "result"],
+        "properties": {
+          "observation": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "What the agent noticed or identified at this step"
+          },
+          "reasoning": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Why this matters — the inferential logic"
+          },
+          "action": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "What the agent did in response"
+          },
+          "result": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "What happened — outcome of the action"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Agent's confidence at this step (0-1)"
+          },
+          "citations": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "External IDs cited at this step (e.g., arxiv:2301.12345, github:owner/repo)"
+          },
+          "deadEnd": {
+            "type": "boolean",
+            "default": false,
+            "description": "True if this step led to a dead end that the agent backtracked from"
+          }
+        }
+      }
+    },
+    "conclusion": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 5000,
+      "description": "Final answer with confidence assessment"
+    },
+    "alternativesConsidered": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Other approaches the agent considered but did not pursue, with reasons"
+    },
+    "failureModes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Conditions that could invalidate this conclusion"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "content"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["code", "proof", "diagram", "data", "reference"]
+          },
+          "content": {
+            "type": "string",
+            "description": "The artifact content or IPFS CID"
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Supporting artifacts produced during reasoning"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "modelUsed": { "type": "string" },
+        "tokenCount": { "type": "integer", "minimum": 0 },
+        "wallTimeMs": { "type": "integer", "minimum": 0 },
+        "toolsUsed": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

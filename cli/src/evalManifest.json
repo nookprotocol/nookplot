@@ -1,0 +1,26 @@
+{
+  "_comment": "Maps eval-bundle CID -> expected sha256 of the pinned tarball. The CLI verifies every /eval bundle it downloads against this manifest before extracting, so an IPFS gateway that serves back poisoned content (wrong answers, label-leaking images) is caught client-side.",
+  "_generatedAt": "2026-04-17",
+  "cids": {
+    "bafybeib7jshizksuwqm4w2jtxz4hstau4sxcqy6epxfnfloysq5j5nmgc4": "68d89068162d490cfd37f8cb17b236f70a083c180bef9f87a2921c9ce54fa32a",
+    "bafkreieo5sprafvp56khfjuhlhfmrhqcik4rd6vccoy5kqiwdj5mjy4r3q": "8eec9f1016afef9472a68759cac89e0242b911faa213b1d541161a7ac4e391dc",
+    "bafkreidnkrjgilvzdv2lmmgn3jrlhcuopfefxaablrf43cscgvf5wuf7q4": "6d5452642eb91d74b630cdda62b38a8e79485b80015c4bcd8a42354bdb50bf87",
+    "bafkreiglizi5deypjkkqbs5n5sum6f2rce6c3ehq52wgwddptknr6cdife": "cb4651d1930f4a9500cbadeca8cf1751113c2d90f0eeac6b0c6f9a9b1f086829",
+    "bafybeih5x35v6qbelj34ridtagau6snjxwewsaqlcr4wqcw7dirgut5f2m": "3b2fbf6733f16672d54d8c41bb68a8f070a259ee4dff351e0b903debcc900268",
+    "bafkreicoj3jojb6oa42cu76knisvdi5wbxixkikrh43vj6hrykpnzs6ibu": "4e4ed2e487ce07342a7fca6a2551a3b60dd17521513f3754f8f1c29edccbc80d",
+    "bafybeiergbl4sl2qui4niifduyri2xubbpc7drpnlvxlmptl3hj7r5jjfe": "94c8fab4210c8ca4c2c43b062d882862df1bfa2ead28d75be1b38a3394c81239",
+    "bafybeietgomlg5r7o7gio23eo6lvxsht5uhl3bdja7ac55qyricfcfk22m": "04e3b2763a8de9028664a66dce02e76d3c9d0e1df6bcb820aeee053c1b80c541",
+    "bafybeicwvzev64cs7bjzfydgnqgezh55c5qahe5gg7h4lpxvgwxphddkva": "9a1cf1dd64c5e2ba4b89215cd7f7330554a69644d14934029ca185b139dcf91a",
+    "bafkreieul2ibj7gki453ch2hjw37yqjxoinbgdtjsjyxmj63fz6r22j42y": "945e9014fcca473bb11f474db7fc4137721a130e6992717627db2e7d1d693cd6",
+    "bafkreibofdiwccvgonv6jpj4oqjqydscdi6x3g633yj45repypsl2luetq": "2e28d1610aa6736be4bd3c74130c0e421a3d7d9bdbde13cec48fc3e4bd2e849c",
+    "bafybeics67cj3akmcrgtraligzml7egp43qmstgb6t4kbnxbjurfodmbxe": "166e4c3dce547bd6646f2bdb1fe0cb47f84218c5f1f22fd13888720b31e91d95",
+    "bafkreid4bn25xiq4rqghua2iun5g7c4y6ofyvfcfyrm2yji5epnpzox43m": "7c0b75dba21c8c0c7a0348a37a6f8b98f38b8a9445c459ac251d23dafcbafcdb",
+    "bafybeih6llkr4lgyup7erqpbute2hctqhcga53gn4dx6usrx3jcofcvtju": "b45711102227e3f8ee21d65438cf4c891275da998160fe988a140cf0934b2d2b",
+    "bafkreihhglbxugphd3xeknwmcfhvblmtykwjdd3wprk6erfg2aca6rxhgu": "e732c37a19e71eee4536cc114f50ad93c2ac918f767c55e244a6d0040f46e735",
+    "bafybeicrze4inhk3naytkipcgisiji4ovmmlgotzub4kxpgauwt2ge5v2m": "50a6ed399ed89724d733d1f1671e24cab6adab34063a10e3ca18d838dc795019",
+    "bafybeicdavoss5vrwthpphpagp5ozjlmu35ug2rvhsdidfc2ngebega2me": "d4f1082360b655f2b3dcec497124faa0245b17d456c3ac4087b0b518aa209d1d",
+    "bafybeicucxw4j2tumiicpcvsdntswiae4h7ce7tje4v7im6nuxizs4mbwi": "9377a3eed10ac53b47fcae3952d9e174957356d42d0fb0edcbd0505dc0fc5fb3",
+    "bafkreicg75laujjx4y74eibvqts4ywftkupzxys5jl442enmdknopwll74": "46ff560a2537e63fc2203584e5cc58b3551f9be25d4af9cd11ac1a9ae7d96bff",
+    "bafkreiajtsh6h2mp6dol2dois6bg3vix5fwhny4laxrlreaywi77ze563m": "099c8fe3e98ff0dcbd0dc897826dd517e96c76e38b05e2b89018b23ffc93bedb"
+  }
+}

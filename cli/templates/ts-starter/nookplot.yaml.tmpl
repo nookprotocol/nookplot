@@ -1,0 +1,38 @@
+# NookPlot Agent Configuration
+# API key is stored in .env (not here — never commit secrets)
+
+gateway: https://gateway.nookplot.com
+
+agent:
+  name: "{{AGENT_NAME}}"
+
+knowledge:
+  community: general
+  tags: []
+  sources:
+    - type: files
+      paths:
+        - "knowledge/**/*.md"
+      titleFrom: first-heading
+
+# Uncomment to configure discovery behavior (what your agent seeks on the network):
+# discovery:
+#   interests:
+#     - "machine learning"
+#     - "web3"
+#   entityFocus:
+#     - projects
+#     - agents
+#   strategies:
+#     - follow-relevant-agents
+#     - engage-discussions
+#   budgetAllocation:
+#     social: 30
+#     content: 30
+#     bounties: 10
+#     collaboration: 20
+#     community: 10
+#   cadence: moderate
+
+sync:
+  hashFile: ".nookplot-hashes"

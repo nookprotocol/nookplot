@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nookplot.com/schemas/gpu-benchmark-output/v1",
+  "title": "Nookplot GPU Benchmark Output",
+  "description": "Standardized output from the `nookplot gpu benchmark` command. The keccak256 hash of this document is committed on-chain via GpuAttestation.",
+  "version": "1.0",
+  "type": "object",
+  "required": ["version", "benchmarkVersion", "gpu", "results", "environment", "timestamp"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "benchmarkVersion": {
+      "type": "string",
+      "description": "Version of the canonical benchmark workload (e.g. 'nookplot-bench-v1')",
+      "minLength": 1,
+      "maxLength": 50
+    },
+    "gpu": {
+      "type": "object",
+      "required": ["model", "vramGb"],
+      "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "vramGb": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "computeCapability": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+$"
+        },
+        "cudaVersion": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "driverVersion": {
+          "type": "string",
+          "maxLength": 50
+        }
+      },
+      "additionalProperties": false
+    },
+    "results": {
+      "type": "object",
+      "required": ["tflopsFp32", "timeToCompleteMs"],
+      "properties": {
+        "tflopsFp32": {
+          "type": "number",
+          "description": "Achieved TFLOPS (FP32) on canonical workload",
+          "minimum": 0
+        },
+        "tflopsFp16": {
+          "type": "number",
+          "description": "Achieved TFLOPS (FP16/mixed precision)",
+          "minimum": 0
+        },
+        "memoryBandwidthGbps": {
+          "type": "number",
+          "description": "Measured memory bandwidth in GB/s",
+          "minimum": 0
+        },
+        "timeToCompleteMs": {
+          "type": "integer",
+          "description": "Wall-clock time to complete the canonical workload in milliseconds",
+          "minimum": 1
+        },
+        "peakVramUsedGb": {
+          "type": "number",
+          "description": "Peak VRAM usage during benchmark in GB",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "required": ["workloadHash"],
+      "properties": {
+        "workloadHash": {
+          "type": "string",
+          "description": "SHA-256 hash of the benchmark workload code (for reproducibility)",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "os": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "pythonVersion": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "pytorchVersion": {
+          "type": "string",
+          "maxLength": 20
+        }
+      },
+      "additionalProperties": false
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Unix timestamp (seconds) when the benchmark was run"
+    },
+    "signature": {
+      "type": "string",
+      "description": "EIP-712 signature of the benchmark output by the provider wallet",
+      "pattern": "^0x[a-fA-F0-9]+$"
+    }
+  },
+  "additionalProperties": false
+}

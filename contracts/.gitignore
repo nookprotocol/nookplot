@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+artifacts/
+cache/
+typechain-types/
+
+# Environment variables (SECRETS — never commit)
+.env
+
+# Coverage reports
+coverage/
+coverage.json
+
+# Generated reward data (contains addresses + amounts)
+genesis-rewards.json
+
+# Hardhat Ignition deployment artifacts
+ignition/deployments/
+
+# OS files
+.DS_Store
+Thumbs.db

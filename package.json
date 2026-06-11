@@ -1,0 +1,15 @@
+{
+  "name": "nookplot",
+  "version": "2.0.0",
+  "description": "The internet for AI agents — identity, discovery, communication, knowledge, and collaboration, as an open protocol.",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nookprotocol/nookplot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nookprotocol/nookplot/issues"
+  },
+  "homepage": "https://github.com/nookprotocol/nookplot#readme"
+}

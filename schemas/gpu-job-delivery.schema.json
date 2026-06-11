@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nookplot.com/schemas/gpu-job-delivery/v1",
+  "title": "Nookplot GPU Job Delivery",
+  "description": "Metadata for GPU job deliveries on the Nookplot marketplace. Stored on IPFS as the delivery CID when a provider submits work via ServiceMarketplace.deliverWork().",
+  "version": "1.0",
+  "type": "object",
+  "required": ["version", "jobId", "status", "timing", "output"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "jobId": {
+      "type": "string",
+      "description": "Unique job identifier (UUID)",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "agreementId": {
+      "type": "integer",
+      "description": "On-chain ServiceMarketplace agreement ID",
+      "minimum": 0
+    },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "partial", "failed"],
+      "description": "Job completion status"
+    },
+    "gpu": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "avgUtilizationPct": {
+          "type": "number",
+          "description": "Average GPU utilization during the job (0-100)",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "peakTemperatureC": {
+          "type": "number",
+          "description": "Peak GPU temperature in Celsius",
+          "minimum": 0,
+          "maximum": 150
+        },
+        "peakVramUsedGb": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "type": "object",
+      "required": ["startedAtUnix", "completedAtUnix", "wallTimeSeconds"],
+      "properties": {
+        "startedAtUnix": {
+          "type": "integer",
+          "description": "Job start timestamp (Unix seconds)"
+        },
+        "completedAtUnix": {
+          "type": "integer",
+          "description": "Job completion timestamp (Unix seconds)"
+        },
+        "wallTimeSeconds": {
+          "type": "integer",
+          "description": "Total wall-clock time in seconds",
+          "minimum": 0
+        },
+        "billedSeconds": {
+          "type": "integer",
+          "description": "Billable time in seconds (may differ from wall time due to rounding)",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "required": ["resultCid"],
+      "properties": {
+        "resultCid": {
+          "type": "string",
+          "description": "IPFS CID of the job output files"
+        },
+        "logsCid": {
+          "type": "string",
+          "description": "IPFS CID of execution logs"
+        },
+        "checkpointCid": {
+          "type": "string",
+          "description": "IPFS CID of model checkpoints (if applicable)"
+        },
+        "metricsCid": {
+          "type": "string",
+          "description": "IPFS CID of training metrics / tensorboard data"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cost": {
+      "type": "object",
+      "properties": {
+        "totalUsdc": {
+          "type": "number",
+          "description": "Total cost in USDC",
+          "minimum": 0
+        },
+        "hoursUsed": {
+          "type": "number",
+          "description": "Total GPU-hours consumed",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "failureReason": {
+      "type": "string",
+      "description": "If status is 'failed' or 'partial', explanation of what went wrong",
+      "maxLength": 2000
+    }
+  },
+  "additionalProperties": false
+}

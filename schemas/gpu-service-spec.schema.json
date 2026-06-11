@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nookplot.com/schemas/gpu-service-spec/v1",
+  "title": "Nookplot GPU Service Specification",
+  "description": "Metadata schema for GPU compute service listings on the Nookplot marketplace. Stored on IPFS as the listing metadata CID.",
+  "version": "1.0",
+  "type": "object",
+  "required": ["version", "gpu", "pricing", "provider"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "gpu": {
+      "type": "object",
+      "required": ["model", "vramGb"],
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "GPU model name (e.g. 'NVIDIA A100 40GB')",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "vramGb": {
+          "type": "integer",
+          "description": "GPU VRAM in gigabytes",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "count": {
+          "type": "integer",
+          "description": "Number of GPUs available (for multi-GPU setups)",
+          "minimum": 1,
+          "maximum": 64,
+          "default": 1
+        },
+        "computeCapability": {
+          "type": "string",
+          "description": "CUDA compute capability (e.g. '8.0')",
+          "pattern": "^[0-9]+\\.[0-9]+$"
+        },
+        "cudaVersion": {
+          "type": "string",
+          "description": "CUDA toolkit version (e.g. '12.1')",
+          "maxLength": 20
+        },
+        "driverVersion": {
+          "type": "string",
+          "description": "GPU driver version",
+          "maxLength": 50
+        }
+      },
+      "additionalProperties": false
+    },
+    "system": {
+      "type": "object",
+      "description": "Host system specifications",
+      "properties": {
+        "cpuCores": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "ramGb": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "storageGb": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "storageType": {
+          "type": "string",
+          "enum": ["nvme", "ssd", "hdd"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "pricing": {
+      "type": "object",
+      "required": ["pricePerHourUsdc"],
+      "properties": {
+        "pricePerHourUsdc": {
+          "type": "number",
+          "description": "Price per hour in USDC (e.g. 0.50 = $0.50/hr)",
+          "minimum": 0.01,
+          "maximum": 1000
+        },
+        "minimumHours": {
+          "type": "number",
+          "description": "Minimum rental duration in hours",
+          "minimum": 0.1,
+          "maximum": 720,
+          "default": 1
+        },
+        "maximumHours": {
+          "type": "number",
+          "description": "Maximum rental duration in hours",
+          "minimum": 1,
+          "maximum": 720,
+          "default": 72
+        }
+      },
+      "additionalProperties": false
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "region": {
+          "type": "string",
+          "description": "Provider region (e.g. 'us-east-1', 'eu-west-1')",
+          "maxLength": 50
+        },
+        "bandwidthMbps": {
+          "type": "integer",
+          "description": "Network bandwidth in Mbps",
+          "minimum": 1,
+          "maximum": 100000
+        }
+      },
+      "additionalProperties": false
+    },
+    "provider": {
+      "type": "object",
+      "required": ["address"],
+      "properties": {
+        "address": {
+          "type": "string",
+          "description": "Ethereum address of the GPU provider",
+          "pattern": "^0x[a-fA-F0-9]{40}$"
+        },
+        "attestationHash": {
+          "type": "string",
+          "description": "On-chain benchmark hash (from GpuAttestation contract)",
+          "pattern": "^0x[a-fA-F0-9]{64}$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Provider description and SLA details",
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "description": "Supported workload types and frameworks",
+      "properties": {
+        "frameworks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["pytorch", "tensorflow", "jax", "onnx", "triton", "vllm", "other"]
+          },
+          "maxItems": 10
+        },
+        "dockerSupport": {
+          "type": "boolean",
+          "description": "Whether custom Docker images are supported"
+        },
+        "sshAccess": {
+          "type": "boolean",
+          "description": "Whether direct SSH access is provided"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

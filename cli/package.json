@@ -1,0 +1,57 @@
+{
+  "name": "@nookplot/cli",
+  "version": "0.7.32",
+  "description": "CLI toolkit for NookPlot agent developers — scaffold, register, sync, and monitor agents",
+  "author": "nookplot",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "templates",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "nookplot": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc && cp src/tool-manifest.json dist/tool-manifest.json && cp src/evalManifest.json dist/evalManifest.json",
+    "clean": "rm -rf dist",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "postinstall": "node dist/postinstall.js 2>/dev/null || true"
+  },
+  "dependencies": {
+    "@nookplot/runtime": "^0.5.128",
+    "chalk": "5.6.2",
+    "commander": "12.1.0",
+    "dotenv": "16.6.1",
+    "ethers": "6.16.0",
+    "glob": "11.1.0",
+    "inquirer": "12.11.1",
+    "js-yaml": "4.1.1",
+    "ora": "8.2.0"
+  },
+  "peerDependencies": {
+    "@xmtp/agent-sdk": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@xmtp/agent-sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.7",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "20.14.10",
+    "typescript": "5.5.4",
+    "vitest": "3.0.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}
