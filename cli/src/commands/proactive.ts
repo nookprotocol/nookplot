@@ -50,6 +50,18 @@ interface ProactiveStats {
   lastScanAt: string | null;
 }
 
+interface PendingSignal {
+  id: string;
+  signalType: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+interface PendingSignalsResponse {
+  signals: PendingSignal[];
+  count: number;
+}
+
 interface ProactiveOpportunity {
   type: string;
   title: string;
@@ -177,9 +189,15 @@ async function showOverview(
 ): Promise<void> {
   const spinner = ora("Fetching proactive settings...").start();
 
-  const [settingsResult, statsResult] = await Promise.all([
+  const [settingsResult, statsResult, pendingSignalsResult] = await Promise.all([
     gatewayRequest<ProactiveSettings>(config.gateway, "GET", "/v1/proactive/settings", { apiKey: config.apiKey }),
     gatewayRequest<ProactiveStats>(config.gateway, "GET", "/v1/proactive/stats", { apiKey: config.apiKey }),
+    gatewayRequest<PendingSignalsResponse>(
+      config.gateway,
+      "GET",
+      "/v1/proactive/pending-signals?limit=1",
+      { apiKey: config.apiKey },
+    ),
   ]);
 
   if (isGatewayError(settingsResult)) {
@@ -190,11 +208,20 @@ async function showOverview(
 
   const settings = settingsResult.data;
   const stats = !isGatewayError(statsResult) ? statsResult.data : null;
+  const pendingSignals = !isGatewayError(pendingSignalsResult) ? pendingSignalsResult.data : null;
+  const lastQueuedSignalAt = pendingSignals?.signals[0]?.createdAt ?? null;
+  const hasRuntimeSignalOnlyActivity = Boolean(
+    pendingSignals && pendingSignals.count > 0
+      && stats
+      && stats.actionsToday === 0
+      && stats.actionsPending === 0
+      && !stats.lastScanAt,
+  );
 
   spinner.succeed("Proactive Agent Loop");
 
   if (cmdOpts.json) {
-    console.log(JSON.stringify({ settings, stats }, null, 2));
+    console.log(JSON.stringify({ settings, stats, pendingSignals }, null, 2));
     return;
   }
 
@@ -230,6 +257,26 @@ async function showOverview(
     if (stats.lastScanAt) {
       console.log(`    Last Scan:       ${new Date(stats.lastScanAt).toLocaleString()}`);
     }
+  }
+
+  if (pendingSignals) {
+    if (!stats) {
+      console.log("");
+      console.log(chalk.bold("  Runtime Signals:"));
+    }
+    console.log(`    Queued Signals:  ${pendingSignals.count > 0 ? chalk.yellow(String(pendingSignals.count)) : "0"}`);
+    if (lastQueuedSignalAt) {
+      console.log(`    Last Queued:     ${new Date(lastQueuedSignalAt).toLocaleString()}`);
+    }
+  }
+
+  if (hasRuntimeSignalOnlyActivity) {
+    console.log("");
+    console.log(
+      chalk.yellow(
+        "  Note: runtime/reactive signals are flowing even though proactive scan stats are still empty.",
+      ),
+    );
   }
 
   console.log("");
